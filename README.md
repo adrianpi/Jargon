@@ -17,7 +17,7 @@
 - **jlc0** - Jargon Compiler implemented in C#
 - **Jargon** - Jargon Runtime implemented in Jargon
 - **jlc1** - Jargon Compiler implemented in Jargon, compiled with jlc0
-- **jlc2** - Jargon Compiler implemented in Jargon, compiled eith jlc1, to check for no degradation
+- **jlc2** - Jargon Compiler implemented in Jargon, compiled with jlc1, to check for no degradation
 - **Test** - Test project
 
 ## Usage
