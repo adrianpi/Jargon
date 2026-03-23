@@ -1,0 +1,802 @@
+using jargon;
+
+// Parser2 - second stage parser responsible for resolving types, laying out
+// structs/classes, registering methods/fields, and synthesizing runtime
+// support such as static initialization functions and vtables. This stage
+// performs semantic setup required before later passes fill in method
+// bodies.
+class Parser2 : StageParser
+{
+    Parser2 constructor(Module module, CompilerErrorListener errorListener)
+    {
+        base(module, errorListener);
+        return this;
+    }
+
+    // OnStartParse - invoked when parsing of a new compile unit begins.
+    // This stage uses the hook to create a per-unit static initializer
+    // function which will be populated with static initialization actions
+    // (e.g. vtable setup) as classes are discovered.
+    void OnStartParse()
+    {
+        CreateStaticInitFunctions();
+    }
+
+    // CreateStaticInitFunctions - synthesize an internal function named
+    // "static_init" that will hold static initialization code for this
+    // compile unit. The function is marked internal and no-debug to indicate
+    // it is generated and not intended for user debugging.
+    void CreateStaticInitFunctions()
+    {
+        Function static_init = new Function(module, "static_init", TypeSymbol.Void);
+        static_init.Body = new StatementBlock();
+        static_init.Flags += SymbolFlags.Internal;
+        static_init.Flags += SymbolFlags.NoDebug;
+
+        unit.staticInit = static_init;
+        static_init.Unit = unit;
+
+        Function static_deinit = new Function(module, "static_deinit", TypeSymbol.Void);
+        static_deinit.Body = new StatementBlock();
+        static_deinit.Flags += SymbolFlags.Internal;
+        static_deinit.Flags += SymbolFlags.NoDebug;
+
+        unit.staticDeInit = static_deinit;
+        static_deinit.Unit = unit;
+    }
+
+    // ParseStructure - complete struct/union layout by adding fields to the
+    // previously-created StructType symbol. This routine reads member
+    // declarations, validates disallowed constructs (like by-ref fields),
+    // and computes offsets/size. For unions, all fields share offset 0 and
+    // the struct size equals the largest field size.
+    bool ParseStructure(bool isUnion)
+    {
+        if(scanner.Token != Token.Ident)
+        {
+            Error("Identifier expected");
+            return false;
+        }
+        string name = scanner.TokenString;
+        scanner.NextToken();
+        StructType st = module.Find(name) as StructType;
+        if(scanner.Token == Token.LBrace)
+        {
+            scanner.NextToken();
+            while(scanner.Token != Token.RBrace && scanner.Token != Token.EOF)
+            {
+                Declaration decl = new Declaration();
+
+                if (!ParseDeclaration(decl, true, null, false, false))
+                    return false;
+
+                // References are not allowed as struct members.
+                // Report an error if a by-ref declarator was used.
+                if (decl.isByRef)
+                {
+                    Error("Reference not allowed here");
+                    return false;
+                }
+
+                // Create the FieldSymbol and compute layout information.
+                FieldSymbol fs = new FieldSymbol(st, decl.name, decl.type);
+                fs.Index = st.Children.count - 1;
+                fs.Unit = unit;
+                TypeSymbol dt = fs.DataType;
+                if(dt.IsClassRef())
+                    fs.Flags += SymbolFlags.Weak;   // references in a struct are always weak
+                                                    // as structs have no finalizers
+                if (isUnion)
+                {
+                    // Union: all fields overlap at offset 0 and the struct size
+                    // becomes the max of contained field sizes.
+                    fs.Offset = 0;
+                    fs.Index = 0;
+                    st.SetSize(st.Size >? decl.type.Size);
+                }
+                else
+                {
+                    // Standard struct layout: align sizes and place the field
+                    // after the previous fields. The alignment policy here is
+                    // simplified: round-up current size to a multiple of the
+                    // field size, then place the field.
+                    int offs = ((st.Size + decl.type.Size - 1) / decl.type.Size) * decl.type.Size;
+                    fs.Offset = offs;
+                    st.SetSize(offs + decl.type.Size);
+                }
+
+                if (!Expect(Token.Semicolon))
+                    return false;
+            }
+
+            if (!Expect(Token.RBrace))
+                    return false;
+
+            return true;
+        }
+        else
+        {
+            // Forward declaration ended with semicolon
+            return Expect(Token.Semicolon);
+        }
+    }
+
+    // ParseClass - complete class layout and register methods/fields. This
+    // phase wires up base classes, inherits virtual methods, creates a
+    // factory function placeholder and processes member declarations. The
+    // parser synthesizes helper methods (constructor, getClassName,
+    // finalizer), builds the vtable global and creates an instance-init
+    // method used to initialize instance fields.
+    bool ParseClass()
+    {
+        if(scanner.Token != Token.Ident)
+        {
+            Error("Identifier expected");
+            return false;
+        }
+        string name = scanner.TokenString;
+        scanner.NextToken();
+        ClassType cls = module.Find(name) as ClassType;
+
+        // Optional base class specification following a ':' token
+        if(scanner.Token == Token.Colon)
+        {
+            scanner.NextToken();
+            ClassType baseClass = ParseType() as ClassType;
+            if(baseClass == null)
+            {
+                Error("Class expected");
+                return false;
+            }
+            // Inherit size and virtual method table entries from base class
+            cls.BaseClass = baseClass;
+            cls.SetSize(baseClass.Size);
+            cls.FieldCount = baseClass.FieldCount;
+            for(int i = 0; i < baseClass.VirtualMethods.count; ++i)
+                cls.VirtualMethods.add(baseClass.VirtualMethods[i]);
+        }
+        else
+        {
+            // If no base specified, default to the root 'object' class unless
+            // this class itself is 'object'. This enforces a single root in
+            // the class hierarchy and ensures derived classes have a vtable
+            // layout to inherit from.
+            if(cls.Name != "object")
+            {
+                ClassType baseClass = (ClassType)FindType("object");
+                if(baseClass == null)
+                {
+                    Error("Base 'object' class not found. Missing 'using jargon;'? ");
+                    return false;
+                }
+                cls.BaseClass = baseClass;
+                cls.SetSize(baseClass.Size);
+                cls.FieldCount = baseClass.FieldCount;
+                for(int i = 0; i < baseClass.VirtualMethods.count; ++i)
+                    cls.VirtualMethods.add(baseClass.VirtualMethods[i]);
+            }
+            else
+            {
+                // Root object class: create a vtable field which is a pointer
+                // to a pointer (i.e. void** convention). This special field is
+                // used at runtime to locate virtual methods.
+                FieldSymbol vtable = new FieldSymbol(cls, "vtable", TypeSymbol.Void.GetPointerType().GetPointerType());
+                vtable.Index = cls.FieldCount;
+                cls.FieldCount++;
+                vtable.Offset = 0;
+                    cls.SetSize(8);
+            }
+        }        
+
+        Function factory = cls.Factory;
+
+        if(scanner.Token == Token.LBrace)
+        {
+            scanner.NextToken();
+
+            while (scanner.Token != Token.RBrace && scanner.Token != Token.EOF)
+            {
+                bool _virtual = false;
+                bool _static = false;
+                bool _weak = false;
+                bool _const = false;
+
+                if(IsKeyword("const"))
+                {
+                    _const = true;
+                }
+                else
+                {
+                    if (IsKeyword("virtual"))
+                        _virtual = true;
+                    else if (IsKeyword("static"))
+                        _static = true;
+
+                    if (IsKeyword("weak"))
+                        _weak = true;
+                }
+
+                Declaration decl = new Declaration();
+
+                // Parse the member declaration; note we pass 'true' for the
+                // nameRequired flag and allow function types to be parsed but
+                // do not fully validate bodies at this stage (noCheck = true).
+                if (!ParseDeclaration(decl, true, null, false, true))
+                {
+                    _class = null;
+                    return false;
+                }
+
+                if (decl.isByRef)
+                {
+                    Error("Reference not allowed here");
+                    _class = null;
+                    return false;
+                }
+
+                if (decl.type.IsFunction())
+                {
+                    // Method declaration: wrap function into a MethodSymbol
+                    Function fn = (Function)decl.type as Function;
+                    if(_weak)
+                    {
+                        Error("Methods cannot be weak");
+                        return false;
+                    }
+                    if(_const)
+                    {
+                        Error("Methods cannot be const");
+                        return false;
+                    }
+                    fn.line = scanner.Line;
+                    // Handle property-like getters/setters and constructors
+                    if (decl.isGetter)
+                    {
+                        fn.Name = string.format("get_%s", decl.name);
+                    }
+                    else if (decl.isSetter)
+                    {
+                        fn.Name = string.format("set_%s", decl.name);
+                    }
+                    else if (fn.Name == "constructor")
+                    {
+                        // Add constructor parameters to the class factory
+                        for(int i = 0; i < fn.Parameters.count; ++i)
+                        {
+                            LocalVariable p = fn.Parameters[i];
+                            LocalVariable p2 = new LocalVariable(factory, p.Name, p.DataType, null);
+                            p2.Offset = p.Offset;
+                            factory.Parameters.add(p2);
+                        }
+                    }
+
+                    string fname = fn.Name;
+
+                    // For instance methods, insert an implicit 'this' parameter
+                    if (!_static)
+                    {
+                        LocalVariable _this = new LocalVariable(fn, "this", cls.GetPointerType(), null);
+                        for(int i = 0; i < fn.Parameters.count; ++i)
+                        {
+                            fn.Parameters[i].Offset++;
+                        }
+                        _this.Offset = 1;
+                        fn.Parameters.insert(0, _this);
+                        //fn.RemoveChild(_this);
+                        //fn.InsertChild(0, _this);
+                    }
+
+                    // Create the method symbol that references the underlying function
+                    MethodSymbol ms = new MethodSymbol(cls, fname, fn);
+
+                    // If this member is a property getter/setter, attach it to the
+                    // corresponding PropertySymbol on the class (creating the
+                    // property if necessary).
+                    if (decl.isGetter)
+                    {
+                        PropertySymbol p = cls.FindChild(decl.name) as PropertySymbol;
+                        if (p == null)
+                        {
+                            p = new PropertySymbol(cls, decl.name, fn.ReturnType);
+                            if(_static)
+                                p.Flags |= SymbolFlags.Static;
+                        }
+                        p.Getter = ms;
+                    }
+                    else if (decl.isSetter)
+                    {
+                        PropertySymbol p = cls.FindChild(decl.name) as PropertySymbol;
+                        if (p == null)
+                        {
+                            p = new PropertySymbol(cls, decl.name, fn.Parameters[1].DataType);
+                            if(_static)
+                                p.Flags |= SymbolFlags.Static;
+                        }
+                        p.Setter = ms;
+                    }
+
+                    // Mark static/virtual flags on the method symbol and
+                    // adjust vtable slot assignment when necessary.
+                    if (_static)
+                    {
+                        ms.Flags += SymbolFlags.Static;
+                        fn.Flags += SymbolFlags.Static;
+                    }
+
+                    if (_virtual)
+                    {
+                        ms.Flags += SymbolFlags.Virtual;
+                        ms.VSlot = cls.VirtualMethods.count;
+                        cls.VirtualMethods.add(ms);
+                    }
+                    else if (cls.BaseClass != null && !_static)
+                    {
+                        // Attempt to locate an overridden virtual method in the
+                        // base class; if found inherit its vslot index.
+                        MethodSymbol vm = cls.BaseClass.FindChild(fn.Name) as MethodSymbol;
+                        if (vm != null && (vm.Flags & SymbolFlags.Virtual) != 0)
+                        {
+                            ms.VSlot = vm.VSlot;
+                            cls.VirtualMethods[ms.VSlot] = ms;
+                            ms.Flags += SymbolFlags.Virtual;
+                        }
+                    }
+
+                    // Static method extension: a static method whose first
+                    // parameter is named 'this' is treated as an extension method
+                    // for that type. The parser synthesizes an 'ext_<TypeName>'
+                    // class to host such extension methods.
+                    if (_static && fn.Parameters.count > 0 && fn.Parameters[0].Name == "this")
+                    {
+                        TypeSymbol typeToExtend = fn.Parameters[0].DataType;
+                        if(typeToExtend.IsClassRef())
+                            typeToExtend = typeToExtend.ElementType;
+                        string extName = string.format("ext_%s", TypeToFName(typeToExtend));
+                        ClassType extCls = FindType(extName) as ClassType;
+                        if(extCls == null)
+                            extCls = new ClassType(module, extName);
+                        MethodSymbol extensionMethod = new MethodSymbol(extCls, fn.Name, fn);
+                        fn.Name = string.format("ext_%s", fn.Name);
+                    }
+                    
+                    // Mangle function name to include class scope and register
+                    // the function symbol with the compile unit for later use.
+                    fn.Name = string.format("%s__%s", cls.Name, fn.Name);
+                    //!
+                    module.AddChild(fn);
+                    unit.AddSymbol(fn);
+
+                    // Method bodies can either be provided as braces (function
+                    // definition) or as a double-arrow shorthand or omitted.
+                    if (scanner.Token == Token.LBrace)
+                    {
+                        // Skip method body at this stage; later passes will parse
+                        // the body and generate code.
+                        SkipBraces();
+                        if (!Expect(Token.RBrace))
+                            return false;
+                    }
+                    else if(scanner.Token == Token.DoubleArrow)
+                    {
+                        // Double-arrow indicates an inline code snippet that we
+                        // skip until the trailing semicolon.
+                        scanner.NextToken();
+                        while (scanner.Token != Token.Semicolon && scanner.Token != Token.EOF)
+                            scanner.NextToken();
+                        if (!Expect(Token.Semicolon))
+                            return false;
+                    }
+                    else
+                    {
+                        Error("Syntax error");
+                        return false;
+                    }
+                }
+                else
+                {
+                    if(_const)
+                    {
+                        if(!Expect(Token.Assign))
+                            return false;
+                        Expression value = ParseExpression();
+                        if (value == null)
+                            return false;
+                        if (!(value is ConstantExpression))
+                        {
+                            Error("Constant expression expected");
+                            return false;
+                        }
+                        value = ForceCast(value, decl.type);
+                        ConstantValue cf = new ConstantValue(cls, decl.name, value);
+                        cf.Flags |= SymbolFlags.Static;
+                    }
+                    else
+                    {
+                        // Field declaration: create FieldSymbol and compute layout
+                        FieldSymbol fs = new FieldSymbol(cls, decl.name, decl.type);
+                        fs.Unit = unit;
+                        if (!_static)
+                        {
+                            fs.Index = cls.FieldCount;
+                            cls.FieldCount++;
+                            int offs = ((cls.Size + decl.type.Size - 1) / decl.type.Size) * decl.type.Size;
+                            fs.Offset = offs;
+                            cls.SetSize(offs + decl.type.Size);
+                        }
+                        else
+                        {
+                            fs.Flags += SymbolFlags.Static;                        
+                        }
+
+                        if (_weak)
+                            fs.Flags += SymbolFlags.Weak;
+
+                        // Parse optional initializer for static fields
+                        if (scanner.Token == Token.Assign)
+                        {
+                            scanner.NextToken();
+                            if(scanner.Token == Token.LBrace)
+                                fs.InitialValue = ParseInitList(fs.DataType);
+                            else
+                                fs.InitialValue = ParseExpression();
+                            if (fs.InitialValue == null)
+                                return false;
+                        }
+
+                        // If this is a static field, create a companion GlobalVariable
+                        // that will be used by the codegen/linker to represent storage.
+                        if((fs.Flags & SymbolFlags.Static) != 0)
+                        {
+                            string gname = string.format("%s__%s", cls.Name, fs.Name);
+                            GlobalVariable gv = module.Find(gname) as GlobalVariable;
+                            if(gv == null) {
+                                gv = new GlobalVariable(module, gname, fs.DataType, null);
+                                unit.AddSymbol(gv);
+                                gv.Unit = unit;
+                            }
+                        }
+
+                        // Consume up to the trailing semicolon that ends the field decl
+                        while(scanner.Token != Token.Semicolon && scanner.Token != Token.EOF)
+                            scanner.NextToken();
+                    }
+                    if (!Expect(Token.Semicolon))
+                    {
+                        _class = null;
+                        return false;
+                    }
+                }
+            }
+
+            if (!Expect(Token.RBrace))
+            {
+                _class = null;
+                return false;
+            }
+
+            if (cls.Name != "object")
+            {
+                // Ensure default constructor exists (delegates to base ctor)
+                MethodSymbol ownCtorMethod = cls.Find("constructor") as MethodSymbol;
+                if(ownCtorMethod == null)
+                {
+                    if (!CreateConstructor(cls))
+                        return false;
+                }
+
+                // Add virtual getClassName() method used by runtime reflection
+                if (!CreateGetClassNameMethod(cls))
+                    return false;
+
+                // Add finalizer method that releases member references and
+                // chains to base finalize implementation.
+                if (!CreateFinalizer(cls))
+                    return false;
+            }        
+            // Create virtual table global var and populate its static init
+            if (!CreateVirtualTable(cls))
+                return false;
+
+            // Create per-class instance initialization method called by the
+            // constructor to initialize instance fields.
+            if (!CreateInstanceInitMethod(cls))
+                return false;
+            
+            _class = null;
+            return true;
+        }
+        return false;
+    }
+
+    // CreateConstructor - synthesize a default constructor function for a
+    // class when the user did not provide one. The generated function calls
+    // the base class constructor and returns the constructed object.
+    bool CreateConstructor(ClassType cls)
+    {
+        Function ownCtor = new Function(module, string.format("%s__constructor", cls.Name), cls.GetPointerType());
+        LocalVariable ownCtorThis = new LocalVariable(ownCtor, "this", cls.GetPointerType(), null);
+        ownCtorThis.Offset = 1;
+        ownCtor.Parameters.add(ownCtorThis);
+        ownCtor.Body = new StatementBlock();
+        unit.AddSymbol(ownCtor);
+        MethodSymbol baseCtorMethod = cls.BaseClass.FindChild("constructor") as MethodSymbol;
+        if(baseCtorMethod == null)
+        {
+            Error("No base ctor method");
+            return false;
+        }
+        Function baseCtorFn = baseCtorMethod.GetFunction();
+        if(baseCtorFn == null)
+        {
+            Error("No base ctor function");
+            return false;
+        }
+        FindOrImport(baseCtorFn.Name);
+        if (baseCtorFn.Parameters.count > 1)
+        {
+            Error(string.format("No default constructor for %s", cls.BaseClass.Name));
+            return false;
+        }
+        FunctionCallExpression baseFCall = new FunctionCallExpression(new SymbolExpression(baseCtorFn));
+        baseFCall.Arguments.add(new SymbolExpression(ownCtorThis));
+
+        LocalVariable lv = new LocalVariable(ownCtor.Body.Scope, string.format("__temp%d", scanner.Line), ownCtorThis.DataType, null);
+        lv.Offset = -(++ownCtor.LocalsCount);
+        ownCtor.Locals.add(lv);
+
+        AssignmentExpression assign = new AssignmentExpression(new SymbolExpression(lv), baseFCall);
+        ownCtor.Body.Statements.add(new ExpressionStatement(assign));
+
+        ownCtor.Body.Statements.add(new ReturnStatement(new SymbolExpression(lv)));
+
+        ownCtor.Flags += SymbolFlags.NoDebug;
+
+        return true;
+    }
+
+    // CreateGetClassNameMethod - synthesize a virtual method that returns the
+    // class name as a string pointer. This method is used for runtime type
+    // identification and defaults to delegating to base class vtable
+    // slot when overriding. getClassName() is used by "is" and "as" operators 
+    bool CreateGetClassNameMethod(ClassType cls)
+    {
+        Function getClassName = new Function(module, string.format("%s__getClassName", cls.Name), TypeSymbol.Byte.GetPointerType());
+        getClassName.Flags += SymbolFlags.NoDebug;
+        LocalVariable getClassNameThis = new LocalVariable(getClassName, "this", cls.GetPointerType(), null);
+        getClassNameThis.Offset = 1;
+        getClassName.Parameters.add(getClassNameThis);
+        string clsName = module.AddString(cls.Name);
+        unit.AddString(clsName);
+        unit.AddSymbol(getClassName);
+        getClassName.Body = new StatementBlock();
+        getClassName.Body.Statements.add(new ReturnStatement(ConstantExpression.FromString(clsName)));
+
+        MethodSymbol getClassNameMethod = new MethodSymbol(cls, "getClassName", getClassName);
+        getClassNameMethod.Flags += SymbolFlags.Virtual;
+
+        if (cls.BaseClass == null)
+        {
+            getClassNameMethod.VSlot = cls.VirtualMethods.count;
+            cls.VirtualMethods.add(getClassNameMethod);
+        }
+        else
+        {
+            MethodSymbol getBaseClassName = cls.BaseClass.Find("getClassName") as MethodSymbol;
+            if(getBaseClassName == null)
+            {
+                Error(string.format("No getClassName for %s", cls.BaseClass.Name));
+                return false;
+            }
+            getClassNameMethod.VSlot = getBaseClassName.VSlot;
+            cls.VirtualMethods[getClassNameMethod.VSlot] = getClassNameMethod;
+        }
+        return true;
+    }
+
+    // CreateFinalizer - generate a finalize method that releases non-static
+    // strong references held in instance fields and then calls the base
+    // class finalizer. The finalizer is registered in the class's vtable
+    // using the same virtual slot as the user-declared finalize method.
+    bool CreateFinalizer(ClassType cls)
+    {
+        Function finalize = new Function(module, string.format("%s__finalize", cls.Name), cls.GetPointerType());
+        unit.AddSymbol(finalize);
+        LocalVariable finalizeThis = new LocalVariable(finalize, "this", cls.GetPointerType(), null);
+        finalizeThis.Offset = 1;
+        finalize.Parameters.add(finalizeThis);
+        finalize.Body = new StatementBlock();
+        finalize.Flags += SymbolFlags.NoDebug;
+        for(int i = 0; i < cls.Children.count; ++i)
+        {
+            FieldSymbol fs = cls.Children[i] as FieldSymbol;
+            if (fs != null 
+                && fs.DataType.IsClassRef()
+                && (fs.Flags & SymbolFlags.Static) == 0
+                && (fs.Flags & SymbolFlags.Weak) == 0)
+            {
+                // Generate call to object's release method for each strong
+                // reference field so destructor semantics are honored.
+                FieldExpression fe = new FieldExpression(new SymbolExpression(finalizeThis), fs);
+                ClassType cls2 = fs.DataType.ElementType as ClassType;
+                MethodSymbol rel = FindType("object").FindChild("release") as MethodSymbol;
+                FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(rel.DataType));
+                fc.Arguments.add(fe);
+                finalize.Body.Statements.add(new ExpressionStatement(fc));
+            }
+        }
+
+        MethodSymbol baseFinalizeMethod = cls.BaseClass.FindChild("finalize") as MethodSymbol;
+        //Debug.Assert(baseFinalizeMethod != null);
+        Function baseFinalize = baseFinalizeMethod.DataType as Function;
+        //Debug.Assert(baseFinalize != null);
+        FindOrImport(baseFinalize.Name);
+        FunctionCallExpression baseCall = new FunctionCallExpression(new SymbolExpression(baseFinalize));
+        baseCall.Arguments.add(new SymbolExpression(finalizeThis));
+        finalize.Body.Statements.add(new ExpressionStatement(baseCall));
+
+        MethodSymbol finBase = cls.FindChild("finalize") as MethodSymbol;
+        //Debug.Assert(finBase != null);
+        int vslot = finBase.VSlot;
+        //Debug.Assert(vslot != -1);
+        MethodSymbol finalizeMethod = new MethodSymbol(cls, "finalize", finalize.DataType as Function);
+        finalizeMethod.VSlot = vslot;
+        finalizeMethod.Flags += SymbolFlags.Virtual;
+        cls.VirtualMethods[vslot] = finalizeMethod;
+
+        return true;
+    }
+
+    // CreateVirtualTable - prepare the vtable global variable for a class by
+    // building an array of function pointers (void**) where each slot
+    // corresponds to a virtual method. The parser adds AddressOf expressions
+    // for each method into an InitList which is then assigned into the
+    // per-unit static initializer so vtables are constructed at program start.
+    bool CreateVirtualTable(ClassType cls)
+    {
+        if (cls.VirtualMethods.count == 0)
+            cls.VirtualMethods.add(null);   // llvm doesnt like empty arrays
+
+        PointerType vptr = TypeSymbol.Void.GetPointerType();
+        ArrayType vpar = vptr.GetArrayType(cls.VirtualMethods.count);
+        GlobalVariable vtab = new GlobalVariable(module, string.format("%s__vtable", cls.Name), vpar, null);
+        vtab.Unit = unit;
+        unit.AddSymbol(vtab);
+        InitList vini = new InitList(vpar);
+        for(int i = 0; i < cls.VirtualMethods.count; ++i)
+        {
+            MethodSymbol v = cls.VirtualMethods[i];
+            if(v != null)
+            {
+                Function fn = v.GetFunction();
+                // Ensure we add a reference to the function symbol so it is
+                // available during later stages. Some runtime module loading
+                // code requires using the return value to avoid temporary
+                // optimizations; the important part is that the symbol is
+                // resolved and present in the compile unit/module.
+                Symbol tmp = FindOrImport(fn.Name); // <=== CRASHES IF NOT ASSIGNED TO SOMETHING.
+                vini.Expressions.add(new AddressOfExpression(new SymbolExpression(fn)));
+            }
+        }
+        // Add vtable init into the unit's static init function so that it's
+        // executed at program startup. StaticAssign will recursively create
+        // assignments for array elements or nested aggregates.
+        Function fnInit = unit.staticInit;
+        StatementBlock sinitBody = fnInit.Body;
+        StaticAssign(sinitBody,
+            new SymbolExpression(vtab),
+            vini, 0, null);
+
+        return true;
+    }
+
+    // CreateInstanceInitMethod - synthesize a per-class instance init
+    // function that can be invoked from constructors to initialize instance
+    // fields. The method body is created here but populated later in other
+    // parser stages.
+    bool CreateInstanceInitMethod(ClassType cls)
+    {
+        Function init = new Function(module, string.format("%s__init", cls.Name), cls.GetPointerType());
+        unit.AddSymbol(init);
+        LocalVariable iniThis = new LocalVariable(init, "this", cls.GetPointerType(), null);
+        iniThis.Offset = 1;
+        init.Parameters.add(iniThis);
+        init.Body = new StatementBlock();
+        init.Flags += SymbolFlags.NoDebug;
+        return true;
+    }
+
+    // ParseGlobalOrFunction - handle top-level function and global variable
+    // declarations in more detail than Parser1: this stage registers function
+    // symbols for later stages and processes modifiers such as 'external'
+    // and 'verbatim'. Function bodies are still skipped.
+    bool ParseGlobalOrFunction()
+    {
+        if(IsKeyword("const"))
+        {
+            while (scanner.Token != Token.EOF && scanner.Token != Token.Semicolon)
+                scanner.NextToken();
+            return Expect(Token.Semicolon);
+        }
+
+        int line = scanner.Line;
+
+        if (IsType())
+        {
+            Declaration decl = new Declaration();
+            if(!ParseDeclaration(decl, true, null, false, false))
+            {
+                return false;
+            }
+
+            if(decl.isByRef)
+            {
+                Error("Reference not allowed here");
+                return false;
+            }
+
+            if(decl.type.IsFunction())
+            {
+                //!
+                module.AddChild(decl.type);
+                // Register the function signature (type) with the unit so
+                // later passes can resolve method bodies and generate code.
+                unit.AddSymbol(decl.type);
+                decl.type.line = line;
+
+                if(scanner.Token == Token.LBrace)
+                {
+                    // Function body: skip for this stage
+                    SkipBraces();
+                    return Expect(Token.RBrace);
+                }
+                else if(scanner.Token == Token.DoubleArrow)
+                {
+                    // Inline shorthand: skip until semicolon
+                    scanner.NextToken();
+                    while (scanner.Token != Token.Semicolon && scanner.Token != Token.EOF)
+                        scanner.NextToken();
+                    return Expect(Token.Semicolon);
+                }
+                else
+                {
+                    // Function declaration modifiers
+                    if (IsKeyword("external"))
+                        decl.type.Flags += SymbolFlags.External;
+                    else if (IsKeyword("verbatim"))
+                    {
+                        // Verbatim functions embed a literal string representing
+                        // the implementation; capture and store it on the
+                        // Function object for later code generation.
+                        decl.type.Flags += SymbolFlags.Verbatim;
+                        if(scanner.Token != Token.String)
+                        {
+                            Error("Verbatim string expected");
+                            return false;
+                        }
+                        ((Function)decl.type).Verbatim = scanner.TokenString;
+                        scanner.NextToken();
+                    }
+
+                    return Expect(Token.Semicolon);
+                }
+            }
+            else
+            {
+                // Global variable declaration: skip initializer or consume
+                // trailing semicolon.
+                while(scanner.Token != Token.EOF)
+                {
+                    if (scanner.Token == Token.Semicolon)
+                        break;
+                    scanner.NextToken();
+                }
+                return Expect(Token.Semicolon);
+            }
+        }
+        else
+        {
+            Error("Syntax error");
+            return false;
+        }
+    }
+}

@@ -1,0 +1,507 @@
+// CodeTransform.cm
+// ------------------
+// This file defines a CodeTransform visitor that walks the parsed AST and
+// performs several transformations needed before code generation. It is
+// designed to operate after parsing and symbol resolution, and its main
+// responsibilities include:
+// - Rewriting property access and assignment expressions into getter/setter
+//   function calls.
+// - Rewriting indexer (get_item/set_item) access into function calls when
+//   a class provides these methods.
+// - Converting virtual method/property calls into explicit vtable lookups
+//   (Load the function pointer from the object's vtable and cast it to the
+//   correct signature), producing a FunctionCallExpression that can be
+//   emitted by later stages.
+// - Ensuring cross-unit function references are recorded in the compile
+//   unit (Unit.AddSymbolRef) so that dependencies are tracked for linking.
+//
+// The visitor follows the CodeVisitor pattern where each AST node has a
+// Visit method that calls the appropriate Visit* function on this class.
+
+using jargon;
+
+class CodeTransform : CodeVisitor
+{
+	// Parser is used here primarily for helper functions such as ForceCast
+	// which performs type-coercion rules and may synthesize CastExpression
+	// nodes when necessary.
+	BaseParser Parser;
+    // 'transformed' is a temporary storage used while visiting nodes. The
+    // visitor routines evaluate sub-expressions and place the rewritten
+    // sub-expression in this field so the parent caller can retrieve it.
+    Expression transformed;
+	// The compile unit being processed. This is used to register symbol
+	// references when a referenced function belongs to another unit.
+	weak CompileUnit Unit;
+	// Error listener for reporting errors encountered during transformation.
+	CompilerErrorListener errorListener;
+
+	// Error helper - report errors encountered during transformation. This
+	// simple implementation prints the message. In a fuller implementation
+	// this would create and forward CompilerError objects to an error
+	// listener.
+	void Error(string s, string file, int line)
+    {
+        CompilerError err = CompilerError.Error(s, file, line, 1);
+        errorListener.OnError(err);
+    }
+
+	// VisitConstantExpression - constants are left as-is; store the node in
+	// 'transformed' for the parent to use.
+	void VisitConstantExpression(ConstantExpression e, VisitMode mode) 
+	{
+		transformed = e;
+	}
+
+	// VisitBinaryExpression - recurse into left/right operands and update
+	// the BinaryExpression in-place with rewritten operands.
+	void VisitBinaryExpression(BinaryExpression e, VisitMode mode) 
+	{
+		e.Left.Visit(this, mode);
+        e.Left = transformed;
+        e.Right.Visit(this, mode);
+        e.Right = transformed;
+        transformed = e;
+	}
+
+	// VisitUnaryExpression - rewrite inner expression then reattach.
+	void VisitUnaryExpression(UnaryExpression e, VisitMode mode)
+	{
+		e.Expression.Visit(this, mode);
+        e.Expression = transformed;
+        transformed = e;
+	}
+	
+	// VisitCastExpression - visit the inner expression then keep cast node.
+	void VisitCastExpression(CastExpression e, VisitMode mode) 
+	{
+		e.Expression.Visit(this, mode);
+        e.Expression = transformed;
+        transformed = e;
+	}
+	
+	// VisitSymbolExpression - symbol references are unchanged by this pass.
+	void VisitSymbolExpression(SymbolExpression e, VisitMode mode)
+	{
+		transformed = e;
+	}
+	
+	// VisitFunctionCallExpression - rewrite callee and each argument. Visit
+	//Mode.Load is used because the call site consumes values.
+	void VisitFunctionCallExpression(FunctionCallExpression e, VisitMode mode)
+	{
+		e.Callee.Visit(this, VisitMode.Load);
+        e.Callee = transformed;
+
+        for (int i = 0; i < e.Arguments.count; i++)
+        {
+            e.Arguments[i].Visit(this, VisitMode.Load);
+            e.Arguments[i] = transformed;
+        }
+        transformed = e;
+	}
+
+	// GetVirtualCall - helper that builds a call expression which invokes a
+	// virtual method via the object's vtable. It constructs a vtable lookup
+	// expression like ((_void***)this)->vtable[VSlot] casted to the method
+	// function pointer type and returns a FunctionCallExpression using that
+	// as the callee. The caller is responsible for adding the correct
+	// arguments (this, params...).
+	FunctionCallExpression GetVirtualCall(Expression _this, MethodSymbol method)
+	{
+		// Todo: Use GetMethodInvokationFunction
+		ClassType cls = _this.DataType.ElementType as ClassType;
+		FieldExpression vtf = new FieldExpression(_this, cls.FindChild("vtable"));
+		IndexExpression vie = new IndexExpression(vtf, ConstantExpression.FromInt(method.VSlot));
+		CastExpression vcs = new CastExpression(vie, method.DataType.GetPointerType());
+		FunctionCallExpression fc = new FunctionCallExpression(vcs);
+		return fc;
+	}
+	
+	// VisitAssignmentExpression - this method contains the majority of the
+	// language-specific rewrites performed by the CodeTransform visitor.
+	// It handles special assignment targets such as indexers and properties
+	// by rewriting them into appropriate setter function calls.
+	void VisitAssignmentExpression(AssignmentExpression e, VisitMode mode) 
+	{
+		// Handle indexer assignment: obj[index] = value
+		if (e.Left is IndexExpression)
+        {
+			IndexExpression ie = (IndexExpression)e.Left;
+			TypeSymbol dt = ie.Expression.DataType;
+			if(dt.IsClassRef())
+			{
+				ClassType cls = (ClassType)dt.ElementType;
+				MethodSymbol m = cls.FindChild("set_item") as MethodSymbol;
+				if (m != null)
+				{
+					Function mfn = m.GetFunction();
+
+					// Ensure the function symbol is recorded as a dependency if it
+					// comes from another compile unit. This allows the linker to
+					// find and include required symbols.
+					if(mfn.Unit != Unit)
+						Unit.AddSymbolRef(mfn);
+
+					// Prepare right-hand side: cast to setter's expected parameter type
+					Expression r = e.Right;
+					r = Parser.ForceCast(r, mfn.Parameters[2].DataType);
+					r.Visit(this, VisitMode.Load);
+					e.Right = transformed;
+
+					// Visit the object expression (receiver)
+					ie.Expression.Visit(this, VisitMode.Load);
+					ie.Expression = transformed;
+					Expression  i = ie.Index;
+					i = Parser.ForceCast(i, mfn.Parameters[1].DataType);
+					i.Visit(this, VisitMode.Load);
+					ie.Index = transformed;
+                    
+					// Create either a virtual call (via vtable) or direct call
+					if ((m.Flags &SymbolFlags.Virtual) != 0)
+					{
+						FunctionCallExpression fc = GetVirtualCall(ie.Expression, m);
+						fc.Arguments.add(ie.Expression);
+						fc.Arguments.add(ie.Index);
+						fc.Arguments.add(r);
+						transformed = fc;
+					}
+					else
+					{
+						FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(mfn));
+						fc.Arguments.add(ie.Expression);
+						fc.Arguments.add(ie.Index);
+						fc.Arguments.add(r);
+						transformed = fc;
+					}
+
+					transformed.file = ie.file;
+					transformed.line = ie.line;
+
+					// At this point the assignment is replaced by a function call
+					return;
+				}
+			}
+        }
+
+		// Handle property setters: obj.prop = value or ClassType.prop = value
+		if (e.Left is FieldExpression)		
+        {
+			FieldExpression fe = (FieldExpression)e.Left;
+			if(fe.Field is PropertySymbol) 			
+			{
+				PropertySymbol ps = (PropertySymbol)fe.Field;
+
+				if (ps.Setter != null)
+				{
+					// Ensure setter function is referenced if it belongs to another unit
+					if(ps.Setter.GetFunction().Unit != Unit)
+						Unit.AddSymbolRef(ps.Setter.GetFunction());
+
+					// Visit receiver expression and the right-hand-side value; cast
+					// the RHS to the setter parameter type and then build the
+					// appropriate call form depending on whether setter is virtual,
+					// static or instance-based.
+
+					fe.Expression.Visit(this, VisitMode.Load);
+					fe.Expression = transformed;
+					Expression r = e.Right;
+					Function setterFn = ps.Setter.GetFunction();
+					r = Parser.ForceCast(r, setterFn.Parameters[1].DataType);
+					r.Visit(this, VisitMode.Load);
+					e.Right = transformed;
+
+					if ((ps.Setter.Flags & SymbolFlags.Virtual) != 0)
+					{
+						FunctionCallExpression fc = GetVirtualCall(fe.Expression, ps.Setter.VSlot);
+						fc.Arguments.add(fe.Expression);
+						fc.Arguments.add(e.Right);
+						transformed = fc;
+					}
+					else if ((ps.Setter.Flags & SymbolFlags.Static) != 0)
+					{
+						FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(ps.Setter.DataType));
+						fc.Arguments.add(e.Right);
+						transformed = fc;
+					}
+					else
+					{
+						FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(ps.Setter.DataType));
+						fc.Arguments.add(fe.Expression);
+						fc.Arguments.add(e.Right);
+						transformed = fc;
+					}
+					transformed.file = fe.file;
+					transformed.line = fe.line;
+					return;
+				}
+				else
+				{
+					Error(string.format("Property '%s' is read-only", ps.Name), "", 0);
+				}
+			}
+        }
+  
+		// Default assignment handling: visit RHS, then compute LHS address
+		// (for assignment semantics) and keep the AssignmentExpression node.
+		e.Right.Visit(this, VisitMode.Load);
+		e.Right = transformed;
+		e.Left.Visit(this, VisitMode.Address);
+		e.Left = transformed;
+		transformed = e;
+	}
+	
+	// VisitFieldExpression - rewrite property access into getter calls when
+	// the accessed field is a PropertySymbol. Otherwise visit the receiver
+	// expression and return the FieldExpression unchanged (subject to
+	// processing of the receiver subexpression).
+	void VisitFieldExpression(FieldExpression e, VisitMode mode) 
+	{
+		if (e.Field is PropertySymbol)
+        {
+			PropertySymbol ps = (PropertySymbol)e.Field;
+
+            if (ps.Getter != null)
+            {
+                // Evaluate receiver first (this or an expression) and ensure
+                // the getter function symbol is available as a dependency.
+                e.Expression.Visit(this, VisitMode.Load);
+                e.Expression = transformed;
+
+				if(ps.Getter.GetFunction().Unit != Unit)
+					Unit.AddSymbolRef(ps.Getter.GetFunction());
+
+                // Build getter call using virtual or direct call form depending
+                // on the getter's flags.
+                if ((ps.Getter.Flags & SymbolFlags.Virtual) != 0)
+                {
+					FunctionCallExpression fc = GetVirtualCall(e.Expression, ps.Getter);
+                    fc.Arguments.add(e.Expression);
+                    transformed = fc;
+                }
+                else if((ps.Getter.Flags & SymbolFlags.Static) != 0)
+                {
+                    FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(ps.Getter.DataType));
+                    transformed = fc;
+                }
+                else
+                {
+                    FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(ps.Getter.DataType));
+                    fc.Arguments.add(e.Expression);
+                    transformed = fc;
+                }
+				transformed.file = e.file;
+				transformed.line = e.line;
+                return;
+            }
+            else
+            {
+                Error(string.format("Property '%s' is write-only", ps.Name), "", 0);
+            }
+        }
+            
+        // Non-property field: visit receiver normally and return the field
+        // expression with the processed receiver.
+        e.Expression.Visit(this, mode);
+        e.Expression = transformed;
+        transformed = e;
+	}
+
+	// VisitIndexExpression - similar to field handling but for indexer
+	// syntax. If the object's class defines get_item, produce a call to the
+	// get_item method (virtual or direct). Otherwise recurse into the
+	// expression and index subexpressions and return the IndexExpression.
+	void VisitIndexExpression(IndexExpression e, VisitMode mode)
+	{
+		TypeSymbol dt = e.Expression.DataType;
+
+		if (dt.IsClassRef())
+        {
+            ClassType cls = (ClassType)dt.ElementType;
+            MethodSymbol m = cls.FindChild("get_item") as MethodSymbol;
+
+            if (m != null)
+            {
+				Function mfn = m.GetFunction();
+
+				if(mfn.Unit != Unit)
+					Unit.AddSymbolRef(mfn);
+
+                e.Expression.Visit(this, VisitMode.Load);
+                e.Expression = transformed;
+                Expression i = e.Index;
+                i = Parser.ForceCast(i, mfn.Parameters[1].DataType);
+                i.Visit(this, VisitMode.Load);
+                e.Index = transformed;
+
+                if ((m.Flags & SymbolFlags.Virtual) != 0)
+                {
+					FunctionCallExpression fc = GetVirtualCall(e.Expression, m);
+                    fc.Arguments.add(e.Expression);
+                    fc.Arguments.add(e.Index);
+                    transformed = fc;
+                }
+                else
+                {
+                    FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(mfn));
+                    fc.Arguments.add(e.Expression);
+                    fc.Arguments.add(e.Index);
+                    transformed = fc;
+                }
+
+				transformed.file = e.file;
+				transformed.line = e.line;
+
+                return;
+            }
+        }
+
+		e.Expression.Visit(this, mode);
+        e.Expression = transformed;
+        e.Index.Visit(this, mode);
+        e.Index = transformed;
+        transformed = e;
+	}
+	
+	// Simple visitors for unary/address/deref/ternary/postfix that recurse
+	// into child expressions and reattach transformed results.
+	void VisitAddressOfExpression(AddressOfExpression e, VisitMode mode) 
+	{
+		e.Expression.Visit(this, mode);
+		e.Expression = transformed;
+        transformed = e;
+	}
+	
+	void VisitDerefExpression(DerefExpression e, VisitMode mode) 
+	{
+		e.Expression.Visit(this, mode);
+        e.Expression = transformed;
+        transformed = e;
+	}
+
+	void VisitTernaryExpression(TernaryExpression e, VisitMode mode)
+	{
+		e.Condition.Visit(this, VisitMode.Load);
+        e.Condition = transformed;
+        e.Positive.Visit(this, mode);
+        e.Positive = transformed;
+        e.Negative.Visit(this, mode);
+        e.Negative = transformed;
+        transformed = e;
+	}
+	
+	void VisitPostFixExpression(PostFixExpression e, VisitMode mode)
+	{
+		e.Operand.Visit(this, mode);
+        e.Operand = transformed;
+        transformed = e;
+	}
+
+	// IR-level visitors for top-level symbols. Many are no-ops in this pass
+	// but they provide the traversal entry points for the visitor.
+	void VisitGlobalVariable(GlobalVariable s)
+	{
+	}
+	
+	void VisitFunction(Function s)
+	{
+		if (s.Body != null)
+			s.Body.Visit(this);
+	}
+	
+	void VisitStruct(StructType s)
+	{
+	}
+	
+	// VisitClass - for each field with an initial value, rewrite the
+	// initial value expression using this visitor. The rewritten initial
+	// expression will later be consumed by the static or instance init logic.
+	void VisitClass(ClassType s) 
+	{
+		for(int i = 0; i < s.Children.count; ++i)
+		{
+			FieldSymbol fs = s.Children[i] as FieldSymbol;
+			if(fs != null && fs.InitialValue != null)
+			{
+				fs.InitialValue.Visit(this, VisitMode.Load);
+				fs.InitialValue = transformed;
+			}
+		}
+	}
+
+	// Statement visitors: visit contained expressions and nested statements
+	void VisitReturnStatement(ReturnStatement s)
+	{
+		if (s.Expression != null)
+        {
+            s.Expression.Visit(this, VisitMode.Load);
+            s.Expression = transformed;
+        }
+	}
+	
+	void VisitStatementBlock(StatementBlock s) 
+	{
+		for(int i = 0; i < s.Statements.count; ++i)
+        {
+			Statement e = s.Statements[i];
+            e.Visit(this);
+        }
+	}
+
+	void VisitExpressionStatement(ExpressionStatement s) 
+	{
+		s.Expression.Visit(this, VisitMode.Load);
+        s.Expression = transformed;
+	}
+
+	void VisitIfStatement(IfStatement s) 
+	{
+		s.Condition.Visit(this, VisitMode.Load);
+        s.Condition = transformed;
+        s.Then.Visit(this);
+        if(s.Else != null)
+            s.Else.Visit(this);
+	}
+
+	void VisitWhileStatement(WhileStatement s)
+	{
+		s.Condition.Visit(this, VisitMode.Load);
+        s.Condition = transformed;
+        s.Body.Visit(this);
+	}
+	
+	void VisitBreakStatement(BreakStatement s) 
+	{
+	}
+	
+	void VisitContinueStatement(ContinueStatement s) 
+	{
+	}
+
+	void VisitDoStatement(DoStatement s) 
+	{
+		s.Condition.Visit(this, VisitMode.Load);
+        s.Condition = transformed;
+        s.Body.Visit(this);
+	}
+
+	void VisitForStatement(ForStatement s)
+	{
+		if(s.Init != null)
+		{
+			s.Init.Visit(this, VisitMode.Load);
+			s.Init = transformed;
+		}
+		if(s.Condition != null)
+		{
+			s.Condition.Visit(this, VisitMode.Load);
+			s.Condition = transformed;
+		}
+		if(s.Iter != null)
+		{
+			s.Iter.Visit(this, VisitMode.Load);
+			s.Iter = transformed;
+		}
+        s.Body.Visit(this);
+	}
+}

@@ -1,0 +1,11 @@
+class hash_pair_pTypeSymbol_pDINode
+{
+	TypeSymbol* key;
+	DINode* data;
+	hash_pair<TypeSymbol*,DINode*>* next;
+	
+	void destructor()
+	{
+		base();
+	}
+}

@@ -1,0 +1,205 @@
+using jargon;
+
+/*
+ Statement.cm
+
+ This file defines statement-level AST nodes used by the compiler. Statements
+ are visited by CodeVisitor implementations (see Expression.cm) and represent
+ control-flow and block structure: returns, expression statements, if/loops,
+ and scope blocks. Comments below explain each class, its purpose, and how
+ the visitor interface is used.
+*/
+
+// Base Statement class
+// All concrete statement nodes inherit from Statement and implement Visit so
+// visitors can process them (emit code, analyze, or transform the tree).
+class Statement
+{
+	string file;
+    int line;
+	virtual void Visit(CodeVisitor visitor) {}
+}
+
+// ReturnStatement: represents a 'return' from the current function. The
+// Expression field may be null for void returns.
+class ReturnStatement : Statement
+{
+	Expression Expression;
+
+	ReturnStatement constructor(Expression e)
+	{
+		base();
+		this.Expression = e;
+		return this;
+	}
+
+	void Visit(CodeVisitor visitor)
+	{
+		visitor.VisitReturnStatement(this);
+	}
+}
+
+// ExpressionStatement: wraps an expression used as a statement (e.g. a
+// function call or assignment).
+class ExpressionStatement : Statement
+{
+	Expression Expression;
+
+	ExpressionStatement constructor(Expression e)
+	{
+		base();
+		this.Expression = e;
+		return this;
+	}
+
+	void Visit(CodeVisitor visitor)
+	{
+		visitor.VisitExpressionStatement(this);
+	}
+}
+
+// StatementBlock: a sequence of statements that share a local scope.
+// Scope is represented by a BlockScope symbol which can hold local variables
+// declared inside the block. Visitors will typically create a new codegen
+// scope and visit each child statement in order.
+class StatementBlock : Statement
+{
+	BlockScope Scope;
+	array<Statement> Statements;
+	int endLine;
+
+	StatementBlock constructor()
+	{
+		base();
+		Scope = new BlockScope();
+		Statements = new array<Statement>();
+		return this;
+	}
+
+	void Visit(CodeVisitor visitor)
+	{
+		visitor.VisitStatementBlock(this);
+	}
+}
+
+// IfStatement: conditional branching.
+// Condition: expression whose truthiness is tested (visitor should coerce to bool)
+// Then: statement executed when condition is true
+// Else: optional statement executed when condition is false
+class IfStatement : Statement
+{
+	Expression Condition;
+	Statement Then;
+	Statement Else;
+
+	IfStatement constructor(Expression condition, Statement _then, Statement _else)
+	{
+		base();
+		this.Condition = condition;
+		this.Then = _then;
+		this.Else = _else;
+		return this;
+	}
+
+	void Visit(CodeVisitor visitor)
+	{
+		visitor.VisitIfStatement(this);
+	}
+}
+
+// LoopStatement: base class for loop constructs. Holds labels for continue
+// and break targets and common fields like Condition and Body. Concrete loop
+// types inherit from this.
+class LoopStatement : Statement
+{
+	Label ContinueLabel;
+	Label BreakLabel;
+	Expression Condition;
+	Statement Body;
+}
+
+// WhileStatement: while(condition) body
+// Inherits labels and fields from LoopStatement. Visitors will generate
+// loop entry/exit code using ContinueLabel/BreakLabel as targets.
+class WhileStatement : LoopStatement
+{
+
+	WhileStatement constructor(Expression condition, Statement body)
+	{
+		base();
+		this.Condition = condition;
+		this.Body = body;
+		return this;
+	}
+
+	void Visit(CodeVisitor visitor)
+	{
+		visitor.VisitWhileStatement(this);
+	}
+}
+
+// BreakStatement: transfers control to the nearest loop's BreakLabel.
+class BreakStatement : Statement
+{
+	void Visit(CodeVisitor visitor)
+	{
+		visitor.VisitBreakStatement(this);
+	}
+}
+
+// ContinueStatement: transfers control to the nearest loop's ContinueLabel.
+class ContinueStatement : Statement
+{
+	void Visit(CodeVisitor visitor)
+	{
+		visitor.VisitContinueStatement(this);
+	}
+}
+
+// DoStatement: do { body } while(condition) - condition is evaluated after body.
+// Represented with LoopStatement so visitors can reuse loop-label handling.
+class DoStatement : LoopStatement
+{
+	DoStatement constructor(Statement body, Expression condition)
+	{
+		base();
+		this.Body = body;
+		this.Condition = condition;
+		return this;
+	}
+
+	void Visit(CodeVisitor visitor)
+	{
+		visitor.VisitDoStatement(this);
+	}
+}
+
+// ForStatement: for(initializer; condition; iter) body
+// The initializer and iter are represented as expressions (which may be
+// declarations or assignments). Scope is a BlockScope local to the for-loop.
+class ForStatement : LoopStatement
+{
+	Expression Init;
+	Expression Iter;
+	BlockScope Scope;
+
+	ForStatement constructor(Expression init, Expression condition, Expression iter, Statement body)
+	{
+		base();
+		this.Init = init;
+		this.Condition = condition;
+		this.Iter = iter;
+		this.Body = body;
+		return this;
+	}
+
+	void Visit(CodeVisitor visitor)
+	{
+		visitor.VisitForStatement(this);
+	}
+}
+
+class EmptyStatement : Statement
+{
+
+}

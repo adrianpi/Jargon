@@ -1,0 +1,936 @@
+using jargon;
+
+// External C runtime helpers used for numeric conversions. These are provided
+// by the runtime and declared as externals so the scanner can reuse them.
+int atoi(byte *str) external;
+int strtol(byte *str, byte *ptr, int _base) external;
+long strtoll(byte *str, byte *ptr, int _base) external;
+uint strtoul(byte *str, byte *ptr, int _base) external;
+ulong strtoull(byte *str, byte *ptr, int _base) external;
+double atof(byte *str) external;
+byte* strcpy(byte *dst, byte *src) external;
+int strcmp(byte *a, byte *b) external;
+
+// Token enumeration
+// Defines all lexical token kinds produced by the scanner. The parser and
+// subsequent stages consume these token values.
+enum Token
+{
+    EOF = 0,
+    Error,
+    Keyword,
+    Bool,
+    Byte,
+    Int,
+    UInt,
+    Long,
+    ULong,
+    String,
+    Float,
+    Double,
+    Ident,
+    LPar,
+    RPar,
+    Comma,
+    Period,
+    Colon,
+    Semicolon,
+    Ellipsis,
+    Question,
+    LBracket,
+    RBracket,
+    LBrace,
+    RBrace,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
+    LAnd,
+    LOr,
+    Assign,
+    AssignAdd,
+    AssignSub,
+    AssignMul,
+    AssignDiv,
+    AssignMod,
+    AssignAnd,
+    AssignOr,
+    AssignXor,
+    AssignShl,
+    AssignShr,
+    AssignLAnd,
+    AssignLOr,
+    Not,
+    LNot,
+    Equal,
+    NEqual,
+    Less,
+    Greater,
+    LEqual,
+    GEqual,
+    Inc,
+    Dec,
+    Min,
+    Max,
+    DoubleArrow,
+    Reference,
+}
+
+// The fixed list of language keywords. The scanner recognizes these strings
+// and returns Token.Keyword; the parser then tests TokenString to decide which
+// keyword was seen (e.g. "class", "if", "return").
+string keywords[31] = 
+{
+    "as",
+    "base",
+    "break",
+    "class",
+    "const",
+    "continue",
+    "debug",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "external",
+    "for",
+    "get",
+    "if",
+    "is",
+    "new",
+    "null",
+    "operator",
+    "return",
+    "set",
+    "sizeof",
+    "static",
+    "struct",
+    "template",
+    "union",
+    "using",
+    "verbatim",
+    "virtual",
+    "weak",
+    "while",
+};
+
+// ScannerState is a snapshot of the scanner's fields used by the parser when
+// doing speculative parsing. The parser calls GetState(), attempts a parse,
+// and calls RestoreState() if it needs to backtrack.
+class ScannerState
+{
+    string fileName;
+    string text;
+    int textLen;
+    int pos;
+    int column;
+    int line;
+    byte c;
+    Token token;
+    int tokenInt;
+    long tokenLong;
+    float tokenFloat;
+    double tokenDouble;
+    string tokenString;
+}
+
+// Scanner: the lexical analyzer
+// Responsibilities:
+//  - Iterate characters of the input text
+//  - Produce tokens and associated semantic values (strings, ints, floats)
+//  - Provide position information (line/column) for diagnostics
+//  - Provide GetState/RestoreState to support parser lookahead
+class Scanner
+{
+    // current input and position state
+    string fileName;
+    string text;
+    int textLen;
+    int pos;        // index into `text` for current character
+    int column;     // current column (character count on current line)
+    int line;       // current line number (1-based)
+    byte c;         // current character, or '\0' at EOF
+
+    // last produced token and its semantic payload
+    Token token;
+    int tokenInt;
+    long tokenLong;
+    float tokenFloat;
+    double tokenDouble;
+    string tokenString;
+
+    hash_set<string> keywordsSet;  // for fast keyword lookup (optional optimization)
+
+    // callback for reporting lexical errors
+    CompilerErrorListener errorListener;
+
+    // Public accessors used by the parser
+    Token get Token() => token;
+    bool get TokenBool() => tokenInt != 0;
+    int get TokenInt() => tokenInt;
+    long get TokenLong() => tokenLong;
+    float get TokenFloat() => tokenFloat;
+    double get TokenDouble() => tokenDouble;
+    string get TokenString() => tokenString;
+    string get FileName() => fileName;
+    int get Line() => line;
+    int get Column() => column;
+
+    // Create a state snapshot for parser lookahead/backtracking
+    ScannerState GetState()
+    {
+        ScannerState state = new ScannerState();
+        state.fileName = this.fileName;
+        state.text = this.text;
+        state.textLen = this.textLen;
+        state.pos = this.pos;
+        state.column = this.column;
+        state.line = this.line;
+        state.c = this.c;
+        state.token = this.token;
+        state.tokenInt = this.tokenInt;
+        state.tokenLong = this.tokenLong;
+        state.tokenFloat = this.tokenFloat;
+        state.tokenDouble = this.tokenDouble;
+        state.tokenString = this.tokenString;
+        return state;
+    }
+
+    // Restore a previously captured scanner state. This resets all fields so
+    // the parser can continue as if the speculative parse never happened.
+    void RestoreState(ScannerState state)
+    {
+        this.fileName = state.fileName;
+        this.text = state.text;
+        this.textLen = state.textLen;
+        this.pos = state.pos;
+        this.column = state.column;
+        this.line = state.line;
+        this.c = state.c;
+        this.token = state.token;
+        this.tokenInt = state.tokenInt;
+        this.tokenLong = state.tokenLong;
+        this.tokenFloat = state.tokenFloat;
+        this.tokenDouble = state.tokenDouble;
+        this.tokenString = state.tokenString;
+    }
+
+    // Constructor: initialize scanner and prime first token
+    Scanner constructor(string text, string fileName)
+    {
+        base();
+        this.text = text;
+        this.textLen = text.length;
+        this.fileName = fileName;
+        pos = -1;
+        column = 0;
+        line = 1;
+        keywordsSet = new hash_set<string>();
+        for(int i = 0; i < sizeof(keywords)/sizeof(keywords[0]); ++i)
+            keywordsSet.add(keywords[i]);
+        NextChar();   // advance to first character (or '\0' if empty)
+        NextToken();  // produce the first token ready for the parser
+        return this;
+    }
+
+    // Report a lexical error via the configured error listener (if any).
+    // The parser and other components rely on line/column for diagnostics.
+    void Error(string message)
+    {
+        if (errorListener != null)
+            errorListener.OnError(CompilerError.Error(message, fileName, line, column));
+    }
+
+    // Advance to the next character in the input. Updates pos, c, line, column.
+    // Invariant: after calling NextChar, `c` holds the current character or
+    // '\0' when EOF is reached.
+    void NextChar()
+    {
+        if (pos < textLen - 1)
+        {
+            pos++;
+            c = text[pos];
+            if (c == '\n')
+            {
+                // Newline resets column and increments line counter
+                column = 0;
+                line++;
+            }
+            else
+            {
+                column++;
+            }
+        }
+        else
+        {
+            // Past-the-end: mark current char as NUL sentinel
+            c = '\0';
+        }
+    }
+
+    // NextToken: main lexical routine that recognizes the next token and
+    // sets `token` and its associated payload fields. It handles:
+    //  - finite automata
+    //  - whitespace skipping
+    //  - punctuation and multi-character operators
+    //  - line and block comments
+    //  - string and char literals (using Unescape)
+    //  - numeric literals (decimal, hex, binary, float/double)
+    //  - identifiers and keywords
+    // On error the scanner calls Error(...) and produces Token.Error.
+    void NextToken()
+    {
+        while(true)
+        {
+            // Skip whitespace characters (space, tab, newline, carriage return)
+            while(c == ' ' || c == '\t' || c == '\n' || c == '\r')
+                NextChar();
+
+            // Punctuation and operators - many branches are multi-char and
+            // perform lookahead by advancing `c` with NextChar(). The scanner
+            // uses an imperative style for speed and clarity.
+            if (c == '\0')
+            {
+                token = Token.EOF;
+            }
+            else if (c == '(')
+            {
+                NextChar();
+                token = Token.LPar;
+            }
+            else if (c == ')')
+            {
+                NextChar();
+                token = Token.RPar;
+            }
+            else if (c == '[')
+            {
+                NextChar();
+                token = Token.LBracket;
+            }
+            else if (c == ']')
+            {
+                NextChar();
+                token = Token.RBracket;
+            }
+            else if(c == '{')
+            {
+                NextChar();
+                token = Token.LBrace;
+            }
+            else if(c == '}')
+            {
+                NextChar();
+                token = Token.RBrace;
+            }
+            else if (c == '+')
+            {
+                // '+' | '++' | '+='
+                NextChar();
+                if(c == '=')
+                {
+                    NextChar();
+                    token = Token.AssignAdd;
+                }
+                else if(c == '+')
+                {
+                    NextChar();
+                    token = Token.Inc;
+                }
+                else
+                {
+                    token = Token.Add;
+                }
+            }
+            else if (c == '-')
+            {
+                // '-' | '--' | '-='
+                NextChar();
+                if(c == '=')
+                {
+                    NextChar();
+                    token = Token.AssignSub;
+                }
+                else if(c == '-')
+                {
+                    NextChar();
+                    token = Token.Dec;
+                }
+                else
+                {
+                    token = Token.Sub;
+                }                
+            }
+            else if (c == '*')
+            {
+                NextChar();
+                if(c == '=')
+                {
+                    NextChar();
+                    token = Token.AssignMul;
+                }
+                else
+                {
+                    token = Token.Mul;
+                }
+            }
+            else if (c == '/')
+            {
+                // '/', '//' comment, '/* ... */' comment, or '/='
+                NextChar();
+                if(c == '/') 
+                {
+                    // Line comment: consume until newline or EOF and then
+                    // restart tokenization loop (caller sees no token for comment).
+                    NextChar();
+                    while(c != '\n' && c != '\0')
+                        NextChar();
+                    continue; // skip line-comment
+                }
+                else if(c == '*')
+                {
+                    // Block comment: consume until '*/' or EOF. If unterminated,
+                    // treat it as EOF to stop further parsing.
+                    NextChar();
+                    while(true)
+                    {
+                        if (c == '\0')
+                        {
+                            token = Token.EOF;
+                            return;
+                        }
+                        else if (c == '*' && pos + 1 < textLen && text[pos + 1] == '/')
+                        {
+                            NextChar();
+                            NextChar();
+                            break;
+                        }
+                        NextChar();
+                    }
+                    continue; // skip block-comment
+                }
+                else if(c == '=')
+                {
+                    NextChar();
+                    token = Token.AssignDiv;
+                }
+                else 
+                {
+                    token = Token.Div;
+                }
+            }
+            else if(c == '%')
+            {
+                NextChar();
+                if(c == '=')
+                {
+                    NextChar();
+                    token = Token.AssignMod;
+                }
+                else
+                {
+                    token = Token.Mod;
+                }
+            }
+            else if (c == '&')
+            {
+                // Support '&&' (logical AND) and '&=' (bitwise AND assignment)
+                NextChar();
+                if(c == '&')
+                {
+                    // logical-and '&&'
+                    NextChar();
+                    token = Token.LAnd;
+                }
+                else if(c == '=')
+                {
+                    // bitwise AND assignment '&='
+                    NextChar();
+                    token = Token.AssignAnd;
+                }
+                else
+                {
+                    token = Token.And;
+                }
+            }
+            else if (c == '|')
+            {
+                // Support '||' (logical OR) and '|=' (bitwise OR assignment)
+                NextChar();
+                if(c == '|')
+                {
+                    // logical-or '||'
+                    NextChar();
+                    token = Token.LOr;
+                }
+                else if(c == '=')
+                {
+                    // bitwise OR assignment '|='
+                    NextChar();
+                    token = Token.AssignOr;
+                }
+                else
+                {
+                    token = Token.Or;
+                }
+            }
+            else if(c == '^')
+            {
+                NextChar();
+                if(c == '=')
+                {
+                    NextChar();
+                    token = Token.AssignXor;
+                }
+                else
+                {
+                    token = Token.Xor;
+                }
+            }
+            else if(c == '=')
+            {
+                NextChar();
+                if(c == '=') 
+                {
+                    NextChar();
+                    token = Token.Equal;
+                }
+                else if(c == '>')
+                {
+                    NextChar();
+                    token = Token.DoubleArrow;
+                }                
+                else
+                {
+                    token = Token.Assign;
+                }
+            }
+            else if(c == '?')
+            {
+                NextChar();
+                token = Token.Question;
+            }
+            else if(c == '!')
+            {
+                NextChar();
+                if(c == '=')
+                {
+                    NextChar();
+                    token = Token.NEqual;
+                }
+                else
+                {
+                    token = Token.LNot;
+                }
+            }
+            else if(c == '<')
+            {
+                NextChar();
+                if(c == '=')
+                {
+                    NextChar();
+                    token = Token.LEqual;
+                }
+                else if(c == '<')
+                {
+                    NextChar();
+                    if(c == '=')
+                    {
+                        NextChar();
+                        token = Token.AssignShl;
+                    }
+                    else
+                    {
+                        token = Token.Shl;
+                    }
+                }
+                else if(c == '?')
+                {
+                    NextChar();
+                    token = Token.Min;
+                }
+                else
+                {
+                    token = Token.Less;
+                }
+            }
+            else if(c == '>')
+            {
+                NextChar();
+                if(c == '=')
+                {
+                    NextChar();
+                    token = Token.GEqual;
+                }
+                else if(c == '>')
+                {
+                    NextChar();
+                    if(c == '=')
+                    {
+                        NextChar();
+                        token = Token.AssignShr;
+                    }
+                    else
+                    {
+                        token = Token.Shr;
+                    }
+                }
+                else if(c == '?')
+                {
+                    NextChar();
+                    token = Token.Max;
+                }
+                else
+                {
+                    token = Token.Greater;
+                }
+            }
+            else if(c == ',')
+            {
+                NextChar();
+                token = Token.Comma;
+            }
+            else if(c == ';')
+            {
+                NextChar();
+                token = Token.Semicolon;
+            }
+            else if(c == ':')
+            {
+                NextChar();
+                token = Token.Colon;
+            }
+            else if (c == '.')
+            {
+                // '.' or '...'
+                NextChar();
+                if (c == '.')
+                {
+                    NextChar();
+                    if (c == '.')
+                    {
+                        NextChar();
+                        token = Token.Ellipsis;
+                    }
+                    else
+                    {
+                        token = Token.Error;
+                    }
+                }
+                else
+                {
+                    token = Token.Period;
+                }
+            }
+            else if(c == '~')
+            {
+                NextChar();
+                token = Token.Not;
+            }
+            else if(c == '@')
+            {
+                NextChar();
+                token = Token.Reference;
+            }
+            else if(c == '"')
+            {
+                // String literal: collect characters until matching '"'.
+                // Uses Unescape to decode escape sequences while building the
+                // tokenString payload.
+                NextChar();
+                tokenString = "";
+                while(c != '"' && c != '\0' && c != '\n')
+                {
+                    tokenString += Unescape(c);
+                    NextChar();
+                }
+                token = Token.String;
+                if(c == '\0' || c == '\n')
+                {
+                    Error("Unterminated string constant");
+                    token = Token.Error;
+                }
+                NextChar();
+            }
+            else if(c == '\'')
+            {
+                // Character literal. Represented as Token.Byte with tokenInt set
+                // to the character value. Unterminated characters are reported.
+                NextChar();
+                tokenString = "";
+                while(c != '\'' && c != '\0' && c != '\n')
+                {
+                    tokenString += Unescape(c);
+                    NextChar();
+                }
+                token = Token.Byte;
+                if(c == '\0' || c == '\n')
+                {
+                    NextChar();
+                    Error("Unterminated character constant");
+                    token = Token.Error;
+                    
+                }
+                else if(tokenString.length > 1)
+                {
+                    NextChar();
+                    Error("Invalid character constant");
+                    token = Token.Error;                    
+                }
+                else
+                {
+                    NextChar();
+                    tokenInt = (int)tokenString[0];
+                }
+            }
+            else if(c >= '0' && c <= '9')
+            {
+                // Numeric literal scanning. This block handles:
+                //  - decimal integers
+                //  - hex (0x...)
+                //  - binary (0b...)
+                //  - floating point numbers with optional trailing 'f' for float
+                tokenString = "";
+                tokenString += c;
+                string szZero = new string("0");
+
+                NextChar();
+
+                bool isReal = false;
+                bool isFloat = false;
+                bool isHex = false;
+                bool isBinary = false;
+                bool isUnsigned = false;
+                bool isLong = false;
+
+                if (tokenString == szZero && (c == 'x' || c == 'X' || c == 'b' || c == 'B'))
+                {
+                    if (c == 'x' || c == 'X')
+                        isHex = true;
+                    else
+                        isBinary = true;
+                    NextChar();
+                }
+
+                while((c >= '0' && c <= '9') 
+                    || (!isReal && !isHex && !isBinary && c == '.') 
+                    || (isHex && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))))
+                {
+                    tokenString += c;
+                    if(c == '.')
+                        isReal = true;
+                    NextChar();
+                }
+                if(isReal && c == 'f')
+                {
+                    NextChar();
+                    isFloat = true;
+                }
+                else if(!isReal)
+                {
+                    if(c == 'u' || c == 'U')
+                    {
+                        isUnsigned = true;
+                        NextChar();
+                    }
+                    if(c == 'l' || c == 'L')
+                    {
+                        isLong = true;
+                        NextChar();
+                    }
+                }
+                if(isReal)
+                {
+                    if(isFloat)
+                    {
+                        tokenFloat = (float)atof(tokenString.c_str());
+                        token = Token.Float;
+                    }
+                    else
+                    {
+                        tokenDouble = atof(tokenString.c_str());
+                        token = Token.Double;
+                    }
+                }
+                else
+                {
+                    // Integer conversion uses C runtime helpers (atoi/strtol)
+                    if(isHex)
+                    {
+                        if(isLong)
+                        {
+                            tokenLong = strtoull(tokenString.c_str(), null, 16);
+                            token = isUnsigned ? Token.ULong : Token.Long;
+                        }
+                        else
+                        {
+                            tokenInt = strtoul(tokenString.c_str(), null, 16);
+                            token = isUnsigned ? Token.UInt : Token.Int;
+                        }
+                    }
+                    else if(isBinary)
+                    {
+                        if(isLong)
+                        {
+                            tokenLong = strtoull(tokenString.c_str(), null, 2);
+                            token = isUnsigned ? Token.ULong : Token.Long;
+                        }
+                        else
+                        {
+                            tokenInt = strtoul(tokenString.c_str(), null, 2);
+                            token = isUnsigned ? Token.UInt : Token.Int;
+                        }
+                    }
+                    else
+                    {
+                        if(isLong)
+                        {
+                            if(isUnsigned)
+                                tokenLong = strtoull(tokenString.c_str(), null, 10);
+                            else
+                                tokenLong = strtoll(tokenString.c_str(), null, 10);
+                            token = isUnsigned ? Token.ULong : Token.Long;
+                        }
+                        else
+                        {
+                            if(isUnsigned)
+                                tokenInt = strtoul(tokenString.c_str(), null, 10);
+                            else
+                                tokenInt = atoi(tokenString.c_str());
+                            token = isUnsigned ? Token.UInt : Token.Int;
+                        }
+                    }
+                }
+            }
+            else if(c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+            {
+                // Identifier or keyword. The scanner records the sequence of
+                // identifier characters in tokenString and then checks against
+                // the keyword table. Reserved words map to Token.Keyword while
+                // other names are Token.Ident. Boolean literals "true"/
+                // "false" are returned as Token.Bool with tokenInt set.
+                tokenString = "";
+                tokenString += c;
+                NextChar();
+                while(c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+                {
+                    tokenString += c;
+                    NextChar();
+                }
+                if(tokenString == "true")
+                {
+                    tokenInt = 1;
+                    token = Token.Bool;
+                }
+                else if(tokenString == "false")
+                {
+                    tokenInt = 0;
+                    token = Token.Bool;
+                }
+                else
+                {
+                    /*int cnt = sizeof(keywords) / sizeof(keywords[0]); // countof
+                    bool found = false;
+                    for(int i = 0; i < cnt; ++i) {
+                        if(tokenString == keywords[i]) {
+                            found = true;
+                            break;
+                        }
+                    }*/
+                    bool found = keywordsSet.contains(tokenString);
+                    if(found)
+                        token = Token.Keyword;
+                    else
+                        token = Token.Ident;
+                }
+            }
+            else
+            {
+                // Unknown / invalid character encountered. Advance one char
+                // to avoid infinite loop and return an error token.
+                NextChar();
+                Error("Invalid character");
+                token = Token.Error;
+            }
+            break; // token produced: exit loop
+        }
+    }
+
+    // Unescape
+    // Decode escape sequences inside string and character literals. The
+    // scanner's NextToken uses this helper while building literal contents.
+    // The function advances the scanner as it consumes escape characters.
+    // Supported escapes: \0, \a, \b, \f, \n, \r, \t, \v, \" , \' , \\\,
+    //  octal sequences (up to digits 0..7), and \x hex sequences (one or more hex digits).
+    byte Unescape(byte cc)
+    {
+        if(cc == '\\')
+        {
+            NextChar();
+            if(c == '0') return '\0';
+            else if(c == 'a') return '\a';
+            else if(c == 'b') return '\b';
+            else if(c == 'f') return '\f';
+            else if(c == 'n') return '\n';
+            else if(c == 'r') return '\r';
+            else if(c == 't') return '\t';
+            else if(c == 'v') return '\v';
+            else if(c == '"') return '"';
+            else if(c == '\'') return '\'';
+            else if(c == '\\') return '\\';
+
+            // Octal escape: accept only digits 0..7 to avoid invalid octal
+            // digits like '8'/'9' which would be an error.
+            if(c >= '0' && c <= '7')
+            {
+                string octal = "";
+                octal = octal + c;
+                NextChar();
+                while (c >= '0' && c <= '7')
+                {
+                    octal += c;
+                    NextChar();
+                }
+                // step back one position because the calling loop will advance
+                pos--;
+                return (byte)strtoul(octal.c_str(), null, 8);
+            }
+            else if(c == 'x' || c == 'X')
+            {
+                // Hex escape: require at least one hex digit. If none present,
+                // report an error and return 0 as a safe fallback.
+                string hex = "";
+                NextChar();
+                while ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
+                {
+                    hex += c;
+                    NextChar();
+                }
+                if (hex.length == 0)
+                {
+                    Error("Invalid hex escape sequence");
+                    // backtrack to keep scanner position consistent
+                    pos--;
+                    return (byte)0;
+                }
+                pos--;
+                return (byte)strtoul(hex.c_str(), null, 16);
+            }
+        }
+        // Not an escape sequence: return the character unchanged
+        return cc;
+    }
+
+    // Clear the keyword table at program shutdown to break potential references.
+    static void Finalize()
+    {
+        for(int i = 0; i < sizeof(keywords)/sizeof(keywords[0]); ++i)
+            keywords[i] = null;
+    }
+}

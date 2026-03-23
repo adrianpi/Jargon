@@ -1,0 +1,461 @@
+using jargon;
+
+// Parser1: first parsing stage that handles top-level declarations and
+// imports. It extends StageParser which provides helper routines and
+// expression parsing from ExpressionParser.
+//
+// Responsibilities of Parser1 include:
+// - Resolving and loading modules referenced by 'using' statements.
+// - Creating basic AST symbol nodes for enums, structs, unions and classes
+//   (without parsing their full member lists at this stage).
+// - Recognizing templates and recording their source for later instantiation.
+// - Skipping function bodies or initializers when they are not needed by
+//   this stage (using SkipBraces), enabling a multi-pass parsing strategy.
+class Parser1 : StageParser
+{
+    // totalLines - simple metric accumulated by OnEndParse to track the
+    // number of input lines processed. Useful for diagnostics or progress.
+    static int totalLines = 0;
+
+    // Constructor: delegates to StageParser constructor which saves module and
+    // error listener references for later use.
+    Parser1 constructor(Module module, CompilerErrorListener errorListener)
+    {
+        base(module, errorListener);
+        return this;
+    }
+
+    // OnEndParse - update global metrics when this parser finishes a unit.
+    // scanner.Line contains the current line number in the scanned file;
+    // adding this to totalLines accumulates a simple workload measure.
+    void OnEndParse()
+    {
+        Parser1.totalLines += scanner.Line;
+    }
+
+    // ParseUsing - handle a top-level 'using <name>;' directive. This resolves
+    // the named module from already known module usings or attempts to load a
+    // matching .dll file from the search paths and registers the imported
+    // module in the current compile unit and the module-wide using table.
+    //
+    // Key behavior details:
+    // - If the unit already contains the using, the directive is ignored.
+    // - If the module is found among module.Usings the existing module object
+    //   is re-used. Otherwise the parser searches directories listed in
+    //   CompilerOptions.LibraryDirectories (and the CWD) for a DLL named
+    //   <name>.dll and attempts to load it via TypeInfo.ParseModule.
+    // - When the special module name "jargon" is imported, ImportLingoDefaults
+    //   is called to pre-import commonly used runtime helpers.
+    bool ParseUsing()
+    {
+        if (scanner.Token != Token.Ident)
+        {
+            Error("Identifier expected");
+            return false;
+        }
+
+        string name = scanner.TokenString;
+        scanner.NextToken();
+
+        // If compile unit already lists this using, no-op
+        for(int i = 0; i < unit.Usings.count; ++i)        
+        {
+            ModuleUsing u = unit.Usings[i];
+            if (u.Name == name)
+                return Expect(Token.Semicolon); // already using it
+        }
+
+        // Try to find an existing loaded module by this short name in the
+        // global module's using table first.
+        Module moduleToUse = null;
+        bool foundInModule = false;
+        for(int i = 0; i < module.Usings.count && !foundInModule; ++i)
+        {
+            ModuleUsing u = module.Usings[i];
+            if (u.Name == name)
+            {
+                moduleToUse = u.Module;
+                foundInModule = true;
+            }
+        }
+        if (moduleToUse == null)
+        {
+            // Search candidate directories for a <name>.dll. The search
+            // includes the current working directory followed by configured
+            // library directories. Entries starting with '$' are treated as
+            // environment variable references (e.g. $JARGON_LIB).
+            array<string> dirs = new array<string>();
+            dirs.add(path.getCurrentDirectory());
+            for(int i = 0; i < options.LibraryDirectories.count; ++i)
+                dirs.add(options.LibraryDirectories[i]);
+            string dllname = null;
+            for(int i = 0; i < dirs.count && dllname == null; ++i)
+            {
+                string ddir = dirs[i];
+                if (ddir.startsWith("$"))
+                {
+                    string sub = ddir.substr(1, ddir.length-1);
+                    ddir = getenv(sub.c_str());
+                    if (ddir == null)
+                        continue;
+                }
+
+                if(file.exists(string.format("%s\\%s.dll", ddir, name)))
+                {
+                    dllname = string.format("%s\\%s.dll", ddir, name);
+                }
+            }
+            if (dllname == null)
+            {
+                Error(string.format("Could not find %s.dll", name));
+                return false;
+            }
+            // Attempt to parse/load the module from the DLL; TypeInfo.ParseModule
+            // is expected to return a Module object on success.
+            moduleToUse = TypeInfo.ParseModule(dllname);
+            if (moduleToUse == null)
+            {
+                Error(string.format("Error loading %s", dllname));
+                return false;
+            }
+        }
+        // Create and register the ModuleUsing in the compile unit and module
+        // (if it wasn't already present) so types/functions from the module
+        // are visible for name resolution during later parsing stages.
+        ModuleUsing use = new ModuleUsing(name);
+        use.Module = moduleToUse;
+            
+        unit.Usings.add(use);
+
+        if(!foundInModule)
+            module.Usings.add(use);
+
+        if(name == "jargon")
+            ImportJargonDefaults();
+
+        return Expect(Token.Semicolon);
+    }
+
+    // ImportJargonDefaults - reference a set of well-known runtime helper
+    // functions so they become available in the module symbol table. These
+    // calls do not store the returned Function pointers, they only force a
+    // lookup/add of those symbols into unit/module tables.
+    void ImportJargonDefaults()
+    {
+        Function temp0 = FindOrImport("object__constructor");
+        Function temp1 = FindOrImport("object__addRef");
+        Function temp2 = FindOrImport("object__release");
+        Function temp3 = FindOrImport("object__finalize");
+        Function temp4 = FindOrImport("newObj");
+    }
+
+    // ParseEnum - parse an enum declaration. Supports optional underlying
+    // integer type using ':' syntax (e.g. enum Foo: byte { A = 1, B = 2 }).
+    // The parser creates an EnumType symbol, registers it with the unit and
+    // then parses enumerators, accepting optional explicit integer initializers.
+    bool ParseEnum()
+    {
+        if (scanner.Token != Token.Ident)
+        {
+            Error("Identifier expected");
+            return false;
+        }
+        string name = scanner.TokenString;
+        scanner.NextToken();
+
+        TypeSymbol type = TypeSymbol.Int;
+
+        if (scanner.Token == Token.Colon)
+        {
+            // Underlying type specified
+            scanner.NextToken();
+            type = ParseType();
+            if (type == null || !type.IsInteger())
+            {
+                Error("Integer type expected");
+                return false;
+            }
+        }
+
+        EnumType enu = new EnumType(module, name, type);
+        unit.AddSymbol(enu);
+
+        if (!Expect(Token.LBrace))
+            return false;
+
+        long value = 0;
+        while (scanner.Token != Token.RBrace && scanner.Token != Token.EOF)
+        {
+            if (scanner.Token != Token.Ident)
+            {
+                Error("Identifier expected");
+                return false;
+            }
+            name = scanner.TokenString;
+            scanner.NextToken();
+            if (scanner.Token == Token.Assign)
+            {
+                // Explicit enumerator value
+                scanner.NextToken();
+                Expression e = ParseExpression();
+                if (e == null)
+                    return false;
+                ConstantExpression ce = e as ConstantExpression;
+                TypeSymbol cedt = ce.DataType;
+                if (ce == null || !cedt.IsInteger())
+                {
+                    Error("Integer constant expected");
+                    return false;
+                }
+                value = ce.value;
+            }
+            if (scanner.Token != Token.RBrace)
+            {
+                if(!Expect(Token.Comma))
+                    return false;
+            }            
+            EnumValue ev = new EnumValue(enu, name, value);
+            value++;
+        }
+
+        return Expect(Token.RBrace);
+    }
+
+    // ParseStructure - parse a struct or union declaration. At Parser1 stage
+    // we typically only create the StructType symbol and optionally mark it
+    // as a union. The body may be skipped by calling SkipBraces as we don't
+    // need to process member declarations at this stage.
+    bool ParseStructure(bool isUnion)
+    {
+        if(scanner.Token != Token.Ident)
+        {
+            Error("Identifier expected");
+            return false;
+        }
+        string name = scanner.TokenString;
+        scanner.NextToken();
+        Symbol existing = module.Find(name);
+        if (existing == null)
+        {
+            StructType st = new StructType(module, name);
+            unit.AddSymbol(st);
+            if (isUnion) 
+                st.Flags += SymbolFlags.Union;
+        }
+        else if(existing.SymbolType != SymbolType.Struct)
+        {
+            Error("Duplicate definition");
+            return false;
+        }
+        if (scanner.Token == Token.Semicolon)
+        {
+            // Forward declaration or typedef-like declaration: done
+            scanner.NextToken();
+            return true;
+        }
+        else
+        {
+            // Skip the body for this stage; detailed member parsing is handled
+            // in later passes.
+            SkipBraces();
+            return Expect(Token.RBrace);
+        }
+    }
+
+    // ParseClass - create a ClassType symbol and a corresponding factory
+    // function stub named <ClassName>__new. The full class body may be
+    // skipped at this stage and parsed by subsequent parser stages.
+    bool ParseClass()
+    {
+        if (scanner.Token != Token.Ident)
+        {
+            Error("Identifier expected");
+            return false;
+        }
+        string name = scanner.TokenString;
+        scanner.NextToken();
+
+        if(scanner.Token == Token.Colon)
+        {
+            // Optional base-class specifier following ':' - Parser1 only validates
+            // the presence of an identifier here and does not resolve the base
+            // class in detail.
+            scanner.NextToken();
+            if (scanner.Token != Token.Ident)
+            {
+                Error("Identifier expected");
+                return false;
+            }
+            scanner.NextToken();
+        }
+
+        Symbol existing = module.Find(name);
+        if (existing == null)
+        {
+            ClassType cls = new ClassType(module, name);
+            if (name != "object")
+                cls.BaseClass = FindType("object") as ClassType;
+            unit.AddSymbol(cls);
+            existing = cls;
+        }
+        else if (existing.SymbolType != SymbolType.Class)
+        {
+            Error("Duplicate definition");
+            return false;
+        }
+        ClassType ct = (ClassType)existing;
+        // Create a factory function symbol used by the runtime to construct
+        // instances. The function signature is ClassName* (pointer to class)
+        // and is named <ClassName>__new by convention.
+        Function factory = new Function(module, string.format("%s__new", ct.Name), ct.GetPointerType());
+        ct.Factory = factory;
+        unit.AddSymbol(factory);
+
+        if (scanner.Token == Token.Semicolon)
+        {
+            // Forward declaration only
+            scanner.NextToken();
+            return true;
+        }
+        else
+        {
+            // Skip class body for now; later parser stages will populate members
+            SkipBraces();
+            return Expect(Token.RBrace);
+        }
+    }
+
+    // ParseTemplate - parse a class template header and record its source
+    // text for later instantiation. Parser1 extracts template parameter names
+    // and stores the slice of source text that contains the template body in
+    // a Template object.
+    bool ParseTemplate()
+    {
+        if(!IsKeyword("class"))
+            return false;
+
+        if(scanner.Token != Token.Ident)
+        {
+            Error("Identifier expected");
+            return false;
+        }
+        string name = scanner.TokenString;
+        scanner.NextToken();
+        if (!Expect(Token.Less))
+            return false;
+        array<string> templateParams = new array<string>();
+        while(scanner.Token != Token.Greater)
+        {
+            if(scanner.Token != Token.Ident)
+            {
+                Error("Template param identifier expected");
+                return false;
+            }
+            templateParams.add(scanner.TokenString);
+            scanner.NextToken();
+            if(scanner.Token != Token.Greater)
+            {
+                if(!Expect(Token.Comma))
+                    return false;
+            }
+        }
+        if (!Expect(Token.Greater))
+            return false;
+
+        // Save scanner state to extract the literal source text of the template
+        ScannerState startState = scanner.GetState();
+        SkipBraces();
+        ScannerState endState = scanner.GetState();
+
+        int startIndex = startState.pos;
+        int endIndex = endState.pos;
+
+        int len = endState.pos - startState.pos;
+        // Extract the substring that represents the template body. This raw
+        // source is stored in Template.Source and later used to synthesize a
+        // concrete class when the template is instantiated.
+        string templateSrc = startState.text.substr(startState.pos-1, len+1);
+        Template ts = new Template(module, name);
+        for(int i = 0; i < templateParams.count; ++i)
+            ts.TemplateParams.add(templateParams[i]);
+        ts.Source = templateSrc;
+        return Expect(Token.RBrace);
+    }
+
+    // ParseGlobalOrFunction - simple handling of declarations that begin with
+    // a type token. Parser1 only needs to recognize whether a type is followed
+    // by a semicolon (declaration), a brace (function body/initializer to
+    // skip), or an assignment/initializer expression. The parser consumes the
+    // relevant tokens and returns success without building a full AST for
+    // function bodies at this stage.
+    bool ParseGlobalOrFunction()
+    {
+        bool _const = false;
+
+        if(IsKeyword("const"))
+        {
+            _const = true;
+        }
+
+        if(IsType())
+        {
+            if(_const)
+            {
+                Declaration item = new Declaration();
+                if(!ParseDeclaration(item, true, null, false, true))
+                    return false;
+                Expression value = null;
+                if(!Expect(Token.Assign))
+                    return false;
+                value = ParseExpression();
+                if (!(value is ConstantExpression))
+                {
+                    Error("Constant expression expected");
+                    return false;
+                }
+                ConstantValue cv = new ConstantValue(module, item.name, value);
+                if(!Expect(Token.Semicolon))
+                    return false;
+                return true;
+            }
+            else
+            {
+                while(scanner.Token != Token.EOF)
+                {
+                    if (scanner.Token == Token.Semicolon || scanner.Token == Token.LBrace || scanner.Token == Token.Assign)
+                        break;
+                    scanner.NextToken();
+                }
+                if(scanner.Token == Token.Semicolon)
+                {
+                    // Simple declaration: consume ';'
+                    scanner.NextToken();
+                    return true;
+                }
+                else if(scanner.Token == Token.LBrace)
+                {
+                    // Function or initializer body - skip the block for now
+                    SkipBraces();
+                    return Expect(Token.RBrace);                        
+                }
+                else if(scanner.Token == Token.Assign)
+                {
+                    // Initialized global variable: skip until semicolon
+                    while (scanner.Token != Token.Semicolon && scanner.Token != Token.EOF)
+                        scanner.NextToken();
+                    return Expect(Token.Semicolon);
+                }
+                else if (scanner.Token == Token.DoubleArrow)
+                {
+                    // Language-specific double arrow operator handling: skip until ';'
+                    scanner.NextToken();
+                    while (scanner.Token != Token.Semicolon && scanner.Token != Token.EOF)
+                        scanner.NextToken();
+                    return Expect(Token.Semicolon);
+                }
+            }
+        }
+        Error("Syntax error");
+        return false;
+    }
+}

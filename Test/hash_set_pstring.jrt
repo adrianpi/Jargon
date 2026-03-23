@@ -1,0 +1,118 @@
+class hash_set_pstring
+{
+	hash_item<string*>** buckets;
+	int size;
+	int count;
+	
+	hash_set<string*>* constructor() {
+        base();        
+        size = 64;
+		count = 0;
+        buckets = memory.alloc(size * sizeof(hash_item<string*>));  
+		memory.put(buckets, 0, size * sizeof(hash_item<string*>));
+        return this;
+    }
+	
+	void destructor() { 
+        clear();
+        memory.free(buckets);
+        base();
+    }
+	
+	void clear() {
+        for (int i = 0; i < size; ++i) {
+            hash_item<string*>* current = buckets[i];
+            hash_item<string*>* prev = null;
+            while (current != null) {
+				hash_item<string*>* temp = current;
+                current = current.next;
+                temp.key = 0;
+                if(prev != null)
+                    prev.next = null;
+                prev = temp;
+            }
+            buckets[i] = null;
+        }
+		count = 0;
+    }
+	
+	void add(string* key) {
+        long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_item<string*>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                return;
+            }
+            current = current.next;
+        }
+
+        hash_item<string*>* newItem = new hash_item<string*>();        
+        newItem.key = key;
+        newItem.next = buckets[index];
+        buckets[index] = newItem;
+		++count;
+    }
+	
+	void remove(string* key)
+	{
+		long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_item<string*>* current = buckets[index];
+		hash_item<string*>* prev = null;
+
+        while (current != null) {
+            if (current.key == key) {
+                
+				if(prev) {
+					prev.next = current.next;
+				}
+				else {
+					buckets[index] = current.next;
+				}
+				--count;
+                return;
+            }
+			prev = current;
+            current = current.next;
+        }
+	}
+
+	array<string*>* get keys()
+	{
+		array<string*>* result = new array<string*>();
+		for(int i = 0; i < size; ++i)
+		{
+			hash_item<string*>* pair = buckets[i];
+			while(pair != null)
+			{
+				result.add(pair.key);
+				pair = pair.next;
+			}
+		}
+		return result;
+	}
+
+	bool contains(string* key)
+	{
+		long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_item<string*>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                return true;
+            }
+            current = current.next;
+        }
+		
+        return false;
+	}
+}

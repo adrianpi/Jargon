@@ -1,0 +1,273 @@
+class array_pDeclaration
+{
+	Declaration* *data;
+	int _size;
+	int _count;
+	
+	array<Declaration*>* constructor()
+	{
+		base();
+		_size = 128;
+		_count = 0;
+		data = memory.alloc(sizeof(Declaration*) * _size);
+		memory.put(data, 0, sizeof(Declaration*) * _size);
+		return this;
+	}
+	
+	void destructor()
+	{
+		clear();
+		base();
+	}
+	
+	int get count() => _count;
+	
+	int get size() => _size;
+	
+	Declaration* get_item(int index)
+	{
+		index = 0 >? index <? _count-1;
+		return data[index];
+	}
+	
+	void set_item(int index, Declaration* value)
+	{
+		index = 0 >? index <? _count-1;
+		data[index] = value;
+	}
+	
+	int add(Declaration* value)
+	{
+		if(_count == _size)
+		{
+			_size *= 2;
+			Declaration** newData = memory.alloc(sizeof(Declaration*) * _size);
+			memory.put(newData, 0, sizeof(Declaration*) * _size);
+			memory.copy(newData, data, sizeof(Declaration*) * _count);
+			memory.free(data);
+			data = newData;
+		}
+		data[_count++] = value;
+		return _count-1;
+	}
+	
+	void insert(int index, Declaration* value)
+	{
+		if(_count == _size)
+		{
+			_size *= 2;
+			Declaration** newData = memory.alloc(sizeof(Declaration*) * _size);
+			memory.put(newData, 0, sizeof(Declaration*) * _size);
+			memory.move(newData, data, sizeof(Declaration*) * _count);
+			memory.free(data);
+			data = newData;
+		}
+		index = 0 >? index <? _count;
+		memory.move(data + index + 1, data + index, (count - index) * sizeof(Declaration*));
+		memory.put(data + index, 0, sizeof(Declaration*));
+		data[index] = value;
+		++_count;
+	}
+	
+	void removeAt(int index)
+	{
+		if(_count == 0)
+			return;
+			
+		index = 0 >? index <? _count-1;
+		data[index] = (Declaration*)0;
+		memory.move(data + index, data + index + 1, (count - index - 1) * sizeof(Declaration*));
+		--_count;
+		
+		if(_size > 8 && _count < _size >> 2)
+		{
+			_size >>= 2;
+			Declaration** newData = memory.alloc(sizeof(Declaration*) * _size);
+			memory.put(newData, 0, sizeof(Declaration*) * _size);
+			memory.move(newData, data, sizeof(Declaration*) * _count);
+			memory.free(data);
+			data = newData;
+		}
+	}
+	
+	int indexOf(Declaration* value)
+	{
+		for(int i = 0; i < _count; ++i)
+		{
+			if(data[i] == value)
+				return i;
+		}
+		return -1;
+	}
+	
+	void remove(Declaration* value)
+	{
+		int index = indexOf(value);
+		if(index != -1)
+		{
+			removeAt(index);
+		}
+	}
+	
+	bool contains(Declaration* value)
+	{
+		return indexOf(value) != -1;
+	}
+	
+	void clear()
+	{
+		for(int i = 0; i < _count; ++i)
+		{
+			data[i] = (Declaration*)0;
+		}
+		memory.free(data);
+		_size = 8;
+		_count = 0;
+		data = memory.alloc(sizeof(Declaration*) * _size);
+		memory.put(data, 0, sizeof(Declaration*) * _size);
+	}
+
+	Declaration* first() => data[0];
+
+	Declaration* last() => data[_count-1];
+	
+	void reverse()
+	{
+		for(int i = 0; i < _count >> 1; i++) {
+			Declaration* c = data[i];
+			data[i] = data[_count-i-1];
+			data[_count-i-1] = c;
+		}
+	}
+	
+	void resize(int newCount)
+	{
+		if(newCount == _count)
+			return;
+			
+		if(newCount < _count)
+		{
+			for(int i = newCount; i < _count; ++i)
+			{
+				data[i] = (Declaration*)0;
+			}
+			
+			if(_size > 8 && newCount  < _size >> 2)			
+			{
+				while(size > 8 && newCount < size >> 2)
+					_size >>= 2;
+				Declaration** newData = memory.alloc(sizeof(Declaration*) * _size);
+				memory.put(newData, 0, sizeof(Declaration*) * _size);
+				memory.move(newData, data, sizeof(Declaration*) * newCount);
+				memory.free(data);
+				data = newData;
+			} 	
+			
+			_count = newCount;
+		}
+		else
+		{
+			while(_size < newCount)
+				_size *= 2;
+			
+			Declaration** newData = memory.alloc(sizeof(Declaration*) * _size);
+			memory.put(newData, 0, sizeof(Declaration*) * _size);
+			memory.move(newData, data, sizeof(Declaration*) * _count);
+			memory.free(data);
+			data = newData;
+		}
+	}
+	
+	void reserve(int newSize)
+	{
+		if (newSize == _size) 
+			return;
+		
+		if (newSize < _size)
+		{		
+			if (newSize < _count)
+			{
+				for(int i = newSize; i < count; ++i)
+					data[i] = (Declaration*)0;
+				_count = newSize;
+			}
+			
+			if(_size > 32 && newSize < _size / 4)
+			{
+				_size = newSize;
+				
+				byte *newData = memory.alloc(sizeof(Declaration*) * _size);
+				memory.put(newData, 0, sizeof(Declaration*) * _size);
+				
+				if(_count > 0)
+					memory.move(newData, data, sizeof(Declaration*) * _count);
+				
+				memory.free(data);
+				data = newData;
+			}
+			else
+			{
+				_size = newSize;
+			}
+		}
+		else
+		{	
+			while(_size < newSize)
+				_size = _size * 2;
+			
+			byte *newData = memory.alloc(sizeof(Declaration*) * _size);
+			memory.put(newData, 0, sizeof(Declaration*) * _size);
+			
+			if(_count > 0)
+				memory.copy(newData, data, sizeof(Declaration*) * _count);
+			
+			memory.free(data);
+			data = newData;
+		}
+	}
+
+	void _qsort(int left, int right) 
+	{
+		int i = 0;
+		int last = 0;
+
+		if (left >= right)
+			return;
+
+		Declaration* temp = data[left];
+		data[left] = data[(left+right)/2];
+		data[(left+right)/2] = temp;
+		last = left;
+		for (i = left + 1; i <= right; i++) {
+			if(data[i] < data[left])
+			{
+				++last;
+				temp = data[last];
+				data[last] = data[i];
+				data[i] = temp;
+			}
+		}
+		temp = data[left];
+		data[left] = data[last];
+		data[last] = temp;
+		_qsort(left, last - 1);
+		_qsort(last + 1, right);
+	}
+
+	void sort()
+	{
+		_qsort(0, _count - 1);
+	}
+
+	string join(string sep)
+	{
+		string result = "";
+		for(int i = 0; i < count; i++)
+		{
+			if(i != 0)
+				result += sep;
+			result += data[i].toString();
+		}
+		return result;
+	}
+}

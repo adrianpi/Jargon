@@ -1,0 +1,23 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <None Include="TypeInfo.jr" />
+    <None Include="BaseParser.jr" />
+    <None Include="CodeTransform.jr" />
+    <None Include="Compiler.jr" />
+    <None Include="DebugInfo.jr" />
+    <None Include="Expression.jr" />
+    <None Include="ExpressionParser.jr" />
+    <None Include="LLVMCodeGen.jr" />
+    <None Include="Main.jr" />
+    <None Include="Parser1.jr" />
+    <None Include="Parser2.jr" />
+    <None Include="Parser3.jr" />
+    <None Include="Parser4.jr" />
+    <None Include="Scanner.jr" />
+    <None Include="StageParser.jr" />
+    <None Include="Statement.jr" />
+    <None Include="StringBuffer.jr" />
+    <None Include="Symbol.jr" />
+  </ItemGroup>
+</Project>

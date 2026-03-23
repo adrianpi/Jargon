@@ -1,0 +1,1941 @@
+
+void* malloc(int size) external;
+void free(void *ptr) external;
+void memset(void* ptr, int val, int size) external;
+void memcpy(void* dst, void *src, int size) external;
+void memmove(void* dst, void *src, int size) external;
+int printf(byte* fmt, ...) external;
+int strlen(byte *str) external;
+int strcmp(byte *a, byte *b) external;
+byte* strcpy(byte *dst, byte *src) external;
+byte* strcat(byte *dst, byte *src) external;
+byte* strncpy(byte *dst, byte *src, long len) external;
+byte* strstr(byte *where, byte *what) external;
+byte* strchr(byte *src, byte c) external;
+void* fopen(byte *fileName, byte *mode) external;
+void fclose(void *fptr) external;
+long ftell(void *fptr) external;
+void fseek(void *fptr, long offset, int whence) external;
+long fread(void *buffer, long size, long count, void *fptr) external;
+long fwrite(void *buffer, long size, long count, void *fptr) external;
+int rename(byte *oldFileName, byte *newFileName) external;
+int remove(byte *fileName) external;
+byte* _getcwd(byte *buffer, int maxLen) external;
+
+void __stdio_common_vsprintf(void *options, byte *buffer, long bufferCount, byte *fmt, void *locale, void *ap) external;
+int vprintf(byte *fmt, void *ap) external;
+
+void va_start(void *ap) verbatim "call void @llvm.va_start.p0(ptr #ap)";
+void va_end(void *ap) verbatim "call void @llvm.va_end.p0(ptr #ap)";
+long va_arg_long(void *ap) verbatim "va_arg ptr #ap, i64";
+double va_arg_double(void *ap) verbatim "va_arg ptr #ap, f64";
+void* va_arg_ptr(void *ap) verbatim "va_arg ptr #ap, ptr";
+
+const int K_NUM = 202;
+const float K_PI = 3.141592f;
+
+void print(string *fmt, ...)
+{
+	void *ap;
+	va_start(ap);
+	vprintf(fmt.c_str(), ap);
+	va_end(ap);
+}
+
+void println(string *fmt, ...)
+{
+	void *ap;
+	va_start(ap);
+	vprintf(fmt.c_str(), ap);
+	va_end(ap);
+	printf("\n");
+}
+
+int objectInstances = 0;
+bool collectInstances = false;
+
+struct obj_instance
+{
+	void *obj;
+	obj_instance* next;
+}
+
+obj_instance *obj_instances = null;
+
+void _collect(object *obj)
+{
+	if(collectInstances)
+	{
+		obj_instance *inst = malloc(sizeof(obj_instance));
+		inst.obj = obj;
+		inst.next = obj_instances;
+		obj_instances = inst;
+	}
+}
+
+void _release(object *obj)
+{
+	if(collectInstances)
+	{
+		obj_instance *prev = null;
+		obj_instance *inst = obj_instances;
+		while(inst) {
+			if(inst.obj == obj)
+			{
+				prev ? prev.next : obj_instances = inst.next;				
+				free(inst);
+				return;
+			}
+			prev = inst;
+			inst = inst.next;
+		}
+	}
+}
+
+class object
+{
+	int refCount;
+
+	object* constructor()
+	{
+		++objectInstances;
+		_collect(this);
+		return this;
+	}
+
+	virtual void destructor()
+	{
+		//printf("Destroying object %s %x\n", getClassName(), this);
+		_release(this);
+		--objectInstances;
+	}
+
+	virtual void finalize()
+	{
+		//printf("Finalizing object %s %x\n", getClassName(), this);
+	}
+
+	void addRef()
+	{
+		if(this != null)
+		{
+			++refCount;
+			//printf("addRef %x [%d]\n", this, refCount);
+		}
+	}
+
+	void release()
+	{
+		if(this != null)
+		{
+			--refCount;
+			//printf("release %x [%d]\n", this, refCount);
+			if(refCount == 0)
+				delete this;
+		}
+	}
+
+	virtual byte* getClassName() { return "object"; }
+
+	virtual long getHash() { return ((long) this) & 0x7fffffff; }
+
+	virtual string* toString() => new string(getClassName());
+}
+
+object* newObj(int sz, void **vtab)
+{
+	void *mem = malloc(sz);
+	memset(mem, 0, sz);
+	object *obj = (object*)mem;
+	obj.vtable = vtab;
+	return obj;
+}
+
+void _checkLeaks()
+{
+	if(objectInstances == 0)
+		printf("HURRAY, No leaks!\n");
+	else {
+		printf("Detected %d object leaks\n", objectInstances);
+		if(collectInstances)
+		{
+			obj_instance *inst = obj_instances;
+			while(inst) {
+				print(((object*)inst.obj).getClassName());
+				print(" %p", inst.obj);
+				print(" [%d], ", ((object*)inst.obj).refCount);
+				/*if(((object*)inst.obj) is string) {
+					print(" %s", (string*)inst.obj);
+				}*/
+				print(" %s", ((object*)inst.obj).toString());
+				println("");
+				inst = inst.next;
+			}
+		}
+	}
+}
+
+int _getObjectInstances() => objectInstances;
+
+//-----------------------------------------------------------------------------
+
+void _free(void *ptr)
+{
+	free(ptr);
+}
+
+class memory
+{
+	static void* alloc(long size)
+	{
+		return malloc(size);
+	}
+
+	static void free(void *ptr)
+	{
+		_free(ptr);
+	}
+
+	static void put(void *ptr, int value, long size)
+	{
+		memset(ptr, value, size);
+	}
+
+	static void copy(void *dst, void *src, long size)
+	{
+		memcpy(dst, src, size);
+	}
+
+	static void move(void *dst, void *src, long size)
+	{
+		memmove(dst, src, size);
+	}
+}
+
+//-----------------------------------------------------------------------------
+
+class string
+{
+	byte *str;
+	
+	string *constructor(byte *pValue)
+	{
+		base();
+		str = (byte*) memory.alloc(strlen(pValue)+1);
+		strcpy(str, pValue);
+		return this;
+	}
+	
+	void destructor()
+	{
+		base();
+		memory.free(str);
+	}
+
+	long getHash()
+	{
+		byte *ptr = str;
+		// two random prime numbers
+		ulong hash = 3253;
+        int c = 0;
+        while ((c = *ptr++))
+			hash += (ulong)c * 83UL;
+		hash = hash & 0x7fffffff; // keep positive
+        return (long)hash;
+	}
+
+	string* toString() 
+	{
+		return this;
+	}
+	
+	byte * c_str()
+	{
+		return str;
+	}
+	
+	int get length()
+	{
+		return strlen(str);
+	}
+	
+	byte get_item(int index)
+	{
+		return str[index];
+	}
+
+	string* substr(int start, int len)
+	{
+		if(length == 0)
+			return new string("");
+		start = 0 >? start <? length;
+		len = len <? (length-start);
+		byte *temp = memory.alloc(len+1);
+		memset(temp, 0, len+1);
+		strncpy(temp, str + start, len);
+		string *result = new string(temp);
+		memory.free(temp);
+		return result;
+	}
+
+	string* toLower()
+	{
+		byte *temp = memory.alloc(length+1);
+		byte *src = str;
+		byte *dst = temp;
+		while(*src) 
+		{
+			byte c = *src++;
+			if(c >= 'A' && c <= 'Z')
+				c = c + ('a' - 'A');
+			*dst++ = c;
+		}
+		*dst = 0;
+		string *result = new string(temp);
+		memory.free(temp);
+		return result;
+	}
+
+	string* toUpper()
+	{
+		byte *temp = memory.alloc(length+1);
+		byte *src = str;
+		byte *dst = temp;
+		while(*src) 
+		{
+			byte c = *src++;
+			if(c >= 'a' && c <= 'z')
+				c = c - ('a' - 'A');
+			*dst++ = c;
+		}
+		*dst = 0;
+		string *result = new string(temp);
+		memory.free(temp);
+		return result;
+	}
+
+	int indexOf(string *other)
+	{
+		byte *pos = strstr(str, other.str);
+		if(pos == null)
+			return -1;
+		else
+			return pos - str;
+	}
+
+	int indexOfChar(byte c)
+	{
+		byte *pos = strchr(str, c);
+		if(pos == null)
+			return -1;
+		else
+			return pos - str;
+	}
+
+	int lastIndexOfChar(byte c)
+	{
+		for(int i = length - 1; i >= 0; --i)
+		{
+			if(str[i] == c)
+				return i;
+		}
+		return -1;
+	}
+
+	bool contains(string *other)
+	{
+		return indexOf(other) != -1;
+	}
+
+	bool startsWith(string *other)
+	{
+		return indexOf(other) == 0;
+	}
+
+	bool endsWith(string *other)
+	{
+		return indexOf(other) == length - other.length;
+	}
+
+	string* reverse()
+	{
+		byte *temp = memory.alloc(length+1);
+		strcpy(temp, str);
+		for(int i = 0; i < length >> 1; i++) {
+			byte c = temp[i];
+			temp[i] = temp[length-i-1];
+			temp[length-i-1] = c;
+		}
+		string *result = new string(temp);
+		memory.free(temp);
+		return result;
+	}
+
+	string* ltrim()
+	{
+		if(length == 0)
+			return new string("");
+
+		int pos = 0;
+		while((this[pos] == ' ' || this[pos] == '\t' || this[pos] == '\r' || this[pos] == '\n') && pos < length)
+		{
+			pos++;
+		}
+		
+		return substr(pos, length-pos);
+	}
+
+	string* rtrim()
+	{
+		if(length == 0)
+			return new string("");
+
+		int pos = length;
+		while((this[pos-1] == ' ' || this[pos-1] == '\t' || this[pos-1] == '\r' || this[pos-1] == '\n') && pos > 0)
+		{
+			pos--;
+		}
+
+		return substr(0, pos);
+	}
+
+	string* trim()
+	{
+		return ltrim().rtrim();
+	}
+
+	static string* format(string *fmt, ...)
+	{
+		byte buffer[2048];
+		void *ap;
+		va_start(ap);
+		__stdio_common_vsprintf(null, buffer, 2048, fmt.c_str(), null, ap);
+		va_end(ap);
+		return new string(buffer);
+	}
+
+    string replace(string find, string repl)
+    {
+        string temp = this;
+        int idx = temp.indexOf(find);
+        while(idx != -1)
+        {
+            temp = temp.substr(0, idx) + repl + temp.substr(idx + find.length, temp.length - (idx + find.length));
+            idx = temp.indexOf(find);
+        }
+        return temp;
+    }
+}
+
+string* operator+(string *a, string *b)
+{
+	byte *mem = (byte*)memory.alloc(a.length+b.length+1);
+	strcpy(mem, a.c_str());
+	strcat(mem, b.c_str());
+	string *result = new string(mem);
+	memory.free(mem);
+	return result;
+}
+
+string* operator+(string *a, byte b)
+{
+	byte *mem = (byte*)memory.alloc(a.length+2);
+	strcpy(mem, a.c_str());
+	mem[a.length] = b;
+	mem[a.length+1] = 0;
+	string *result = new string(mem);
+	memory.free(mem);
+	return result;
+}
+
+string* operator+(byte a, string *b)
+{
+	byte *mem = (byte*)memory.alloc(b.length+2);
+	mem[0] = a;
+	strcpy(mem+1, b.c_str());
+	string *result = new string(mem);
+	memory.free(mem);
+	return result;
+}
+
+bool operator==(string *a, string *b)
+{
+	return strcmp(a.str, b.str) == 0;
+}
+
+bool operator!=(string *a, string *b)
+{
+	return strcmp(a.str, b.str) != 0;
+}
+
+bool operator<(string *a, string *b)
+{
+	return strcmp(a.str, b.str) < 0;
+}
+
+bool operator>(string *a, string *b)
+{
+	return strcmp(a.str, b.str) > 0;
+}
+
+bool operator<=(string *a, string *b)
+{
+	return strcmp(a.str, b.str) <= 0;
+}
+
+bool operator>=(string *a, string *b)
+{
+	return strcmp(a.str, b.str) >= 0;
+}
+
+bool operator!(string *a)
+{
+	if(a == null || strcmp(a.str, "") == 0)
+		return true;
+	else	
+		return false;
+}
+
+//-----------------------------------------------------------------------------
+
+class BoolExtensions
+{
+	static byte* getClassName(bool this) => "bool";
+	static long getHash(bool this)
+	{
+		return (long)this;
+	}
+	static string* toString(bool this) => this ? "true" : "false";	
+}
+
+class ByteExtensions
+{
+	static byte* getClassName(byte this) => "byte";
+	static long getHash(byte this)
+	{
+		return (long)this;
+	}
+	static string* toString(byte this) => string.format("%d", this);
+}
+
+class UByteExtensions
+{
+	static byte* getClassName(ubyte this) => "ubyte";
+	static long getHash(ubyte this)
+	{
+		return (long)this;
+	}
+	static string* toString(ubyte this) => string.format("%d", this);
+}
+
+class ShortExtensions
+{
+	static byte* getClassName(short this) => "short";
+	static long getHash(short this)
+	{
+		return (long)this;
+	}
+	static string* toString(short this) => string.format("%d", this);
+}
+
+class UShortExtensions
+{
+	static byte* getClassName(ushort this) => "ushort";
+	static long getHash(ushort this)
+	{
+		return (long)this;
+	}
+	static string* toString(ushort this) => string.format("%d", this);
+}
+
+class IntExtensions
+{
+	static byte* getClassName(int this) => "int";
+	static long getHash(int this)
+	{
+		return (long)this;
+	}
+	static string* toString(int this) => string.format("%d", this);
+}
+
+class UIntExtensions
+{
+	static byte* getClassName(uint this) => "uint";
+	static long getHash(uint this)
+	{
+		return (long)this;
+	}
+	static string* toString(uint this) => string.format("%d", this);
+}
+
+class LongExtensions
+{
+	static byte* getClassName(long this) => "long";
+	static long getHash(long this)
+	{
+		return this;
+	}
+	static string* toString(long this) => string.format("%lld", this);
+}
+
+class ULongExtensions
+{
+	static byte* getClassName(ulong this) => "ulong";
+	static long getHash(ulong this)
+	{
+		return (long)this;
+	}
+	static string* toString(ulong this) => string.format("%llu", this);
+}
+
+class FloatExtensions
+{
+	static byte* getClassName(float this) => "float";
+	static long getHash(float this)
+	{
+		return (long)*(int*)&this;
+	}
+	static string* toString(float this) => string.format("%f", this);
+}
+
+class DoubleExtensions
+{
+	static byte* getClassName(double this) => "double";
+	static long getHash(double this)
+	{
+		return *(long*)&this;
+	}
+	static string* toString(double this) => string.format("%f", this);
+}
+
+//-----------------------------------------------------------------------------
+
+template class array<T>
+{
+	T *data;
+	int _size;
+	int _count;
+	
+	array<T>* constructor()
+	{
+		base();
+		_size = 128;
+		_count = 0;
+		data = memory.alloc(sizeof(T) * _size);
+		memory.put(data, 0, sizeof(T) * _size);
+		return this;
+	}
+	
+	void destructor()
+	{
+		clear();
+		base();
+	}
+	
+	int get count() => _count;
+	
+	int get size() => _size;
+	
+	T get_item(int index)
+	{
+		index = 0 >? index <? _count-1;
+		return data[index];
+	}
+	
+	void set_item(int index, T value)
+	{
+		index = 0 >? index <? _count-1;
+		data[index] = value;
+	}
+	
+	int add(T value)
+	{
+		if(_count == _size)
+		{
+			_size *= 2;
+			T* newData = memory.alloc(sizeof(T) * _size);
+			memory.put(newData, 0, sizeof(T) * _size);
+			memory.copy(newData, data, sizeof(T) * _count);
+			memory.free(data);
+			data = newData;
+		}
+		data[_count++] = value;
+		return _count-1;
+	}
+	
+	void insert(int index, T value)
+	{
+		if(_count == _size)
+		{
+			_size *= 2;
+			T* newData = memory.alloc(sizeof(T) * _size);
+			memory.put(newData, 0, sizeof(T) * _size);
+			memory.move(newData, data, sizeof(T) * _count);
+			memory.free(data);
+			data = newData;
+		}
+		index = 0 >? index <? _count;
+		memory.move(data + index + 1, data + index, (count - index) * sizeof(T));
+		memory.put(data + index, 0, sizeof(T));
+		data[index] = value;
+		++_count;
+	}
+	
+	void removeAt(int index)
+	{
+		if(_count == 0)
+			return;
+			
+		index = 0 >? index <? _count-1;
+		data[index] = (T)0;
+		memory.move(data + index, data + index + 1, (count - index - 1) * sizeof(T));
+		--_count;
+		
+		if(_size > 8 && _count < _size >> 2)
+		{
+			_size >>= 2;
+			T* newData = memory.alloc(sizeof(T) * _size);
+			memory.put(newData, 0, sizeof(T) * _size);
+			memory.move(newData, data, sizeof(T) * _count);
+			memory.free(data);
+			data = newData;
+		}
+	}
+	
+	int indexOf(T value)
+	{
+		for(int i = 0; i < _count; ++i)
+		{
+			if(data[i] == value)
+				return i;
+		}
+		return -1;
+	}
+	
+	void remove(T value)
+	{
+		int index = indexOf(value);
+		if(index != -1)
+		{
+			removeAt(index);
+		}
+	}
+	
+	bool contains(T value)
+	{
+		return indexOf(value) != -1;
+	}
+	
+	void clear()
+	{
+		for(int i = 0; i < _count; ++i)
+		{
+			data[i] = (T)0;
+		}
+		memory.free(data);
+		_size = 8;
+		_count = 0;
+		data = memory.alloc(sizeof(T) * _size);
+		memory.put(data, 0, sizeof(T) * _size);
+	}
+
+	T first() => data[0];
+
+	T last() => data[_count-1];
+	
+	void reverse()
+	{
+		for(int i = 0; i < _count >> 1; i++) {
+			T c = data[i];
+			data[i] = data[_count-i-1];
+			data[_count-i-1] = c;
+		}
+	}
+	
+	void resize(int newCount)
+	{
+		if(newCount == _count)
+			return;
+			
+		if(newCount < _count)
+		{
+			for(int i = newCount; i < _count; ++i)
+			{
+				data[i] = (T)0;
+			}
+			
+			if(_size > 8 && newCount  < _size >> 2)			
+			{
+				while(size > 8 && newCount < size >> 2)
+					_size >>= 2;
+				T* newData = memory.alloc(sizeof(T) * _size);
+				memory.put(newData, 0, sizeof(T) * _size);
+				memory.move(newData, data, sizeof(T) * newCount);
+				memory.free(data);
+				data = newData;
+			} 	
+			
+			_count = newCount;
+		}
+		else
+		{
+			while(_size < newCount)
+				_size *= 2;
+			
+			T* newData = memory.alloc(sizeof(T) * _size);
+			memory.put(newData, 0, sizeof(T) * _size);
+			memory.move(newData, data, sizeof(T) * _count);
+			memory.free(data);
+			data = newData;
+		}
+	}
+	
+	void reserve(int newSize)
+	{
+		if (newSize == _size) 
+			return;
+		
+		if (newSize < _size)
+		{		
+			if (newSize < _count)
+			{
+				for(int i = newSize; i < count; ++i)
+					data[i] = (T)0;
+				_count = newSize;
+			}
+			
+			if(_size > 32 && newSize < _size / 4)
+			{
+				_size = newSize;
+				
+				byte *newData = memory.alloc(sizeof(T) * _size);
+				memory.put(newData, 0, sizeof(T) * _size);
+				
+				if(_count > 0)
+					memory.move(newData, data, sizeof(T) * _count);
+				
+				memory.free(data);
+				data = newData;
+			}
+			else
+			{
+				_size = newSize;
+			}
+		}
+		else
+		{	
+			while(_size < newSize)
+				_size = _size * 2;
+			
+			byte *newData = memory.alloc(sizeof(T) * _size);
+			memory.put(newData, 0, sizeof(T) * _size);
+			
+			if(_count > 0)
+				memory.copy(newData, data, sizeof(T) * _count);
+			
+			memory.free(data);
+			data = newData;
+		}
+	}
+
+	void _qsort(int left, int right) 
+	{
+		int i = 0;
+		int last = 0;
+
+		if (left >= right)
+			return;
+
+		T temp = data[left];
+		data[left] = data[(left+right)/2];
+		data[(left+right)/2] = temp;
+		last = left;
+		for (i = left + 1; i <= right; i++) {
+			if(data[i] < data[left])
+			{
+				++last;
+				temp = data[last];
+				data[last] = data[i];
+				data[i] = temp;
+			}
+		}
+		temp = data[left];
+		data[left] = data[last];
+		data[last] = temp;
+		_qsort(left, last - 1);
+		_qsort(last + 1, right);
+	}
+
+	void sort()
+	{
+		_qsort(0, _count - 1);
+	}
+
+	string join(string sep)
+	{
+		string result = "";
+		for(int i = 0; i < count; i++)
+		{
+			if(i != 0)
+				result += sep;
+			result += data[i].toString();
+		}
+		return result;
+	}
+}
+
+//-----------------------------------------------------------------------------
+
+class StringExtensions
+{
+	static array<string*>* split(string *this, string *separator)
+	{	
+		array<string*> *result = new array<string*>();	
+	
+		byte *ptr = this.c_str();
+		byte *sep = separator.c_str();
+		int prev = 0;
+		byte *p = strstr(ptr, sep);	
+		int pos = p == null ? -1 : p - ptr;
+		while(pos != -1)
+		{
+			result.add(this.substr(prev, pos-prev));
+			prev = pos + separator.length;
+			if(prev == this.length) {
+				result.add("");
+				break;
+			}
+			p = strstr(ptr + prev, sep);
+			pos = p == null ? -1 : p - ptr;
+			if(pos == -1 && prev < this.length)
+			result.add(this.substr(prev, this.length-prev));
+		}
+		return result;
+	}
+}
+
+//-----------------------------------------------------------------------------
+
+template class hash_pair<K,T>
+{
+	K key;
+	T data;
+	hash_pair<K,T>* next;
+	
+	void destructor()
+	{
+		base();
+	}
+}
+
+template class dictionary<K,T>
+{
+	hash_pair<K,T>** buckets;
+	int size;
+	int count;
+	
+	dictionary<K,T>* constructor() {
+        base();        
+        size = 64;
+		count = 0;
+        buckets = memory.alloc(size * sizeof(hash_pair<K,T>));  
+		memory.put(buckets, 0, size * sizeof(hash_pair<K,T>));
+        return this;
+    }
+	
+	void destructor() { 
+        clear();
+        memory.free(buckets);
+        base();
+    }
+	
+	void clear() {
+        for (int i = 0; i < size; ++i) {
+            hash_pair<K,T>* current = buckets[i];
+            hash_pair<K,T>* prev = null;
+            while (current != null) {
+				hash_pair<K,T>* temp = current;
+                current = current.next;
+                temp.key = 0;
+                temp.data = (T)0;
+                if(prev != null)
+                    prev.next = null;
+                prev = temp;
+            }
+            buckets[i] = null;
+        }
+		count = 0;
+    }
+	
+	void set_item(K key, T value) {
+        long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+		//println("Adding key: %s, hash: %lld, index: %d", key.toString().c_str(), h, index);
+
+        hash_pair<K,T>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                current.data = value;
+				//println("Already present");
+                return;
+            }
+            current = current.next;
+        }
+
+        hash_pair<K,T>* newItem = new hash_pair<K,T>();        
+        newItem.key = key;    
+        newItem.data = value;
+        newItem.next = buckets[index];
+        buckets[index] = newItem;
+		++count;
+		//println("Added");
+    }
+	
+	T get_item(K key) {
+
+        long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_pair<K,T>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                return current.data;
+            }
+            current = current.next;
+        }
+		
+        return (T)0;
+    }
+
+	void remove(K key)
+	{
+		long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_pair<K,T>* current = buckets[index];
+		hash_pair<K,T>* prev = null;
+
+        while (current != null) {
+            if (current.key == key) {
+                
+				if(prev) {
+					prev.next = current.next;
+				}
+				else {
+					buckets[index] = current.next;
+				}
+				--count;
+                return;
+            }
+			prev = current;
+            current = current.next;
+        }
+	}
+
+	array<K>* get keys()
+	{
+		array<K>* result = new array<K>();
+		for(int i = 0; i < size; ++i)
+		{
+			hash_pair<K,T>* pair = buckets[i];
+			while(pair != null)
+			{
+				result.add(pair.key);
+				pair = pair.next;
+			}
+		}
+		return result;
+	}
+
+	array<T>* get values()
+	{
+		array<T>* result = new array<T>();
+		for(int i = 0; i < size; ++i)
+		{
+			hash_pair<K,T>* pair = buckets[i];
+			while(pair != null)
+			{
+				result.add(pair.data);
+				pair = pair.next;
+			}
+		}
+		return result;
+	}
+
+	bool contains(K key)
+	{
+		long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_pair<K,T>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                return true;
+            }
+            current = current.next;
+        }
+		
+        return false;
+	}
+}
+
+//-----------------------------------------------------------------------------
+
+template class hash_item<K>
+{
+	K key;
+	hash_item<K>* next;
+	
+	void destructor()
+	{
+		base();
+	}
+}
+
+template class hash_set<K>
+{
+	hash_item<K>** buckets;
+	int size;
+	int count;
+	
+	hash_set<K>* constructor() {
+        base();        
+        size = 64;
+		count = 0;
+        buckets = memory.alloc(size * sizeof(hash_item<K>));  
+		memory.put(buckets, 0, size * sizeof(hash_item<K>));
+        return this;
+    }
+	
+	void destructor() { 
+        clear();
+        memory.free(buckets);
+        base();
+    }
+	
+	void clear() {
+        for (int i = 0; i < size; ++i) {
+            hash_item<K>* current = buckets[i];
+            hash_item<K>* prev = null;
+            while (current != null) {
+				hash_item<K>* temp = current;
+                current = current.next;
+                temp.key = 0;
+                if(prev != null)
+                    prev.next = null;
+                prev = temp;
+            }
+            buckets[i] = null;
+        }
+		count = 0;
+    }
+	
+	void add(K key) {
+        long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_item<K>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                return;
+            }
+            current = current.next;
+        }
+
+        hash_item<K>* newItem = new hash_item<K>();        
+        newItem.key = key;
+        newItem.next = buckets[index];
+        buckets[index] = newItem;
+		++count;
+    }
+	
+	void remove(K key)
+	{
+		long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_item<K>* current = buckets[index];
+		hash_item<K>* prev = null;
+
+        while (current != null) {
+            if (current.key == key) {
+                
+				if(prev) {
+					prev.next = current.next;
+				}
+				else {
+					buckets[index] = current.next;
+				}
+				--count;
+                return;
+            }
+			prev = current;
+            current = current.next;
+        }
+	}
+
+	array<K>* get keys()
+	{
+		array<K>* result = new array<K>();
+		for(int i = 0; i < size; ++i)
+		{
+			hash_item<K>* pair = buckets[i];
+			while(pair != null)
+			{
+				result.add(pair.key);
+				pair = pair.next;
+			}
+		}
+		return result;
+	}
+
+	bool contains(K key)
+	{
+		long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_item<K>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                return true;
+            }
+            current = current.next;
+        }
+		
+        return false;
+	}
+}
+
+//-----------------------------------------------------------------------------
+
+enum SeekPos
+{
+	Start,
+	Current,
+	End,
+}
+
+class file
+{
+	void *fptr;
+
+	file* constructor()
+	{
+		base();
+		fptr = null;
+		return this;
+	}
+
+	void destructor()
+	{
+		close();
+		base();
+	}
+
+	void seek(long offset, SeekPos whence)
+	{
+		fseek(fptr, offset, whence);
+	}
+
+	long get position()
+	{
+		return ftell(fptr);	
+	}
+
+	long read(void *buffer, long size)
+	{
+		return fread(buffer, size, 1, fptr);
+	}
+
+	long write(void *buffer, long size)
+	{
+		return fwrite(buffer, size, 1, fptr);
+	}
+
+	void close()
+	{
+		if(fptr)
+			fclose(fptr);
+	}
+
+	static file* open(string *fileName, string *mode)
+	{
+		file *f = new file();
+		f.fptr = fopen(fileName.c_str(), mode.c_str());
+		if(f.fptr == null)
+			return null;
+		else
+			return f;
+	}
+
+	static string* readAllText(string *fileName)
+	{
+		file *f = file.open(fileName, "rb");
+		if(f == null)
+			return null;
+		f.seek(0, SeekPos.End);
+		long size = f.position;
+		f.seek(0, SeekPos.Start);
+		byte *buffer = memory.alloc(size+1);
+		f.read(buffer, size);
+		buffer[(int)size] = 0;
+		string* result = new string(buffer);
+		memory.free(buffer);
+		return result;
+	}	
+
+	static bool writeAllText(string *fileName, string *text)
+	{
+		file *f = file.open(fileName, "wb");
+		if(f == null)
+			return false;
+		f.write(text.c_str(), text.length);
+		return true;
+	}
+
+	static bool move(string *oldFileName, string *newFileName)
+	{
+		return rename(oldFileName.c_str(), newFileName.c_str()) == 0;
+	}
+
+	static bool deleteFile(string *fileName)
+	{
+		return remove(fileName.c_str()) != 0;
+	}
+
+	static bool exists(string *fileName)
+	{
+		void *f = fopen(fileName.c_str(), "rb");
+		if(f != null) {
+			fclose(f);
+			return true;
+		}
+		else {
+			return false;
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+
+class path
+{
+	static string getCurrentDirectory()
+    {
+        byte buffer[256];
+        if(_getcwd(buffer, 256))
+        {
+            return new string(buffer);
+        }
+        return null;
+    }
+
+	static string getDirectoryName(string filePath)
+	{
+		int index = filePath.lastIndexOfChar('\\');
+		if(index >= 0)
+		{
+			return filePath.substr(0, index);
+		}
+		else
+		{
+			return ".";
+		}
+	}
+
+	static string getFileName(string filePath)
+    {
+        int index = filePath.lastIndexOfChar('\\');
+		if(index >= 0)
+			return filePath.substr(index+1, filePath.length-index-1);
+		else
+			return filePath;
+    }
+
+	static string getExtension(string filePath)
+	{
+		int index = filePath.lastIndexOfChar('.');
+		if(index >= 0)
+			return filePath.substr(index, filePath.length-index);
+		else
+			return "";
+	}
+
+	static string getFileNameWithoutExtension(string filePath)
+	{
+		int index = filePath.lastIndexOfChar('\\');
+		int dotIndex = filePath.lastIndexOfChar('.');
+		if(dotIndex > index)
+			return filePath.substr(index+1, dotIndex-index-1);
+		else
+			return path.getFileName(filePath);
+	}
+
+	static string canonize(string filePath)
+	{
+		array<string> source = filePath.split("\\");
+		array<string> dest = new array<string>();
+
+		for(int i = 0; i < source.count; ++i)
+		{
+			string part = source[i];
+
+			if(part == ".") // skip current folder
+			{
+				continue;
+			}
+			else if(part == "..") // pop previous folder
+			{
+				if(dest.count > 0)
+				{
+					dest.removeAt(dest.count-1);
+				}
+			}
+			else
+			{
+				dest.add(part);
+			}
+		}
+
+		string result = dest.join("\\");	
+
+		return result;
+	}
+
+	static string getFullPath(string filePath)
+    {
+        if(filePath.indexOf(":") == -1)
+        {
+            string cwd = path.getCurrentDirectory();
+            if(cwd != null)
+            {
+                return path.canonize(cwd + '\\' + filePath);
+            }
+            else
+            {
+                return null;
+            }
+        }
+        else
+        {
+            return filePath;
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
+
+enum SymbolType
+{
+    None = 0,
+    Primitive = 1,
+    LocalVar,
+    GlobalVar,
+    Function,
+    Module,
+    Root,
+    Array,
+    Pointer,
+    Field,
+    Struct,
+    BlockScope,
+    Class,
+    Method,
+    Property,
+    Enum,
+    EnumValue,
+	Template,
+	Constant,
+}
+
+enum TypeCode
+{
+    None = 0,
+    Void = 1,
+    Bool,
+    Byte,
+    UByte,
+    Short,
+    UShort,
+    Int,
+    UInt,
+    Long,
+    ULong,
+    Float,
+    Double,
+    Function,
+    Array,
+    Pointer,
+    Struct,
+    CStr,
+}
+
+byte *__bptr = null;
+
+void __initBinaryRead(byte* ptr)
+{
+	__bptr = ptr;
+}
+
+byte __readByte()
+{
+	byte value = *__bptr;
+	__bptr++;
+	return value;
+}
+
+short __readShort()
+{
+	short value = *(short*)__bptr;
+	__bptr+=2;
+	return value;
+}
+
+int __readInt()
+{
+	int value = *(int*)__bptr;
+	__bptr+=4;
+	return value;
+}
+
+long __readLong()
+{
+	long value = *(long*)__bptr;
+	__bptr+=8;
+	return value;
+}
+
+long __readString(byte *buffer)
+{
+	byte *dst = buffer;
+	while(*__bptr)
+	{
+		*dst++ = *__bptr++;
+	}
+	*dst = 0;
+	__bptr++;
+}
+
+float __readFloat()
+{
+	float value = *(float*)__bptr;
+	__bptr+=4;
+	return value;
+}
+
+double __readDouble()
+{
+	double value = *(double*)__bptr;
+	__bptr+=8;
+	return value;
+}
+
+/*class BinaryReader : object
+{
+	byte *p;
+	
+	BinaryReader* constructor(byte *ptr)
+	{
+		base();
+		this.p = ptr;
+		return this;
+	}
+
+	byte ReadByte()
+	{
+		byte value = *this.p;
+		this.p++;
+		return value;
+	}
+	
+	int ReadInt()
+	{
+		int value = *(int*)this.p;
+		this.p += 4;
+		return value;
+	}
+
+	long ReadLong()
+	{
+		long value = *(long*)this.p;
+		this.p += 8;
+		return value;
+	}
+	
+	void ReadString(byte *buffer)
+	{
+		byte *dst = buffer;
+		while(*this.p)
+		{
+			*dst++ = *this.p++;
+		}
+		*dst = 0;
+		this.p++;
+	}
+}*/
+
+int ReadType()
+{
+	int tc = __readByte();
+	if(tc == TypeCode.Pointer)
+	{
+		tc = 0x1000 + ReadType();
+	}
+	else if(tc == TypeCode.Array)
+	{
+		int sz = __readInt();
+		tc = 0x10000 + ReadType();
+	}
+	else if(tc == TypeCode.Struct)
+	{
+		byte name[256];
+		__readString(name);
+	}
+	return tc;
+}
+
+struct ClassInfo
+{
+	byte name[256];
+	ClassInfo *baseClass;
+	ClassInfo *next;
+}
+
+ClassInfo* _classes = null;
+
+void _addClassInfo(ClassInfo *info)
+{
+	info.next = _classes;
+	_classes = info;
+}
+
+ClassInfo *_getClassInfo(byte *name)
+{
+	ClassInfo *ci = _classes;
+	while(ci != null) {
+		if(!strcmp(&ci.name[0], name))
+			return ci;
+		ci = ci.next;
+	}
+	return null;
+}
+
+bool _isClassOf(object *obj, byte *clsName)
+{
+	if(obj == null)
+		return false;
+
+	ClassInfo *ci = _getClassInfo(obj.getClassName());
+	while(ci) {
+		if(!strcmp(&ci.name[0], clsName))
+			return true;
+		ci = ci.baseClass;
+	}
+	return false;
+}
+
+object* _dynamicCast(object *obj, byte *clsName)
+{
+	if(obj == null)
+		return null;
+
+	ClassInfo *ci = _getClassInfo(obj.getClassName());
+	while(ci) {
+		if(!strcmp(&ci.name[0], clsName))
+			return obj;
+		ci = ci.baseClass;
+	}
+	return null;
+}
+
+bool _readTypeLog = false;
+
+void _setReadTypeLog(bool value)
+{
+	_readTypeLog = value;
+}
+
+bool _readTypeInfo(byte *address)
+{
+	byte *ptr = address;
+	short dosHeader = *(short*)ptr;
+	ptr += 2;
+	if(dosHeader != 0x5A4D) {
+		printf("Not a DOS header");
+		return false;
+	}
+	if(_readTypeLog) printf("DOS Header OK\n");
+
+	ptr = address + 0x3c;
+	int ntOffset = *(int*)ptr;
+	
+	ptr = address + ntOffset;	
+	int peHeader = *(int*)ptr;
+	ptr += 4;
+	
+	if(peHeader != 0x00004550) {
+		printf("Not a PE header");
+		return false;
+	}
+	if(_readTypeLog) printf("NT Header OK\n");
+	
+	ptr += 2; // machine
+	ushort numSections = *(ushort*)ptr;
+	ptr += 2;
+	ptr += 4; // TimeDateStamp
+	ptr += 4; // PointerToSymbolTable
+	ptr += 4; // NumberOfSymbols
+	ushort sizeOfOptionalHeader = *(ushort*)ptr;
+	ptr += 2;
+	ptr += 2; // Characteristics
+	
+	ptr += sizeOfOptionalHeader;
+
+	if(_readTypeLog) printf("NumSections: %d\n", (int)numSections);
+	
+	for(int i = 0; i < numSections; ++i) 
+	{
+		byte secName[9];
+		for(int j = 0; j < 8; j++) 
+			secName[j] = *ptr++;
+		secName[8] = 0;
+		
+		uint virtualSize = *(uint*)ptr;
+		ptr += 4;
+		uint virtualAddress = *(uint*)ptr;
+		ptr += 4;
+		uint sizeOfRawData = *(uint*)ptr;
+		ptr += 4;
+		uint pointerToRawData = *(uint*)ptr;
+		ptr += 4;
+		
+		ptr += 16;
+
+		//printf(&secName[0]);
+	
+		if(!strcmp(secName, ".module")) {
+			if(_readTypeLog) printf("Module data:\n");
+			if(_readTypeLog) printf("\tVirtual Size: %x\n", virtualSize);
+			if(_readTypeLog) printf("\tVirtual Address: %x\n", virtualAddress);
+			if(_readTypeLog) printf("\tRaw Data Size: %x\n", sizeOfRawData);
+			if(_readTypeLog) printf("\tRaw Data Pointer: %x\n", pointerToRawData);
+			
+			ptr = address + virtualAddress;
+			
+			__initBinaryRead(ptr);
+
+			SymbolType st = __readByte();
+			if(st != SymbolType.Module) {
+				printf("Bad data\n");
+				return false;
+			}
+			if(_readTypeLog) printf("\tData Present\n");
+			uint version = __readInt();
+			if(version != 0x01000000) {
+				printf("Bad version");
+				return false;
+			}
+			if(_readTypeLog) printf("\tVersion OK\n");
+			byte name[256];
+			__readString(name);
+			if(_readTypeLog) printf("\tModule Name: %s\n", (byte*)name);
+
+			// usings
+			__readString(name);
+			while(strcmp(name, "")) {
+				__readString(name);
+			}
+			
+			int flags = 0;
+			st = __readByte();
+
+			while(st != SymbolType.None)
+			{
+				if(st == SymbolType.Constant)
+				{
+					flags = __readShort();
+					int t = ReadType();
+					__readString(name);
+					if(_readTypeLog) printf("constant %s\n", (byte*)name);
+					if(t == TypeCode.Bool || t == TypeCode.Byte || t == TypeCode.UByte) {
+						byte value = __readByte();
+						if(_readTypeLog) printf("\tvalue %d\n", value);
+					}
+					if(t == TypeCode.Short || t == TypeCode.UShort) {
+						int value = __readShort();
+						if(_readTypeLog) printf("\tvalue %d\n", value);
+					}
+					if(t == TypeCode.Int || t == TypeCode.UInt) {
+						int value = __readInt();
+						if(_readTypeLog) printf("\tvalue %d\n", value);
+					}
+					if(t == TypeCode.Long || t == TypeCode.ULong) {
+						long value = __readInt();
+						if(_readTypeLog) printf("\tvalue %lld\n", value);
+					}
+					else if(t == TypeCode.Float) {
+						float value = __readFloat();
+						if(_readTypeLog) printf("\tvalue %f\n", value);
+					}
+					else if(t == TypeCode.Double) {
+						double value = __readDouble();
+						if(_readTypeLog) printf("\tvalue %f\n", value);
+					}
+				}
+				else if(st == SymbolType.Enum)
+				{
+					flags = __readShort();
+					int et = ReadType();
+					__readString(name);
+					if(_readTypeLog) printf("enum %s\n", (byte*)name);
+					int st2 = __readByte();
+					while(st2 != 0) 
+					{
+						flags = __readShort();
+						__readString(name);
+						long value = __readLong();
+						if(_readTypeLog) printf("\tvalue %s=%d\n", (byte*)name, value);
+						st2 = __readByte();
+					}
+				}
+				else if(st == SymbolType.Function)
+				{
+					flags = __readShort();
+					int t = ReadType();
+					__readString(name);
+					if(_readTypeLog) printf("function %s\n", (byte*)name);
+					__readString(name); // verbatim
+					int st2 = __readByte();
+					while(st2 != 0)
+					{
+						flags = __readShort();
+						int pt = ReadType();
+						__readString(name);
+						int offs = __readByte();
+						if(_readTypeLog) printf("\targ %d %s\n", offs, (byte*)name);
+						st2 = __readByte();
+					}
+				}
+				else if(st == SymbolType.Struct)
+				{
+					flags = __readShort();
+					__readString(name);
+					int sz = __readShort();
+					if(_readTypeLog) printf("struct %s\n", (byte*)name);
+					int st2 = __readByte();
+					while(st2 != 0)
+					{
+						flags = __readShort();
+						int ft = ReadType();
+						__readString(name);
+						int offs = __readShort();
+						int idx = __readShort();
+						if(_readTypeLog) printf("\tfield %s\n", (byte*)name);
+						st2 = __readByte();
+					}
+				}
+				else if(st == SymbolType.Class)
+				{
+					flags = __readShort();
+					__readString(name);
+					byte baseName[256];
+					strcpy(baseName, "");
+					int ctype = __readByte();
+					if(ctype == TypeCode.Struct)
+					{
+						__readString(baseName);
+					}
+					int sz = __readShort();
+					int fcnt = __readShort();
+					if(_readTypeLog) printf("class %s : %s\n", (byte*)name, (byte*)baseName);
+					
+					ClassInfo *ci = malloc(sizeof(ClassInfo));
+					strcpy(&ci.name[0], name);
+					ci.baseClass = null;
+					if(strcmp(baseName, "")) {
+						ci.baseClass = _getClassInfo(baseName);
+					}
+					_addClassInfo(ci);
+					
+					int st2 = __readByte();
+					while(st2 != 0)
+					{
+						if(st2 == SymbolType.Field)
+						{
+							flags = __readShort();
+							int ft = ReadType();
+							__readString(name);
+							int offs = __readShort();
+							int idx = __readShort();
+							if(_readTypeLog) printf("\tfield %s\n", (byte*)name);						
+						}
+						else if(st2 == SymbolType.Method) 
+						{
+							flags = __readShort();
+							__readString(name);
+							byte fname[256];
+							__readString(fname);
+							int vslot = __readShort();
+							if(_readTypeLog) printf("\tmethod %s -> %s [%d]\n", (byte*)name, (byte*)fname, vslot);
+						}
+						else if(st2 == SymbolType.Property) 
+						{
+							flags = __readShort();
+							int pt = ReadType();
+							__readString(name);
+							__readByte();
+							/*byte getter[256];
+							byte setter[256];
+							__readString(getter);
+							__readString(setter);
+							if(_readTypeLog) printf("\tproperty %s get %s set %s\n", (byte*)name, (byte*)getter, (byte*)setter);*/
+						}
+						st2 = __readByte();
+					}
+					__readString(name);
+					while(strcmp(name, "")) {
+						__readString(name);
+					}
+				}
+				else if(st == SymbolType.Template)
+				{
+					flags = __readShort();
+					__readString(name);
+					__readString(name);
+					while(strcmp(name, ""))
+						__readString(name);
+					byte ch = __readByte();
+					while(ch != 0)
+						ch = __readByte();
+				}
+				st = __readByte();
+			}
+			
+			return true;
+		}		
+	}
+	
+	return false;
+}
+
+int DllMain(long hModule, int dwReason, void *pReserved)
+{
+	if(dwReason == 1)
+	{
+		_readTypeInfo((byte*)hModule);
+	}
+	return 1;
+}

@@ -1,0 +1,38 @@
+class stack_pLoopStatement
+{
+	array<LoopStatement*> items;
+
+	// Lightweight generic stack used by codegen to track loops and nested
+	// statement blocks.
+	stack<LoopStatement*> constructor()
+	{
+		base();
+		items = new array<LoopStatement*>();
+		return this;
+	}
+
+	int get count() => items.count;
+
+	void push(LoopStatement* item)
+	{
+		items.add(item);
+	}
+
+	void pop()
+	{
+		items.removeAt(items.count-1);
+	}
+
+	LoopStatement* peek()
+	{
+		return items.last();
+	}
+
+	array<LoopStatement*> toArray()
+	{
+		array<LoopStatement*> arr = new array<LoopStatement*>();
+		for(int i = items.count-1; i >= 0; --i)
+			arr.add(items[i]);
+		return arr;
+	}
+}

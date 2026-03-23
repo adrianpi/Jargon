@@ -1,0 +1,1795 @@
+using jargon;
+
+// LLVMCodeGen.cm
+// ----------------
+// Code generation visitor that lowers the AST into a textual LLVM
+// intermediate representation. The visitor focuses on translating
+// expressions, statements, types and top-level symbols into an IR that
+// subsequent toolchain steps can consume.
+//
+// Notes about design and behaviour:
+// - The CodeGenVisitor traverses the AST and emits textual instructions to
+//   a StringBuffer (sb). Tags are temporary names (SSA values) assigned to
+//   expressions during emission so later instructions can reference them.
+// - The visitor must manage object lifetimes for language-level reference
+//   types. It tracks temporaries that need delayed release and emits calls
+//   to object__addRef/object__release where appropriate.
+// - Many constructs (virtual calls, getters/setters, indexers) are lowered
+//   earlier in CodeTransform; CodeGen emits concrete IR for calls and
+//   pointer/field/index arithmetic.
+// - The emitted IR is textual and follows LLVM syntax (e.g. getelementptr,
+//   load/store, call, phi nodes) but is tailored to the compiler's
+//   expectations (custom IRType mapping functions are used to translate
+//   language types to IR types).
+
+template class stack<T>
+{
+	array<T> items;
+
+	// Lightweight generic stack used by codegen to track loops and nested
+	// statement blocks.
+	stack<T> constructor()
+	{
+		base();
+		items = new array<T>();
+		return this;
+	}
+
+	int get count() => items.count;
+
+	void push(T item)
+	{
+		items.add(item);
+	}
+
+	void pop()
+	{
+		items.removeAt(items.count-1);
+	}
+
+	T peek()
+	{
+		return items.last();
+	}
+
+	array<T> toArray()
+	{
+		array<T> arr = new array<T>();
+		for(int i = items.count-1; i >= 0; --i)
+			arr.add(items[i]);
+		return arr;
+	}
+}
+
+// CodeLabel - simple Label subclass carrying a string name used to
+// represent basic-block labels in the generated IR.
+class CodeLabel : Label
+{
+	string Name;
+	CodeLabel constructor(string name)
+	{
+		base();
+		this.Name = name;
+		return this;
+	}
+}
+
+// DelayRelease - used to record a temporary object reference that
+// needs a release call emitted later. The codegen accumulates these when
+// producing call arguments and clears them at safe points.
+class DelayRelease
+{
+    string tag; // SSA name of the temporary holding the object pointer
+    string dbg; // debug information placeholder
+}
+
+// CodeGenVisitor - main visitor that emits IR text for expressions,
+// statements and top-level declarations. It maintains state such as
+// current function, SSA tag counter and stacks for nested loops/blocks.
+class CodeGenVisitor : CodeVisitor
+{
+	StringBuffer sb; // output buffer for emitted IR
+	int tag;          // counter for generating unique SSA tags
+	int label;        // counter for basic-block labels
+	stack<LoopStatement> loops; // stack tracking enclosing loop statements
+	stack<StatementBlock> blocks; // stack tracking nested statement blocks
+	array<DelayRelease> lingerRefs; // temporaries pending release
+	weak CompileUnit unit; // compile unit currently being emitted
+	CompilerOptions options;
+	CompilerErrorListener errorListener;
+
+	CodeGenVisitor constructor()
+	{
+		base();
+		sb = new StringBuffer();
+		tag = 0;
+		loops = new stack<LoopStatement>();
+		blocks = new stack<StatementBlock>();
+		lingerRefs = new array<DelayRelease>();
+		return this;
+	}
+
+	// NewTag/NewLabel helpers generate unique SSA names and block labels.
+	// NewTag yields strings like "%$t1" while NewLabel yields "$label1".
+	string NewTag()
+	{
+		return string.format("%%$t%d", ++tag);
+	}
+
+	string NewLabel()
+	{
+		return string.format("$label%d", ++label);
+	}
+
+	// dbge/dbgs - helpers that produce debug information annotations 
+	// for expressions and statements. If the expression/statement has 
+	// a source line and the current function allows debug info, these 
+	// functions return a string like ", !dbg !123" referencing the 
+	// appropriate DILocation of the debug info; otherwise they return 
+	// an empty string.	
+	string dbge(Expression e)
+    {
+        if (e.line != 0 && function != null && (function.Flags & SymbolFlags.NoDebug) == 0
+            && options.DebugInfo)
+        {
+            DILocation loc = DINode.FunctionMap[function].GetLocation(e.line);
+            return string.format(", !dbg !%d", loc.ID);
+        }
+        return new string("");
+    }
+
+	string dbgs(Statement s)
+    {
+        if (s.line != 0 && function != null && (function.Flags & SymbolFlags.NoDebug) == 0
+            && options.DebugInfo)
+        {
+            DILocation loc = DINode.FunctionMap[function].GetLocation(s.line);
+            return string.format(", !dbg !%d", loc.ID);
+        }
+        return new string("");
+    }
+
+	void Error(string s, string file, int line)
+    {
+		if(errorListener != null)
+		{
+			CompilerError err = CompilerError.Error(s, file, line, 1);
+			errorListener.OnError(err);
+		}
+	}
+
+	// VisitConstantExpression - produce an IR representation for literal
+	// values. For pointers to bytes (strings) produce @name form, for
+	// booleans produce true/false, for floats/doubles produce hex bit
+	// patterns so the IR is precise, and fall back to integer formatting
+	// for integer types.
+	void VisitConstantExpression(ConstantExpression e, VisitMode mode) 
+	{
+		TypeSymbol dt = e.DataType;
+		if(dt.IsPointer() && dt.ElementType == TypeSymbol.Byte)
+		{
+			e.Tag = string.format("@%s", e.CStr);
+		}
+		else if(dt == TypeSymbol.Bool)
+		{
+			e.Tag = e.value != 0 ? "true" : "false";
+		}
+		else if(dt == TypeSymbol.Float)
+		{
+			// Emit float bit-pattern as hex so the IR preserves exact
+			// representation (avoid text decimal rounding issues).
+			double dvalue = (double)e.fValue;
+			double *dptr = &dvalue;
+			long *lptr = (long*) dptr;
+			long lValue = *lptr;
+			e.Tag = string.format("0x%16.16llx", lValue);
+		}
+		else if(dt == TypeSymbol.Double)
+		{
+			double *dptr = &e.dValue;
+			long *lptr = (long*) dptr;
+			long lValue = *lptr;
+			e.Tag = string.format("0x%16.16llx", lValue);
+		}
+		else if(dt.IsPointer() && e.value == 0)
+		{
+			e.Tag = "null";
+		}
+		else
+		{
+			if(e.DataType == TypeSymbol.Long || e.DataType == TypeSymbol.ULong)
+				e.Tag = string.format("%lld", e.value64);
+			else
+				e.Tag = string.format("%d", e.value);
+		}
+	}	
+
+	// VisitBinaryExpression - emit IR for logical short-circuiting (&&, ||)
+	// and for arithmetic/bitwise/comparison operations. The implementation
+	// selects IR instructions depending on operand types (pointer, int,
+	// float, unsigned) and emits getelementptr, ptrtoint, integer/floating 
+	// ops as appropriate.
+	void VisitBinaryExpression(BinaryExpression e, VisitMode mode)
+	{
+		string sdbg = dbge(e);
+
+		// Handle logical-and/or with explicit branching and phi nodes to
+		// implement short-circuit semantics.
+		if(e.op == BinOp.LAnd || e.op == BinOp.LOr)
+		{
+			if(e.op == BinOp.LAnd)
+			{
+				string rhs_label = NewLabel();
+                string rhs_label2 = NewLabel();
+                string false_label = NewLabel();
+                string merge = NewLabel();
+
+                e.Tag = NewTag();
+
+                e.Left.Visit(this, VisitMode.Load);
+				ClearLingerRefs();
+
+				sb.appendLine(string.format("\tbr i1 %s, label %%%s, label %%%s%s", 
+							e.Left.Tag, rhs_label, false_label, sdbg));
+                sb.appendLine(string.format("%s:", false_label));
+                sb.appendLine(string.format("\tbr label %%%s%s", merge, sdbg));
+                sb.appendLine(string.format("%s:", rhs_label));
+                e.Right.Visit(this, VisitMode.Load);
+				ClearLingerRefs();
+
+				sb.appendLine(string.format("\tbr label %%%s%s", rhs_label2, sdbg));
+                sb.appendLine(string.format("%s:", rhs_label2));
+                
+                sb.appendLine(string.format("\tbr label %%%s%s", merge, sdbg));
+                sb.appendLine(string.format("%s:", merge));
+                sb.appendLine(string.format("\t%s = phi i1 [0, %%%s], [%s, %%%s]%s", 
+						e.Tag, false_label, e.Right.Tag, rhs_label2, sdbg));
+			}
+			else
+			{
+				string rhs_label = NewLabel();
+                string rhs_label2 = NewLabel();
+                string true_label = NewLabel();
+                string merge = NewLabel();
+
+                e.Tag = NewTag();
+
+                e.Left.Visit(this, VisitMode.Load);
+				ClearLingerRefs();
+
+				sb.appendLine(string.format("\tbr i1 %s, label %%%s, label %%%s%s", 
+						e.Left.Tag, true_label,rhs_label, sdbg));
+                sb.appendLine(string.format("%s:", true_label));
+                sb.appendLine(string.format("\tbr label %%%s%s", merge, sdbg));
+                sb.appendLine(string.format("%s:", rhs_label));
+                e.Right.Visit(this, VisitMode.Load);
+				ClearLingerRefs();
+
+				sb.appendLine(string.format("\tbr label %%%s%s", rhs_label2, sdbg));
+                sb.appendLine(string.format("%s:", rhs_label2));
+
+                sb.appendLine(string.format("\tbr label %%%s%s", merge, sdbg));
+                sb.appendLine(string.format("%s:", merge));
+                sb.appendLine(string.format("\t%s = phi i1 [1, %%%s], [%s, %%%s]%s", 
+						e.Tag, true_label, e.Right.Tag, rhs_label2, sdbg));
+			}
+
+			return;
+		}
+
+		TypeSymbol lt = e.Left.DataType;
+		TypeSymbol rt = e.Right.DataType;
+
+		// Pointer arithmetic and pointer-pointer difference handling.
+		if (lt.IsPointer())
+        {
+			e.Left.Visit(this, mode);
+			e.Right.Visit(this, mode);
+
+            if (rt.IsInteger())
+            {
+                if (e.op == BinOp.Add)
+                {
+                    e.Tag = NewTag();
+                    sb.appendLine(string.format("\t%s = getelementptr inbounds %s, ptr %s, %s %s%s", e.Tag, IRType(lt.ElementType, false), e.Left.Tag, IRType(rt, false), e.Right.Tag, sdbg));
+                }
+                else if (e.op == BinOp.Sub)
+                {
+                    string temp = NewTag();
+                    sb.appendLine(string.format("\t%s = sub %s 0, %s%s", temp, IRType(rt, false), e.Right.Tag, sdbg));
+                    e.Tag = NewTag();
+                    sb.appendLine(string.format("\t%s = getelementptr inbounds %s, ptr %s, %s %s%s", e.Tag, IRType(lt.ElementType, false), e.Left.Tag, IRType(rt, false), temp, sdbg));
+                }
+                else
+                {
+                    Error("Invalid pointer Operation", e.file, e.line);
+                }
+            }
+            else if (rt.IsPointer())
+            {
+                if (e.op == BinOp.Sub)
+                {
+                    string temp1 = NewTag();
+                    sb.appendLine(string.format("\t%s = ptrtoint %s %s to i64%s", temp1, IRType(lt, false), e.Left.Tag, sdbg));
+                    string temp2 = NewTag();
+                    sb.appendLine(string.format("\t%s = ptrtoint %s %s to i64%s", temp2, IRType(rt, false), e.Right.Tag, sdbg));
+                    string temp3 = NewTag();
+                    sb.appendLine(string.format("\t%s = sub i64 %s, %s%s", temp3, temp1, temp2, sdbg));
+                    e.Tag = NewTag();
+                    sb.appendLine(string.format("\t%s = sdiv i64 %s, %d%s", e.Tag, temp3, lt.ElementType.Size, sdbg));
+                }
+                else if(e.op >= BinOp.Equal && e.op <= BinOp.GEqual)
+                {
+                    string op = "** ERR **";
+                    if (e.op == BinOp.Equal) op = "icmp eq";
+                    else if (e.op == BinOp.NEqual) op = "icmp ne";
+                    else if (e.op == BinOp.Less) op = "icmp ult";
+                    else if (e.op == BinOp.Greater) op = "icmp ugt";
+                    else if (e.op == BinOp.LEqual) op = "icmp ule";
+                    else if (e.op == BinOp.GEqual) op = "icmp uge";
+
+                    e.Tag = NewTag();
+                    sb.appendLine(string.format("\t%s = %s %s %s, %s%s", e.Tag, op, IRType(lt, false), e.Left.Tag, e.Right.Tag, sdbg));
+                }
+                else
+                {
+                    Error("Invalid pointer Operation", e.file, e.line);
+                }
+            }
+        }
+		else if (lt.IsFloatingPoint())
+        {
+			e.Left.Visit(this, mode);
+			e.Right.Visit(this, mode);
+
+            string op = "fadd";
+            if (e.op == BinOp.Add) op = "fadd";
+            else if (e.op == BinOp.Sub) op = "fsub";
+            else if (e.op == BinOp.Mul) op = "fmul";
+            else if (e.op == BinOp.Div) op = "fdiv";
+            else if (e.op == BinOp.Mod) op = "frem";
+            else if (e.op == BinOp.Equal) op = "fcmp oeq";
+            else if (e.op == BinOp.NEqual) op = "fcmp one";
+            else if (e.op == BinOp.Less) op = "fcmp olt";
+            else if (e.op == BinOp.Greater) op = "fcmp ogt";
+            else if (e.op == BinOp.LEqual) op = "fcmp ole";
+            else if (e.op == BinOp.GEqual) op = "fcmp oge";
+            //else Error("Invalid operation", e.file, e.line);
+            else op = "***ERROR***";
+
+            e.Tag = NewTag();
+            sb.appendLine(string.format("\t%s = %s %s %s, %s%s", e.Tag, op, IRType(lt, false), e.Left.Tag, e.Right.Tag, sdbg));
+        }
+        else if(lt.IsInteger())
+		{
+			e.Left.Visit(this, mode);
+			e.Right.Visit(this, mode);
+
+			e.Tag = NewTag();
+
+			bool unsigned = lt.IsUnsigned();
+
+			string op = "add";
+			if(e.op == BinOp.Add)
+				op = "add";
+			else if(e.op == BinOp.Sub)
+				op = "sub";
+			else if(e.op == BinOp.Mul)
+				op = "mul";
+			else if(e.op == BinOp.Div)
+				op = unsigned ? "udiv" : "sdiv";
+			else if(e.op == BinOp.Mod)
+				op = unsigned ? "urem" : "srem";
+			else if(e.op == BinOp.Shl)
+				op = "shl";
+			else if(e.op == BinOp.Shr)
+				op = unsigned ? "lshr" : "ashr";
+			else if(e.op == BinOp.And)
+				op = "and";
+			else if(e.op == BinOp.Or)
+				op = "or";
+			else if(e.op == BinOp.Xor)
+				op = "xor";
+			else if(e.op == BinOp.Equal)
+				op = "icmp eq";
+			else if(e.op == BinOp.NEqual)
+				op = "icmp ne";
+			else if(e.op == BinOp.Less)
+				op = unsigned ? "icmp ult" : "icmp slt";
+			else if(e.op == BinOp.LEqual)
+				op = unsigned ? "icmp ule" : "icmp sle";
+			else if(e.op == BinOp.Greater)
+				op = unsigned ? "icmp ugt" : "icmp sgt";
+			else if(e.op == BinOp.GEqual)
+				op = unsigned ? "icmp uge" : "icmp sge";
+
+			sb.appendLine(string.format("\t%s = %s %s %s, %s%s", e.Tag, op, IRType(lt, false), e.Left.Tag, e.Right.Tag, sdbg));
+		}
+
+		// After emitting the operation, release any object temporaries that
+		// were used for left/right subexpressions and are no longer needed.
+		ReleaseExpression(e.Left, e);
+		ReleaseExpression(e.Right, e);
+	}
+
+	// VisitUnaryExpression - unary operators: negation for integers/floats,
+	// bitwise-not and logical-not. Emit the corresponding IR operations.
+	void VisitUnaryExpression(UnaryExpression e, VisitMode mode)
+	{
+		e.Expression.Visit(this, VisitMode.Load);
+		e.Tag = NewTag();
+
+		string sdbg = dbge(e);
+
+		if(e.Expression.DataType.IsFloatingPoint())
+		{
+			if(e.op == UnaryOp.Neg)
+				sb.appendLine(string.format("\t%s = fsub %s -0.0, %s%s", e.Tag, IRType(e.DataType, false), e.Expression.Tag, sdbg));
+		}
+		else
+		{
+			if(e.op == UnaryOp.Neg)
+				sb.appendLine(string.format("\t%s = sub %s 0, %s%s", e.Tag, IRType(e.DataType, false), e.Expression.Tag, sdbg));
+			else if(e.op == UnaryOp.Not)
+				sb.appendLine(string.format("\t%s = xor %s %s, -1%s", e.Tag, IRType(e.DataType, false), e.Expression.Tag, sdbg));
+			else if(e.op == UnaryOp.LNot)
+				sb.appendLine(string.format("\t%s = xor i1 %s, true%s", e.Tag, e.Expression.Tag, sdbg));
+		}
+
+		ReleaseExpression(e.Expression, e);
+	}
+
+	// IRType - map language TypeSymbol to textual IR type representation used
+	// in emitted instructions. This function handles enums, arrays, structs,
+	// classes, pointers, functions and builtin scalar types.
+	string IRType(TypeSymbol type, bool _long)
+    {
+		if (type.IsEnum())
+        {
+            return IRType(type.ElementType, false);
+        }
+        else if (type.IsArray())
+        {
+            ArrayType arrType = type as ArrayType;
+            return '[' + string.format("%d", arrType.ArraySize) + new string(" x ") + IRType(arrType.ElementType, false) + ']';
+        }
+        else if (type.IsStruct() || type.IsClass())
+        {
+            return string.format("%%struct.%s", type.Name);
+        }
+        else if (type.IsPointer())
+        {
+            if (_long && type.ElementType is Function)
+            {
+				Function fn = type.ElementType as Function;
+                return IRType(fn, false);                    
+            }
+            else
+            {
+                return "ptr";
+            }
+        }
+        else if (type.IsFunction())
+        {
+            Function fn = type as Function;
+            string n = IRType(fn.ReturnType, false);
+            n += " (";
+            for (int i = 0; i < fn.Parameters.count; i++)
+            {
+                if (i != 0)
+                    n += ", ";
+                LocalVariable p = fn.Parameters[i];
+                n = n + IRType(p.DataType, false);
+            }
+            if (fn.Flags & SymbolFlags.Variadic != 0)
+            {
+                if (fn.Parameters.count > 0)
+                    n += ", ...";
+                else
+                    n += "...";
+            }
+            n += ')';
+            return n;
+        }
+        else if (type == TypeSymbol.Void)
+        {
+            return "void";
+        }
+        else if (type == TypeSymbol.Bool)
+        {
+            return "i1";
+        }
+        else if (type == TypeSymbol.Byte || type == TypeSymbol.UByte)
+        {
+            return "i8";
+        }
+        else if (type == TypeSymbol.Short || type == TypeSymbol.UShort)
+        {
+            return "i16";
+        }
+        else if (type == TypeSymbol.Int || type == TypeSymbol.UInt)
+        {
+            return "i32";
+        }
+        else if (type == TypeSymbol.Long || type == TypeSymbol.ULong)
+        {
+            return "i64";
+        }
+        else if (type == TypeSymbol.Float)
+        {
+            return "float";
+        }
+        else if (type == TypeSymbol.Double)
+        {
+            return "double";
+        }
+        else
+        {
+            return "";
+        }
+    }
+
+	// IRType2 - variant that treats arrays as pointers (useful for call
+	// arguments where arrays decay to pointers). Otherwise mirrors IRType.
+	string IRType2(TypeSymbol type, bool _long)
+    {
+		if(type.IsArray())
+		{
+			return "ptr";
+		}
+		else
+		{
+			return IRType(type, _long);
+		}        
+    }
+
+	// VisitCastExpression - emit conversion ops between integer/float/
+	// pointer types. This handles truncation/extension, float-int
+	// conversions, pointer-int conversions and boolean conversions.
+	void VisitCastExpression(CastExpression e, VisitMode mode)
+	{
+		TypeSymbol ct = e.CastType;
+		TypeSymbol et = e.Expression.DataType;
+
+		string sdbg = dbge(e);
+
+		e.Expression.Visit(this, mode);
+
+		if((ct.IsInteger() || ct.IsBool()) && (et.IsInteger() || et.IsBool()))
+		{
+			if(ct.IsBool() && !et.IsBool())
+			{
+				e.Tag = NewTag();
+                sb.appendLine(string.format("\t%s = icmp ne %s %s, 0%s",
+					e.Tag, IRType(et, false), e.Expression.Tag, sdbg));
+			}
+			else if(ct.Size < et.Size)
+			{
+				e.Tag = NewTag();
+				sb.appendLine(string.format("\t%s = trunc %s %s to %s%s",
+					e.Tag, IRType(et, false), e.Expression.Tag, IRType(ct, false), sdbg));
+			}
+			else if(ct.Size > et.Size)
+			{
+				e.Tag = NewTag();
+				if(et.IsUnsigned() || et.IsBool())
+					sb.appendLine(string.format("\t%s = zext %s %s to %s%s",
+						e.Tag, IRType(et, false), e.Expression.Tag, IRType(ct, false), sdbg));
+				else
+					sb.appendLine(string.format("\t%s = sext %s %s to %s%s",
+						e.Tag, IRType(et, false), e.Expression.Tag, IRType(ct, false), sdbg));
+			}
+			else
+			{
+				e.Tag = e.Expression.Tag;
+			}
+		}
+		else if(ct.IsPointer() && et.IsInteger())
+        {
+            e.Tag = NewTag();
+            sb.appendLine(string.format("\t%s = inttoptr %s %s to %s%s", e.Tag, IRType(et, false), e.Expression.Tag, IRType(ct, false), sdbg));
+        }
+		else if (ct.IsInteger() && et.IsPointer())
+        {
+            e.Tag = NewTag();
+            sb.appendLine(string.format("\t%s = ptrtoint %s %s to %s%s", e.Tag, IRType(et, false), e.Expression.Tag, IRType(ct, false), sdbg));
+        }
+		else if(ct.IsInteger() && et.IsFloatingPoint())
+        {
+            e.Tag = NewTag();
+            if(ct.IsUnsigned())
+				sb.appendLine(string.format("\t%s = fptoui %s %s to %s%s", e.Tag, IRType(et, false), e.Expression.Tag, IRType(ct, false), sdbg));
+            else
+				sb.appendLine(string.format("\t%s = fptosi %s %s to %s%s", e.Tag, IRType(et, false), e.Expression.Tag, IRType(ct, false), sdbg));
+        }
+        else if (ct.IsFloatingPoint() && (et.IsInteger() || et.IsBool()))
+        {
+            e.Tag = NewTag();
+            if(et.IsUnsigned() || et.IsBool())
+				sb.appendLine(string.format("\t%s = uitofp %s %s to %s%s", e.Tag, IRType(et, false), e.Expression.Tag, IRType(ct, false), sdbg));
+            else
+				sb.appendLine(string.format("\t%s = sitofp %s %s to %s%s", e.Tag, IRType(et, false), e.Expression.Tag, IRType(ct, false), sdbg));
+        }
+		else if (ct == TypeSymbol.Float && et == TypeSymbol.Double)
+        {
+            e.Tag = NewTag();
+            sb.appendLine(string.format("\t%s = fptrunc %s %s to %s%s", e.Tag, IRType(et, false), e.Expression.Tag, IRType(ct, false), sdbg));
+        }
+        else if (ct == TypeSymbol.Double && et == TypeSymbol.Float)
+        {
+            e.Tag = NewTag();
+            sb.appendLine(string.format("\t%s = fpext %s %s to %s%s", e.Tag, IRType(et, false), e.Expression.Tag, IRType(ct, false), sdbg));
+        }
+		else if(ct == TypeSymbol.Bool && et.IsFloatingPoint())
+        {
+            e.Tag = NewTag();
+            sb.appendLine(string.format("\t%s = fcmp one %s %s, 0.0%s", e.Tag, IRType(et, false), e.Expression.Tag, sdbg));
+        }
+		else if(ct.IsBool() && et.IsPointer())
+		{
+			e.Tag = NewTag();
+            sb.appendLine(string.format("\t%s = icmp ne %s %s, null%s", e.Tag, IRType(et, false), e.Expression.Tag, sdbg));
+		}
+		else
+		{
+			e.Tag = e.Expression.Tag;
+		}
+	}
+
+	// VisitSymbolExpression - emit IR for symbol references. Functions are
+	// emitted as @name. Global variables are loaded/stored depending on the
+	// visit mode. Local variables are either loaded from or addressed via
+	// their alloca'd slots depending on whether they are being read or used
+	// as an address.
+	void VisitSymbolExpression(SymbolExpression e, VisitMode mode)
+	{
+		ConstantValue cv = e.Symbol as ConstantValue;
+		if(cv != null)
+        {
+            cv.Value.Visit(this, VisitMode.Load);
+            e.Tag = cv.Value.Tag;
+            return;
+        }
+
+		string sdbg = dbge(e);
+        
+		if(e.Symbol is Function)
+		{
+			e.Tag = '@' + e.Symbol.Name;
+		}
+		else if(e.Symbol is GlobalVariable)
+		{
+			if(mode == VisitMode.Load)
+			{
+				if(e.DataType.IsArray())
+				{
+					e.Tag = '@' + e.Symbol.Name;
+				}
+				else
+				{
+					e.Tag = NewTag();
+					sb.appendLine(string.format("\t%s = load %s, ptr @%s%s", e.Tag, IRType(e.DataType, false), e.Symbol.Name, sdbg));
+				}
+			}
+			else if(mode == VisitMode.Address)
+			{
+				e.Tag = '@' + e.Symbol.Name;
+			}
+		}
+		else if(e.Symbol is LocalVariable)
+		{
+			LocalVariable lv = e.Symbol as LocalVariable;
+			if(lv.Offset < 0)
+			{
+				if(mode == VisitMode.Load)
+				{
+					if(e.DataType.IsArray())
+					{
+						e.Tag = string.format("%%%s_%d", e.Symbol.Name, -lv.Offset);
+					}
+					else
+					{
+						e.Tag = NewTag();
+						sb.appendLine(string.format("\t%s = load %s, ptr %%%s_%d%s", e.Tag, IRType(e.DataType, false), e.Symbol.Name, -lv.Offset, sdbg));
+					}
+				}
+				else if(mode == VisitMode.Address)
+				{
+					e.Tag = string.format("%%%s_%d", e.Symbol.Name, -lv.Offset);
+				}
+			}
+			else
+			{
+				if(mode == VisitMode.Load)
+				{
+					if(e.DataType.IsArray())
+					{
+						e.Tag = string.format("%%%s.addr", e.Symbol.Name);
+					}
+					else
+					{
+						e.Tag = NewTag();
+						sb.appendLine(string.format("\t%s = load %s, ptr %%%s.addr%s", e.Tag, IRType(e.DataType, false), e.Symbol.Name, sdbg));
+					}
+				}
+				else if(mode == VisitMode.Address)
+				{
+					e.Tag = string.format("%%%s.addr", e.Symbol.Name);
+				}
+			}
+		}
+		if (e.Symbol is FieldSymbol && (e.Symbol.Flags & SymbolFlags.Static) != 0)
+        {
+			FieldSymbol fs = (FieldSymbol)e.Symbol;
+            string gname = string.format("%s__%s", fs.Parent.Name, fs.Name);
+			e.Tag = NewTag();
+            if (e.DataType.IsArray())
+                sb.appendLine(string.format("\t%s = getelementptr inbounds ptr, ptr @%s, i32 0%s", e.Tag, gname, sdbg));
+            else
+                sb.appendLine(string.format("\t%s = load %s, ptr @%s%s", e.Tag, IRType(e.DataType, false), gname, sdbg));
+        }                    
+	}
+
+	// VisitFunctionCallExpression - emit a call instruction. Handles
+	// verbatim functions (where the function's Verbatim string provides a
+	// raw instruction template) and normal calls where arguments are
+	// evaluated and passed. Also tracks arguments that are class references
+	// and are produced by function calls so they can be released later.
+	void VisitFunctionCallExpression(FunctionCallExpression e, VisitMode mode)
+	{
+		TypeSymbol cdt = e.Callee.DataType;
+		e.Callee.Visit(this, VisitMode.Load);
+
+		if(e.Callee.Tag == null || e.Callee.Tag.length == 0)
+			e.Callee.Visit(this, VisitMode.Load);
+
+		Function fn = null;
+		if(cdt is Function)
+			fn = cdt as Function;
+		else if(cdt.IsPointer())
+		{
+			if(cdt.ElementType is Function)
+				fn = cdt.ElementType as Function;
+		}
+		if (fn == null)
+        {
+            // If function type cannot be found, emit no call, log error and return.
+			Error("Unable to determine function type for call", e.file, e.line);
+            return;
+        }
+
+		// Handle verbatim functions where the user provides raw IR text in
+		// the Function.Verbatim string; this allows embedding hand-written
+		// IR snippets. Replace parameter placeholders (#name) with argument
+		// addresses when available.
+		if((fn.Flags & SymbolFlags.Verbatim) != 0)
+        {
+            sb.append("\t");
+            if(fn.ReturnType != TypeSymbol.Void)
+            {
+                string tag = NewTag();
+                sb.append(string.format("%s = ", tag));
+                e.Tag = tag;
+            }
+            string v = fn.Verbatim;
+
+			for(int i = 0; i < e.Arguments.count; ++i)
+            {
+				Expression a = e.Arguments[i];
+				SymbolExpression se = a as SymbolExpression;
+                if(se != null && i < fn.Parameters.count)
+                {
+					Variable sv = se.Symbol as Variable;
+					LocalVariable vp = fn.Parameters[i];
+					if(sv != null)
+					{
+						a.Visit(this, VisitMode.Address);
+						v = v.replace(string.format("#%s", vp.Name), a.Tag);
+					}
+                }
+            }
+
+            sb.appendLine(v);
+            return;
+        }
+
+		// Evaluate arguments in reverse order, tags are produced.
+		for(int i = e.Arguments.count-1; i >= 0; --i)
+		{
+			Expression a = e.Arguments[i];
+			a.Visit(this, VisitMode.Load);
+		}
+
+		e.Tag = NewTag();
+
+		sb.append("\t");
+		if(fn.ReturnType != TypeSymbol.Void)
+		{
+			sb.append(e.Tag);
+			sb.append(" = ");
+		}		
+
+		sb.append("call ");
+		sb.append(IRType(cdt, true));
+		sb.append(" ");
+		sb.append(e.Callee.Tag);
+		sb.append("(");
+
+		for(int i = 0; i < e.Arguments.count; ++i)
+		{
+			if(i != 0)
+				sb.append(", ");
+			Expression arg = e.Arguments[i];
+			sb.append(IRType2(arg.DataType, false));
+			sb.append(" ");
+			sb.append(arg.Tag);
+		}
+
+		sb.appendLine(string.format(")%s", dbge(e)));
+
+		// Track arguments that are class references and were produced by
+		// function calls; those temporaries need to be released once
+		// the current expression is complete.
+		for (int i = 0; i < e.Arguments.count; ++i)
+        {
+			if (fn.Name != "object__addRef" && fn.Name != "object_release"
+			    && e.Arguments[i].DataType.IsClassRef()
+			    && IsFunctionCall(e.Arguments[i]))
+            {
+                DelayRelease dr = new DelayRelease();
+                dr.tag = e.Arguments[i].Tag;
+                dr.dbg = dbge(e);
+                lingerRefs.add(dr);
+            }
+        }
+	}
+
+	// ReleaseExpression - helper that, given an expression that may be a
+	// cast/function-call wrapper, finds the underlying expression and if it
+	// is a function call returning a class reference emits an object__release
+	// call for it. This is used to release temporaries when they go out of
+	// scope.
+	void ReleaseExpression(Expression e, Expression d)
+    {
+        Expression f = e;
+        while (f is CastExpression)
+		{
+			CastExpression ce = (CastExpression)f;
+            f = ce.Expression;
+		}
+
+		string sdbg = dbge(d);
+
+		TypeSymbol dt = f.DataType;
+        if (dt.IsClassRef() && IsFunctionCall(f))
+        {
+            sb.appendLine(string.format("\tcall void(ptr) @object__release(ptr %s)%s", f.Tag, sdbg));
+        }
+    }
+
+	// ClearLingerRefs - emit release calls for all temporaries recorded in
+	// lingerRefs and clear the list. Called at sequence points where it's
+	// safe to drop temporaries (e.g. after emitting a complex expression).
+	void ClearLingerRefs()
+    {
+        for(int i = lingerRefs.count-1; i >= 0; --i)
+        {
+			DelayRelease dr = lingerRefs[i];
+            sb.appendLine(string.format("\tcall void(ptr) @object__release(ptr %s)%s", dr.tag, dr.dbg));
+        }
+        lingerRefs.clear();
+    }
+
+	// VisitAssignmentExpression - emit code for assignments. Handles struct
+	// zero-initializers specially by emitting a store of a zeroinitializer.
+	// For class references the code releases the old object (unless weak or
+	// during init) and retains the new object where appropriate.
+	void VisitAssignmentExpression(AssignmentExpression e, VisitMode mode)
+	{
+		string sdbg = dbge(e);
+
+		if(mode == VisitMode.Load)
+		{
+			TypeSymbol ldt = e.Left.DataType;
+			TypeSymbol rdt = e.Right.DataType;
+			ConstantExpression ce = e.Right as ConstantExpression;
+			if(ldt.IsStruct() && rdt == TypeSymbol.Int && ce != null && ce.value == 0)
+			{
+				e.Left.Visit(this, VisitMode.Address);
+				sb.appendLine(string.format("\tstore %s zeroinitializer, ptr %s%s", IRType(ldt, false), e.Left.Tag, sdbg));
+                string t2 = NewTag();
+                sb.appendLine(string.format("\t%s = load %s, ptr %s%s", t2, IRType(ldt, false), e.Left.Tag, sdbg));
+                e.Tag = t2;
+			}
+			else
+			{
+				bool _weak = false;
+
+				FieldExpression fe = e.Left as FieldExpression;
+				if (fe != null && fe.Field is FieldSymbol)
+				{
+					FieldSymbol fs2 = (FieldSymbol)fe.Field; 
+					if((fs2.Flags & SymbolFlags.Weak) != 0)
+                        _weak = true;
+				}
+
+				e.Right.Visit(this, VisitMode.Load);
+				e.Left.Visit(this, VisitMode.Address);                
+
+				// Release old object* if not a declaration and not weak
+                if (!_weak && !e.isInit && ldt.IsClassRef())
+                {
+                    string temp = NewTag();
+                    sb.appendLine(string.format("\t%s = load ptr, ptr %s", temp, e.Left.Tag));
+                    sb.appendLine(string.format("\tcall void(ptr) @object__release(ptr %s)%s", temp, sdbg));
+                }
+
+				string tag = e.Left.Tag;
+				sb.appendLine(string.format("\tstore %s %s, ptr %s%s", IRType(ldt, false), e.Right.Tag, e.Left.Tag, sdbg));
+				//e.Tag = NewTag();
+				//sb.appendLine(string.format("\t%s = load %s, ptr %s%s", e.Tag, IRType(ldt, false), e.Left.Tag, sdbg));
+				e.Tag = e.Right.Tag;
+
+				if (e.decl != null && options.DebugInfo)
+                {
+                    DILocation loc = DINode.FunctionMap[function].GetLocation(e.line);
+                    sb.appendLine(string.format("\t#dbg_declare(ptr %s, !%d, !DIExpression(), !%d)", tag, DINode.LocalMap[e.decl].ID, loc.ID));
+                }
+
+				if (!_weak && ldt.IsClassRef() && !IsFunctionCall(e.Right))
+                {
+                    // retain new object*
+                    string temp = NewTag();
+                    sb.appendLine(string.format("\t%s = load ptr, ptr %s", temp, e.Left.Tag));
+					sb.appendLine(string.format("\tcall void(ptr) @object__addRef(ptr %s)%s", temp, sdbg));
+                }
+			}
+		}
+	}
+
+	// VisitFieldExpression - compute pointer to a field (getelementptr)
+	// and load/store depending on visit mode. For static fields, load a
+	// global or compute a global pointer. When indexing into class references
+	// that were computed by function calls, schedule a delayed release so
+	// temporaries are not freed too early.
+	void VisitFieldExpression(FieldExpression e, VisitMode mode)
+	{
+		TypeSymbol st = e.Expression.DataType;
+		TypeSymbol dt = st;
+        if (st.IsPointer())
+            st = st.ElementType;
+
+		string sdbg = dbge(e);
+        
+		if(e.Field is FieldSymbol)
+		{
+			FieldSymbol fs = e.Field as FieldSymbol;
+			if (mode == VisitMode.Load)
+			{
+				e.Expression.Visit(this, dt.IsPointer() ? VisitMode.Load : VisitMode.Address);
+				string temp = NewTag();
+				sb.appendLine(string.format("\t%s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d%s", temp, IRType(st, false), e.Expression.Tag, fs.Index, sdbg));
+				e.Tag = NewTag();
+				sb.appendLine(string.format("\t%s = load %s, ptr %s%s", e.Tag, IRType(e.DataType, false), temp, sdbg));
+			}
+			else
+			{
+				e.Expression.Visit(this, dt.IsPointer() ? VisitMode.Load : VisitMode.Address);
+				e.Tag = NewTag();
+				sb.appendLine(string.format("\t%s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d%s", e.Tag, IRType(st, false), e.Expression.Tag, fs.Index, sdbg));
+			}
+
+			if (dt.IsClassRef() && IsFunctionCall(e.Expression))
+                {
+                    DelayRelease dr = new DelayRelease();
+                    dr.tag = e.Expression.Tag;
+					dr.dbg = sdbg;
+                    lingerRefs.add(dr);
+                }
+		}
+		else if(e.Field is EnumValue)
+        {
+			EnumValue ev = e.Field as EnumValue;
+			e.Tag = string.format("%d", ev.Value);
+		}
+	}
+
+	// VisitIndexExpression - compute pointer to an array element or emit a
+	// call into get_item when available on a class. The code emits either
+	// a getelementptr followed by a load (for Load mode) or only the GEP for
+	// Address mode.
+	void VisitIndexExpression(IndexExpression e, VisitMode mode)
+	{
+		TypeSymbol edt = e.Expression.DataType;
+		ArrayType arrType = edt as ArrayType;
+
+		string sdbg = dbge(e);
+
+        if (mode == VisitMode.Load)
+        {
+            e.Expression.Visit(this, edt.IsPointer() ? VisitMode.Load : VisitMode.Address);
+            e.Index.Visit(this, VisitMode.Load);
+            string temp = NewTag();
+            if(edt.IsPointer())
+                sb.appendLine(string.format("\t%s = getelementptr inbounds %s, ptr %s, %s %s%s", temp, IRType(e.DataType, false), e.Expression.Tag, IRType(e.Index.DataType, false), e.Index.Tag, sdbg));
+            else
+                sb.appendLine(string.format("\t%s = getelementptr inbounds %s, ptr %s, i32 0, %s %s%s", temp, IRType(e.Expression.DataType, false), e.Expression.Tag, IRType(e.Index.DataType, false), e.Index.Tag, sdbg));
+            e.Tag = NewTag();
+            sb.appendLine(string.format("\t%s = load %s, ptr %s%s", e.Tag, IRType(e.DataType, false), temp, sdbg));
+        }
+        else if(mode == VisitMode.Address)
+        {
+            e.Expression.Visit(this, edt.IsPointer() ? VisitMode.Load : VisitMode.Address);
+            e.Index.Visit(this, VisitMode.Load);
+            e.Tag = NewTag();
+            if (edt.IsPointer())
+                sb.appendLine(string.format("\t%s = getelementptr inbounds %s, ptr %s, %s %s%s", e.Tag, IRType(e.DataType, false), e.Expression.Tag, IRType(e.Index.DataType, false), e.Index.Tag, sdbg));
+            else
+                sb.appendLine(string.format("\t%s = getelementptr inbounds %s, ptr %s, i32 0, %s %s%s", e.Tag, IRType(e.Expression.DataType, false), e.Expression.Tag, IRType(e.Index.DataType, false), e.Index.Tag, sdbg));
+        }
+
+		if (edt.IsClassRef() && IsFunctionCall(e.Expression))
+        {
+            DelayRelease dr = new DelayRelease();
+            dr.tag = e.Expression.Tag;
+            dr.dbg = sdbg;
+            lingerRefs.add(dr);
+        }
+	}
+
+	// VisitAddressOfExpression/VisitDerefExpression - produce address/load
+	// semantics for these nodes depending on mode.
+	void VisitAddressOfExpression(AddressOfExpression e, VisitMode mode)
+	{
+		if(mode == VisitMode.Load)
+		{
+			e.Expression.Visit(this, VisitMode.Address);
+			e.Tag = e.Expression.Tag;
+		}
+		else
+		{
+			Error("Cannot get the address of an address", e.file, e.line);
+		}
+	}
+
+	void VisitDerefExpression(DerefExpression e, VisitMode mode)
+    {
+		string sdbg = dbge(e);
+
+        if(mode == VisitMode.Load)
+        {
+			TypeSymbol dt = e.Expression.DataType;
+            e.Expression.Visit(this, VisitMode.Load);
+            e.Tag = NewTag();
+            sb.appendLine(string.format("\t%s = load %s, ptr %s%s", e.Tag, IRType(e.DataType, false), e.Expression.Tag, sdbg));
+        }
+        else if(mode == VisitMode.Address)
+        {
+            e.Expression.Visit(this, VisitMode.Load);
+            e.Tag = e.Expression.Tag;
+        }
+    }
+
+	// VisitTernaryExpression - lower conditional expression into branching
+	// and a phi node that selects between the two branch values. The code
+	// emits labels for positive/negative arms and a final phi instruction.
+	void VisitTernaryExpression(TernaryExpression e, VisitMode mode)
+    {
+        string positive = NewLabel();
+        string positive2 = NewLabel();
+        string negative = NewLabel();
+        string negative2 = NewLabel();
+        string phi = NewLabel();
+
+		string sdbg = dbge(e);
+            
+        e.Tag = NewTag();
+        e.Condition.Visit(this, VisitMode.Load);
+        sb.appendLine(string.format("\tbr i1 %s, label %%%s, label %%%s%s", e.Condition.Tag, positive, negative, sdbg));
+        sb.appendLine(string.format("%s:", positive));
+        if(e.Positive.Tag == null)
+            e.Positive.Visit(this, mode);
+        sb.appendLine(string.format("\tbr label %%%s%s", positive2, sdbg));
+        sb.appendLine(string.format("%s:", positive2));
+        sb.appendLine(string.format("\tbr label %%%s%s", phi, sdbg));
+        sb.appendLine(string.format("%s:", negative));
+        if(e.Negative.Tag == null)
+            e.Negative.Visit(this, mode);
+        sb.appendLine(string.format("\tbr label %%%s%s", negative2, sdbg));
+        sb.appendLine(string.format("%s:", negative2));
+        sb.appendLine(string.format("\tbr label %%%s%s", phi, sdbg));
+        sb.appendLine(string.format("%s:", phi));
+		string dStr = IRType(e.Positive.DataType, false);
+		string sPtr = "ptr";
+		string dtype = (mode == VisitMode.Load ? dStr : sPtr);
+        sb.appendLine(string.format("\t%s = phi %s [%s, %%%s], [%s, %%%s]%s", e.Tag, dtype, e.Positive.Tag, positive2, e.Negative.Tag, negative2, sdbg));
+    }
+
+	// VisitPostFixExpression - visit operand and operation; post-fix
+	// expression keeps the original operand tag as the expression result.
+	void VisitPostFixExpression(PostFixExpression e, VisitMode mode)
+	{
+		e.Operand.Visit(this, mode);
+        string tag = e.Operand.Tag;
+        e.Operation.Visit(this, mode);
+        e.Tag = tag;
+	}
+
+	Function function; // current function being emitted
+
+	// IsFunctionCall - helper that returns true if the expression is (or
+	// wraps) a FunctionCallExpression. CastExpression wrappers are skipped.
+	// TODO: Move to Expression?
+	bool IsFunctionCall(Expression e)
+    {
+        Expression f = e;
+        while (f is CastExpression)
+		{
+			CastExpression ce = (CastExpression)f;
+            f = ce.Expression;
+		}
+        return f is FunctionCallExpression;
+    }
+
+	// VisitReturnStatement - emit code for returning a value. If the
+	// returned value is a class reference and not a function call result,
+	// add a reference so the callee sees a retained pointer. Clear lingering
+	// temporaries, store the return value to the function return slot and
+	// branch to the function end label.
+	void VisitReturnStatement(ReturnStatement s)
+	{
+		string sdbg = dbgs(s);
+
+		if(s.Expression != null)
+		{
+			s.Expression.Visit(this, VisitMode.Load);
+
+			TypeSymbol dt = s.Expression.DataType;
+
+			if(dt.IsClassRef() && !IsFunctionCall(s.Expression))
+			{
+				sb.appendLine(string.format("\tcall void(ptr) @object__addRef(ptr %s)%s", s.Expression.Tag, sdbg));
+			}
+
+			ClearLingerRefs();
+
+			sb.appendLine(string.format("\tstore %s %s, ptr %%$retVal%s", IRType(function.ReturnType, false), s.Expression.Tag, sdbg));
+		}
+
+		array<StatementBlock> arr = blocks.toArray();
+		for(int i = 0; i < arr.count; ++i)        
+			ClearStatementBlock(arr[i]);
+
+		sb.appendLine(string.format("\tbr label %%$%s_end%s", function.Name, sdbg));
+	}
+
+	// ClearStatementBlock - emit release calls for local variables in a
+	// statement block in reverse order. This is used to ensure locals that
+	// are class references are released when leaving the block.
+	void ClearStatementBlock(StatementBlock s)
+    {
+		array<Symbol> locals = new array<Symbol>();
+		for(int i = 0; i < s.Scope.Children.count; ++i)
+			locals.add(s.Scope.Children[i]);
+        locals.reverse();
+
+		string sdbg = "";
+        if (s.endLine != 0 && function != null && (function.Flags & SymbolFlags.NoDebug) == 0 && options.DebugInfo)
+        {
+            DILocation loc = DINode.FunctionMap[function].GetLocation(s.endLine);
+            sdbg = string.format(", !dbg !%d", loc.ID);
+        }
+
+        for(int i = 0; i < locals.count; ++i)
+        {
+			Symbol l = locals[i];
+            if (l is LocalVariable)
+            { 
+				LocalVariable lv = (LocalVariable)l;
+                if (lv.DataType.IsClassRef())
+                {
+                    string temp = NewTag();
+                    sb.appendLine(string.format("\t%s = load ptr, ptr %%%s_%d", temp, lv.Name, -lv.Offset));
+                    sb.appendLine(string.format("\tcall void(ptr) @object__release(ptr %s)%s", temp, sdbg));
+                }
+            }
+        }
+    }
+
+	// VisitStatementBlock - push current block on the stack, visit child
+	// statements and then emit cleanup code for locals in the block.
+	void VisitStatementBlock(StatementBlock s)
+	{
+		BlockScope bs = s.Scope;
+        for(int i = 0; i < bs.Children.count; i++)
+        {
+			LocalVariable lv = bs.Children[i] as LocalVariable; 
+            if (lv != null && lv.DataType.IsClassRef())
+            {
+                sb.appendLine(string.format("\tstore ptr null, ptr %%%s_%d", lv.Name, -lv.Offset));
+            }
+        }
+
+		blocks.push(s);
+
+		for(int i = 0; i < s.Statements.count; ++i)
+		{
+			Statement child = s.Statements[i];
+			child.Visit(this);
+		}
+
+		ClearStatementBlock(s);
+
+		blocks.pop();
+	}
+
+	// VisitExpressionStatement - evaluate expression and emit release of
+	// any lingering temporaries afterwards.
+	void VisitExpressionStatement(ExpressionStatement s)
+	{
+		s.Expression.Visit(this, VisitMode.Load);
+		
+		ClearLingerRefs();
+	}
+
+	// VisitIfStatement - emit branching structure for if/else with labels,
+	// visit contained bodies and ensure temporaries are managed.
+	void VisitIfStatement(IfStatement s)
+	{
+		string sdbg = dbgs(s);
+
+		s.Condition.Visit(this, VisitMode.Load);
+		ReleaseExpression(s.Condition, s.Condition);
+		ClearLingerRefs();
+		string label1 = NewLabel();
+		string label2 = NewLabel();
+		string label3 = NewLabel();
+		sb.appendLine(string.format("\tbr i1 %s, label %%%s, label %%%s%s", s.Condition.Tag, label1, label2, sdbg));
+		sb.appendLine(string.format("%s:", label1));
+		s.Then.Visit(this);
+		sb.appendLine(string.format("\tbr label %%%s", label3));
+		sb.appendLine(string.format("%s:", label2));
+		if(s.Else != null)
+			s.Else.Visit(this);
+		sb.appendLine(string.format("\tbr label %%%s", label3));
+		sb.appendLine(string.format("%s:", label3));
+	}
+
+	// Loop handling: generate labels for continue/break and push loop on
+	// stack. Emit condition checks and body with appropriate branches.
+	void VisitWhileStatement(WhileStatement s)
+	{
+		string label1 = NewLabel();
+		string label2 = NewLabel();
+		string label3 = NewLabel();
+		s.ContinueLabel = new CodeLabel(label1);
+		s.BreakLabel = new CodeLabel(label3);
+		loops.push(s);
+		sb.appendLine(string.format("\tbr label %%%s", label1));
+        sb.appendLine(string.format("%s:", label1));
+		s.Condition.Visit(this, VisitMode.Load);
+		ReleaseExpression(s.Condition, s.Condition);
+		ClearLingerRefs();
+		sb.appendLine(string.format("\tbr i1 %s, label %%%s, label %%%s ;5", s.Condition.Tag, label2, label3));
+		sb.appendLine(string.format("%s:", label2));
+		s.Body.Visit(this);
+		sb.appendLine(string.format("\tbr label %%%s", label1));
+		sb.appendLine(string.format("%s:", label3));
+		loops.pop();
+	}
+
+	void VisitDoStatement(DoStatement s)
+	{
+		string label1 = NewLabel();
+		string label2 = NewLabel();
+		s.ContinueLabel = new CodeLabel(label1);
+		s.BreakLabel = new CodeLabel(label2);
+		loops.push(s);
+		sb.appendLine(string.format("\tbr label %%%s", label1));
+		sb.appendLine(string.format("%s:", label1));
+		s.Body.Visit(this);
+		s.Condition.Visit(this, VisitMode.Load);
+		ReleaseExpression(s.Condition, s.Condition);
+		ClearLingerRefs();
+		sb.appendLine(string.format("\tbr i1 %s, label %%%s, label %%%s ;6", s.Condition.Tag, label1, label2));
+		sb.appendLine(string.format("%s:", label2));
+		loops.pop();
+	}
+
+	void VisitForStatement(ForStatement s)
+	{
+		string label1 = NewLabel();
+        string label2 = NewLabel();
+        string label3 = NewLabel();
+        string label4 = NewLabel();
+
+        s.ContinueLabel = new CodeLabel(label3);
+        s.BreakLabel = new CodeLabel(label4);
+
+        loops.push(s);
+        if(s.Init != null)
+        {
+            s.Init.Visit(this, VisitMode.Load);
+			ReleaseExpression(s.Init, s.Init);
+			ClearLingerRefs();
+        }
+        sb.appendLine(string.format("\tbr label %%%s", label1));
+		sb.appendLine(string.format("%s:", label1));
+        if(s.Condition != null)
+        {
+            s.Condition.Visit(this, VisitMode.Load);
+			ReleaseExpression(s.Condition, s.Condition);
+			ClearLingerRefs();
+        }
+        sb.appendLine(string.format("\tbr i1 %s, label %%%s, label %%%s  ;7", s.Condition.Tag, label2, label4));
+        sb.appendLine(string.format("\tbr label %%%s", label2));
+		sb.appendLine(string.format("%s:", label2));
+        s.Body.Visit(this);
+        sb.appendLine(string.format("\tbr label %%%s", label3));
+		sb.appendLine(string.format("%s:", label3));
+        if (s.Iter != null)
+        {
+            s.Iter.Visit(this, VisitMode.Load);
+			ReleaseExpression(s.Iter, s.Iter);
+			ClearLingerRefs();
+        }
+        sb.appendLine(string.format("\tbr label %%%s", label1));
+        sb.appendLine(string.format("%s:", label4));
+        loops.pop();
+	}
+
+	// Break/Continue: clear temporaries created in intervening blocks then
+	// branch to the loop's break/continue label.
+	void VisitBreakStatement(BreakStatement s)
+    {
+        LoopStatement loop = loops.peek();
+		string sdbg = dbgs(s);
+
+		for(int i = blocks.count-1; i >= 0; --i)
+		{
+			StatementBlock block = blocks.items[i] as StatementBlock;
+			ClearStatementBlock(block);
+			if(block == loop.Body)
+				break;
+		}
+
+		CodeLabel lbl = loop.BreakLabel as CodeLabel;
+        sb.appendLine(string.format("\tbr label %%%s%s", lbl.Name, sdbg));
+    }
+
+	void VisitContinueStatement(BreakStatement s)
+    {
+        LoopStatement loop = loops.peek();
+		string sdbg = dbgs(s);
+
+		for(int i = blocks.count-1; i >= 0; --i)
+		{
+			StatementBlock block = blocks.items[i] as StatementBlock;
+			ClearStatementBlock(block);
+			if(block == loop.Body)
+				break;
+		}
+
+		CodeLabel lbl = loop.ContinueLabel as CodeLabel;
+		sb.appendLine(string.format("\tbr label %%%s%s", lbl.Name, sdbg));
+    }
+	
+	// VisitGlobalVariable - emit global variable definition. For aggregate
+	// types emit a zeroinitializer; otherwise emit a scalar global initialized
+	// to zero. Some string globals are handled specially but that case is
+	// left as commented-out TODO.
+	void VisitGlobalVariable(GlobalVariable s)
+    {
+		if(s.Unit != unit)
+		{
+			// For external globals, just emit an extern declaration.
+			// Add dllimport if flagged external
+			if((s.Flags & SymbolFlags.External) != 0)
+				sb.appendLine(string.format("@%s = external dllimport global %s", s.Name, IRType(s.DataType, false)));
+			else
+				sb.appendLine(string.format("@%s = external global %s", s.Name, IRType(s.DataType, false)));
+			return;
+		}
+
+        string sdbg = "";
+		TypeSymbol sdt = s.DataType;
+        if (options.DebugInfo)
+        {
+            DIGlobalVariable gv = new DIGlobalVariable();
+            gv.name = s.Name;
+            gv.linkageName = s.Name;
+            gv.type = DINode.GetTypeInfo(s.DataType);
+            DIGlobalVariableExpression gve = new DIGlobalVariableExpression();
+            gve.var = gv;
+            sdbg = string.format(", !dbg !%d", gve.ID);
+        }
+
+        /*todo:if(s.Init != null && s.DataType.IsPointer() && s.DataType.ElementType == TypeSymbol.Byte
+            && s.Init.DataType.IsPointer() && s.Init.DataType.ElementType == TypeSymbol.Byte
+            && s.Init is ConstantExpression cstr)
+        {
+            sb.AppendLine($"@{s.Name} = global ptr @{cstr.CString}{dbg}");
+        }
+        else*/ if (sdt.IsStruct() || sdt.IsArray() || sdt.IsPointer())
+        {
+            sb.appendLine(string.format("@%s = global %s zeroinitializer%s", s.Name, IRType(s.DataType, false), sdbg));
+        }
+        else
+        {
+            long value = 0;
+            sb.appendLine(string.format("@%s = global %s %d%s", s.Name, IRType(s.DataType, false), value, sdbg));
+        }
+    }
+
+	// VisitFunction - emit function header, parameter allocas, local allocas,
+	// initialization of local classref vars to null, body and epilog/return.
+	void VisitFunction(Function s)
+	{
+		function = s;
+		//tag = 1;
+
+		bool isDLL = options.OutputFileName.toLower().endsWith(".dll");
+		string linkage = (s.Flags & SymbolFlags.Internal) != 0 ? "internal " : (isDLL ? "dllexport " : "");
+		bool inOtherUnit = unit != null && s.Unit != unit;
+
+		if((s.Flags & SymbolFlags.External) != 0 || inOtherUnit)
+			sb.append("declare ");
+		else
+			sb.append(string.format("define %s", linkage));
+
+		sb.append(IRType(s.ReturnType, false));
+		sb.append(" @");
+		sb.append(s.Name);
+		sb.append("(");
+		for(int i = 0; i < s.Parameters.count; ++i)
+		{
+			if(i != 0)
+				sb.append(", ");
+
+			LocalVariable p = s.Parameters[i];
+			sb.append(IRType(p.DataType, false));
+			sb.append(" ");
+			sb.append("%");
+			sb.append(p.Name);
+		}
+
+		if(s.Flags & SymbolFlags.Variadic != 0)
+        {
+            if (s.Parameters.count > 0)
+                sb.append(", ...");
+            else
+                sb.append("...");
+        }
+
+		if((s.Flags & SymbolFlags.External) != 0 || inOtherUnit)
+		{
+			sb.appendLine(")");
+			function = null;
+			return;
+		}
+
+		sb.append(")");
+
+		if ((s.Flags & SymbolFlags.NoDebug) == 0 && options.DebugInfo)
+			sb.append(string.format(" !dbg !%d ", DINode.FunctionMap[s].ID));
+		
+		sb.appendLine("{");
+
+		//sb.appendLine(string.format("$%s_entry:", s.Name));
+
+		// Emit allocas and store incoming parameter values to their stack slots.
+		for(int i = 0; i < s.Parameters.count; ++i)
+		{
+			LocalVariable p = s.Parameters[i];
+
+			sb.appendLine(string.format("\t%%%s.addr = alloca %s", p.Name, IRType(p.DataType, false)));
+			sb.appendLine(string.format("\tstore %s %%%s, ptr %%%s.addr", IRType(p.DataType, false), p.Name, p.Name));
+			p.TagName = string.format("%%%s.addr", p.Name);
+		}
+
+		if ((s.Flags & SymbolFlags.NoDebug) == 0 && options.DebugInfo)
+        {
+			for(int i = 0; i < s.Parameters.count; ++i)            
+            {
+				LocalVariable lv = s.Parameters[i];
+                DILocation loc = DINode.FunctionMap[function].GetLocation(s.line);
+                sb.appendLine(string.format("\t#dbg_declare(ptr %%%s.addr, !%d, !DIExpression(), !%d)", lv.Name, DINode.LocalMap[lv].ID, loc.ID));
+            }
+        }
+
+		// Emit allocas for locals with negative offsets (stack locals)
+		for(int i = 0; i < s.Locals.count; ++i)
+		{
+			Symbol child = s.Locals[i];
+			if(child is LocalVariable)
+			{
+				LocalVariable lv = child as LocalVariable;
+				if(lv.Offset < 0)
+				{
+					sb.appendLine(string.format("\t%%%s_%d = alloca %s", lv.Name, -lv.Offset, IRType(lv.DataType, false)));
+					if (lv.Init == null)
+                    {
+						if(options.DebugInfo)
+						{
+							DILocation loc = DINode.FunctionMap[function].GetLocation(lv.line);
+							sb.appendLine(string.format("\t#dbg_declare(ptr %%%s_%d, !%d, !DIExpression(), !%d)", lv.Name, -lv.Offset, DINode.LocalMap[lv].ID, loc.ID));
+						}
+
+						/*if(lv.DataType.IsClassRef())
+							sb.appendLine(string.format("\tstore ptr null, ptr %%%s_%d", lv.Name, -lv.Offset));*/
+                    }
+                    //lv.TagName = $"%{lv.Name + "_" + (-lv.Offset).ToString("X")}";
+				}
+			}
+		}
+
+		if (s.ReturnType != TypeSymbol.Void)
+        {
+            sb.appendLine(string.format("\t%%$retVal = alloca %s", IRType(s.ReturnType, false)));
+        }
+
+		// Initialize local classref variables to null to ensure deterministic
+		// release behaviour later when clearing blocks.
+		for(int i = 0; i < s.Locals.count; ++i)
+        {
+			LocalVariable lv = s.Locals[i] as LocalVariable;
+            if (lv != null && lv.Offset < 0 && lv.DataType.IsClassRef())
+            {
+                sb.appendLine(string.format("\tstore ptr null, ptr %%%s_%d", lv.Name, -lv.Offset));
+            }
+        }
+
+		if(s.Body != null)
+			s.Body.Visit(this);
+
+		string sdbg = "";
+        if ((s.Flags & SymbolFlags.NoDebug) == 0 && options.DebugInfo)
+        {
+            DILocation endLoc = DINode.FunctionMap[s].GetLocation(s.Body.endLine);
+            sdbg = string.format(", !dbg !%d", endLoc.ID);
+        }
+
+		sb.appendLine(string.format("\tbr label %%$%s_end", s.Name));
+        sb.appendLine(string.format("$%s_end:", s.Name));
+
+        if(s.ReturnType != TypeSymbol.Void)
+        {
+            string temp = NewTag();
+            sb.appendLine(string.format("\t%s = load %s, ptr %%$retVal%s", temp, IRType(s.ReturnType, false), sdbg));
+            sb.appendLine(string.format("\tret %s %s%s", IRType(s.ReturnType, false), temp, sdbg));
+        }
+        else
+        {
+            sb.appendLine(string.format("\tret void%s", sdbg));
+        }
+
+		sb.appendLine("}");
+
+		function = null;
+	}
+
+	// VisitStruct - emit IR type definition for struct; unions are emitted
+	// as arrays of i8 to match their size in bytes.
+	void VisitStruct(StructType s)
+	{
+		if (s.Flags & SymbolFlags.Union != 0)
+        {
+            sb.appendLine(string.format("%%struct.%s = type { [%d x i8] }", s.Name, s.Size));
+        }
+        else
+        {
+            sb.append(string.format("%%struct.%s = type {", s.Name));
+			for(int i = 0; i < s.Children.count; ++i)
+			{
+				if (i != 0)
+                    sb.append(", ");
+				FieldSymbol fs = s.Children[i] as FieldSymbol;
+				if(fs == null)
+					continue;
+                sb.append(IRType(fs.DataType, false));
+            }
+            sb.appendLine("}");
+        }
+	}
+
+	// ListFields - collect instance field symbols from a class hierarchy in
+	// declaration order (base class fields first, then derived class fields).
+	void ListFields(ClassType cls, array<FieldSymbol> fields)
+    {
+        if(cls.BaseClass != null)
+            ListFields(cls.BaseClass, fields);
+
+		for(int i = 0; i < cls.Children.count; ++i)
+        {
+			Symbol c = cls.Children[i];
+            if(c is FieldSymbol)
+                fields.add(c as FieldSymbol);
+        }
+    }
+
+	// VisitClass - emit the struct type for a class by listing instance
+	// fields (excluding statics) and producing the corresponding IR type
+	// definition. Static fields are handled separately as globals.
+	void VisitClass(ClassType s)
+	{
+		sb.append(string.format("%%struct.%s = type {", s.Name));
+        array<FieldSymbol> fields = new array<FieldSymbol>();
+        ListFields(s, fields);
+
+		bool first = true;
+		for(int i = 0; i < fields.count; ++i)
+        {            
+			FieldSymbol fs = fields[i];
+            if ((fs.Flags & SymbolFlags.Static) == 0)
+            {                
+				if(!first)
+					sb.append(", ");
+				sb.append(IRType(fs.DataType, false));            
+				first = false;
+			}
+        }
+        sb.appendLine("}");
+	}
+
+	void VisitUnit(CompileUnit cu, Module module, DICompileUnit unit, bool tinfo)
+	{
+		sb.appendLine(";==============================================================================");
+		sb.append(";       Module: ");
+		sb.appendLine(module.Name);
+		sb.append("; Compile Unit: ");
+		sb.appendLine(cu.FileName);
+		sb.appendLine(";==============================================================================");
+
+		// Target datalayout and triple optimized for x86_64 Windows / MSVC toolchain
+		sb.appendLine("target datalayout = \"e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128\"");
+		//sb.appendLine("target triple=\"x86_64-pc-windows-msvc19.44.35215\"");
+		sb.appendLine("target triple=\"x86_64-pc-windows-msvc19.44.35224\"");
+
+		// Emit string constants used by this compilation unit
+		sb.appendLine(";==============================================================================");
+		sb.appendLine("; Strings");
+		sb.appendLine(";==============================================================================");
+
+		for(int i = 0; i < cu.Strings.count; ++i)
+		{
+			string key = cu.Strings[i];
+			string s = module.Strings[key];
+			int len = s.length + 1; // include terminating null
+			string esc = Escape(s);
+			sb.appendLine(string.format("@%s = private constant[%d x i8] c\"%s\\00\", align 1", key, len, esc));			
+		}
+
+		// Emit declarations for external symbol references
+		sb.appendLine(";==============================================================================");
+		sb.appendLine("; SymbolRefs");
+		sb.appendLine(";==============================================================================");
+
+		for(int i = 0; i < cu.SymbolRefs.count; ++i)
+		{
+			Symbol s = cu.SymbolRefs[i];
+			GlobalVariable gv = s as GlobalVariable;
+			s.Visit(this);
+		}
+
+		// Emit struct and class type definitions
+		sb.appendLine(";==============================================================================");
+		sb.appendLine("; Structs");
+		sb.appendLine(";==============================================================================");
+
+		for(int i = 0; i < cu.Symbols.count; ++i)
+		{
+			Symbol s = cu.Symbols[i];
+			if((s is StructType) || (s is ClassType))
+				s.Visit(this);
+		}
+
+		// Emit function bodies and other code (excluding structs/classes)
+		sb.appendLine(";==============================================================================");
+		sb.appendLine("; Code");
+		sb.appendLine(";==============================================================================");
+
+		for(int i = 0; i < cu.Symbols.count; ++i)
+		{
+			Symbol s = cu.Symbols[i];
+			if(!(s is StructType) && !(s is ClassType))
+			{
+				Function fn = s as Function;
+				if(fn != null && (fn.Flags & SymbolFlags.External) == 0 && (fn.Flags & SymbolFlags.Verbatim) == 0)
+				{
+					// Add readable separators for function IR output
+					sb.appendLine(";------------------------------------------------------------------------------");
+					sb.append("; ");
+					sb.appendLine(fn.Name);
+					sb.appendLine(";------------------------------------------------------------------------------");
+				}
+
+				// If function is marked Verbatim it is assumed the IR text is already correct
+				if(fn == null || (fn.Flags & SymbolFlags.Verbatim) == 0)
+					s.Visit(this);
+			}
+		}
+
+		// Emit static initialization function (module-level init/deinit)
+		sb.appendLine(";==============================================================================");
+		sb.appendLine("; Static Init/DeInit");
+		sb.appendLine(";==============================================================================");
+
+		cu.staticInit.Visit(this);
+		cu.staticDeInit.Visit(this);
+
+		// Register the static deinit function with onexit to ensure it is called when the module 
+		// is unloaded. This allows us to clean up static variables that are class references and 
+		// need to be released.
+		sb.appendLine("declare i32 @_onexit(ptr %p)");
+        sb.appendLine("define internal void @register_cleanup()");
+        sb.appendLine("{");
+        sb.appendLine("    %fp = bitcast void()* @static_deinit to ptr");
+        sb.appendLine("    %res = call i32 @_onexit(ptr %fp)");
+        sb.appendLine("    ret void");
+        sb.appendLine("}");
+
+		sb.appendLine("@llvm.global_ctors = appending global [2 x { i32, ptr, ptr }]\r\n\t[{ i32, ptr, ptr } { i32 65535, ptr @static_init, ptr null }, { i32, ptr, ptr } { i32 65535, ptr @register_cleanup, ptr null }]");
+
+		if (options.DebugInfo)
+        {
+            sb.appendLine(";=================================================================================");
+            sb.appendLine("; Debug Info");
+            sb.appendLine(";=================================================================================");
+
+            sb.appendLine(string.format("!llvm.dbg.cu = !{!%d}", unit.ID));
+
+            // A few DIText flags used as module flags and identification strings
+            DIText dt1 = new DIText("!{ i32 2, !\"CodeView\", i32 1}");
+            DIText dt2 = new DIText("!{ i32 2, !\"Debug Info Version\", i32 3}");
+            DIText dt3 = new DIText("!{ i32 1, !\"wchar_size\", i32 2}");
+            DIText dt4 = new DIText("!{ i32 8, !\"PIC Level\", i32 2}");
+            DIText dt5 = new DIText("!{ i32 7, !\"uwtable\", i32 2}");
+            DIText dt6 = new DIText("!{ i32 1, !\"MaxTLSAlign\", i32 65536}");
+            DIText dt7 = new DIText("!{ !\"jargon version 1.0.0\"}");
+
+            sb.appendLine(string.format("!llvm.module.flags = !{!%d, !%d, !%d, !%d, !%d, !%d}", dt1.ID, dt2.ID, dt3.ID, dt4.ID, dt5.ID, dt6.ID));
+            sb.appendLine(string.format("!llvm.ident = !{!%d}", dt7.ID));
+
+			// Add any global variable debug expressions to the compile unit
+			for(int j = 0; j < DINode.Globals.count; ++j)
+			{
+				DIGlobalVariableExpression g = DINode.Globals[j];
+                unit.globals.add(g);
+			}
+
+			// Serialize all debug nodes into the .ll file
+			for(int jj = 0; jj < DINode.AllNodes.count; ++jj)
+            {
+				DINode node = DINode.AllNodes[jj];
+				node.Serialize(sb);
+            }
+        }
+
+		if(tinfo)
+		{
+			sb.appendLine(";==============================================================================");
+			sb.appendLine("; Type Info");
+			sb.appendLine(";==============================================================================");
+
+			// add type info
+			array<byte> typeInfo = new array<byte>();
+			TypeInfo.Write(typeInfo, module); // write type layout and metadata into byte array
+			sb.append(string.format("@type_info = private constant [%d x i8] c\"", typeInfo.count));
+			for(int i = 0; i < typeInfo.count; ++i)
+			{
+				ubyte b = typeInfo[i];
+				sb.append(string.format("\\%02x", (b & 0xff)));
+			}
+			sb.appendLine("\", section \".module\"");
+			sb.appendLine("@llvm.used = appending global [1 x ptr] [ptr @type_info], section \"llvm.metadata\"");
+		}
+
+		sb.appendLine(";==============================================================================");
+		sb.append(";       Module: ");
+		sb.appendLine(module.Name);
+		sb.append("; Compile Unit: ");
+		sb.appendLine(cu.FileName);
+		sb.appendLine(";==============================================================================");
+	}
+
+}

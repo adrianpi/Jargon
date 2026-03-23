@@ -1,0 +1,64 @@
+using jargon;
+
+//----------------------------------------------------------------------------
+
+long GetModuleHandleA(byte *name) external;
+
+class A
+{
+	int field;
+	int arr[2];
+
+	void destructor()
+	{
+		println("A is being destroyed");
+		base();
+	}
+
+	int get Field() => field;
+	void set Field(int value) => field = value;
+
+	int get_item(int index) => arr[index];
+	void set_item(int index, int value) => arr[index] = value;
+}
+
+A aaa = new A();
+
+int main(int argc, byte **argv)
+{
+	long hModule = GetModuleHandleA(null);
+	_readTypeInfo(hModule);
+
+	println("META 3");
+
+	for(int i = 0; i < argc; ++i)
+		println(argv[i]);
+
+	array<A> arr = new array<A>();
+
+	A a = new A();
+	a.Field = 1000;
+	a[0] = 99;
+	a[1] = 2;
+	
+	arr.add(a);
+	arr.reverse();
+	
+	arr[0][0] = 199;
+	arr[0][1] = 3;
+
+	println("a is object? : %d", (a is object));
+	println("a is A?      : %d", (a is A));
+	println("a is string? : %d", (a is string));
+
+	int n = 99;
+
+	println("n.toString() : %s", n.toString());
+	println("n.getHash()  : %d", n.getHash());
+	println("n.getClassName()  : %s", n.getClassName());
+
+	println("***Compiled Compilation Compiled with Compiled Compiler***");
+	FunctionInOtherUnit();
+
+	return arr[0][0] + arr[0][1];
+}

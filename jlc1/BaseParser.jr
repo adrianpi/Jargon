@@ -1,0 +1,1207 @@
+using jargon;
+
+// Get environment variable value by name.
+byte* getenv(byte *name) external;
+int strncmp(byte *a, byte *b, int len) external;
+
+// Simple representation of a variable / parameter / function declaration
+// encountered during parsing. Holds the type, optionally a name and flags
+// such as ellipsis (variadic), getter/setter markers and by-ref marker.
+class Declaration
+{
+	TypeSymbol type;
+	string name;
+	bool ellipsis;
+	bool isGetter;
+	bool isSetter;
+	bool isByRef;
+}
+
+// Different kinds of declarators produced by parsing C-like declarator syntax.
+// Pointer: *
+// Array: [N]
+// Function: (args)
+// Identifier: name
+// Reference: & or similar (language-specific)
+enum DeclaratorType
+{
+	Pointer,
+	Array,
+	Function,
+	Identifier,
+	Reference,
+}
+
+// Representation for a declarator in the parser. Declarators are stacked parts
+// of e.g. a C-style declaration: int *(*f)(int) -> multiple declarators.
+// "pars" contains parsed parameters when this declarator is a function.
+class Declarator
+{
+	DeclaratorType type;
+	int arraySize;
+	string name;
+	array<Declaration> pars;
+	bool isGetter;
+	bool isSetter;
+	bool op; // indicates special operator declarator
+}
+
+// CompileUnit models a single source file being parsed/compiled. It holds the
+// file path, contents and collections of symbols/usings/strings collected
+// during parsing and processing.
+class CompileUnit
+{
+    string Path;
+    string FileName; // holds the current file being parsed
+    string Text;
+    array<ModuleUsing> Usings = new array<ModuleUsing>();
+    array<Symbol> Symbols = new array<Symbol>();
+    array<Symbol> SymbolRefs = new array<Symbol>();
+    array<string> Strings = new array<string> ();
+    array<CompileUnit> Children = new array<CompileUnit>();
+    weak Function staticInit;
+    weak Function staticDeInit;
+
+    // Constructor: reads the file into the Text property and sets Path/FileName.
+    CompileUnit constructor(string filePath)
+    {
+        base();
+        Path = path.getFullPath(filePath);
+        FileName = path.getFileName(filePath);
+        Text = file.readAllText(filePath);
+        // Ensure there is a trailing newline which many parsers expect.
+        Text = Text + "\r\n";
+        return this;
+    }
+
+    // AddSymbol - register a symbol in this compile unit if not already
+    // present. Also set the symbol's Unit to this compile unit.
+    void AddSymbol(Symbol s)
+    {
+        for(int i = 0; i < Symbols.count; ++i)
+        {
+            if(Symbols[i] == s)
+                return;
+        }
+        s.Unit = this;
+        Symbols.add(s);
+    }
+
+    // AddSymbolRef - add a reference to a symbol that this unit depends on.
+    // Prevents duplicate entries either by reference equality or by name.
+    void AddSymbolRef(Symbol s)
+    {
+        for(int i = 0; i < SymbolRefs.count; ++i)
+        {
+            Symbol sr = SymbolRefs[i];
+            if (sr == s || sr.Name == s.Name)
+                return;
+        }
+        SymbolRefs.add(s);
+    }
+
+    // AddString - keep a table of unique strings used by the compile unit.
+    void AddString(string str)
+    {
+        for(int i = 0; i < Strings.count; ++i)
+        {
+            if(Strings[i] == str)
+                return;
+        }
+        Strings.add(str);
+    }
+}
+
+//-----------------------------------------------------------------------------
+
+// ErrorSeverity enumerates the importance of reported diagnostics.
+enum ErrorSeverity
+{
+    Info = 0,
+    Warning = 1,
+    Error = 2,
+}
+
+// CompilerError - structured diagnostic created by the parser/compiler with
+// severity, location and a message. Factory static methods are provided for
+// convenience when creating new diagnostics.
+class CompilerError    
+{
+    ErrorSeverity Severity;
+    string FileName;
+    int Line;
+    int Column;
+    string Message;
+
+    static CompilerError Info(string message)
+    {
+        CompilerError error = new CompilerError();
+        error.Severity = ErrorSeverity.Info;
+        error.Message = message;
+        return error;
+    }
+
+    static CompilerError Warning(string message, string fileName, int line, int column)
+    {
+        CompilerError error = new CompilerError();
+        error.Severity = ErrorSeverity.Warning;
+        error.Message = message;
+        error.FileName = fileName;
+        error.Line = line;
+        error.Column = column;
+        return error;
+    }
+
+    static CompilerError Error(string message, string fileName, int line, int column)
+    {
+        CompilerError error = new CompilerError();
+        error.Severity = ErrorSeverity.Error;
+        error.Message = message;
+        error.FileName = fileName;
+        error.Line = line;
+        error.Column = column;
+        return error;
+    }
+
+    // toString - produce a human readable representation suitable for
+    // command-line output or logs. Includes file/line/column when available.
+    string toString()
+    {
+        byte* severities[3] = {"Info", "Warning", "Error"};
+        string output = "";
+        if (FileName != null)
+            output += FileName;
+        if (Line != 0)
+            output += string.format("(%d,%d): ", Line, Column);
+        if(Severity != ErrorSeverity.Info)
+            output += string.format("%s: ", severities[(int)Severity]);
+        output += Message;
+        return output;
+    }
+}
+
+//-----------------------------------------------------------------------------
+
+// A listener interface that receives compiler errors. Concrete toolchains or
+// frontends implement this to handle diagnostics (e.g. print to console,
+// collect in a list, display in an IDE). The default implementation is a
+// no-op.
+class CompilerErrorListener
+{
+    virtual void OnError(CompilerError error) {}
+}
+
+//-----------------------------------------------------------------------------
+
+// CompilerOptions - basic configuration options used by the compiler. This
+// class provides defaults for common runtime libraries and search dirs.
+class CompilerOptions
+{
+    string OutputFileName;
+    string OutputDirectory = ".";
+    string AdditionalFlags = "";
+    bool DebugInfo = false;
+    bool KeepIntermediateFiles = false;
+    bool Verbose = false;
+    string OptimizationLevel = "Og";
+
+    array<string> InputFiles = new array<string>();
+    array<string> AdditionalLibraries = new array<string>();
+    array<string> LibraryDirectories = new array<string>();
+    
+    // constructor - setup default libraries and library search path used by
+    // the toolchain when linking or preparing build commands.
+    CompilerOptions constructor()
+    {
+        base();
+
+        AdditionalLibraries.add("ucrt.lib");
+        AdditionalLibraries.add("vcruntime.lib");
+        AdditionalLibraries.add("msvcrt.lib");
+        AdditionalLibraries.add("legacy_stdio_definitions.lib");
+
+        LibraryDirectories.add("$JARGON_LIB");
+
+        return this;
+    }
+}
+
+//-----------------------------------------------------------------------------
+
+// BaseParser - provides common parsing routines used across the parser
+// pipeline stages (Parser1..Parser4 etc.). This class holds parser state
+// such as the scanner, current module/function/scope and helper methods
+// used by concrete parser implementations.
+class BaseParser
+{
+    Scanner scanner;
+    Module module;
+    Function function;
+    Symbol scope;
+    ClassType _class = null;
+    CompileUnit unit;
+    string fileName;
+    CompilerErrorListener errorListener;
+    CompilerOptions options;
+
+    // StartParse - initialize parser state for a given compile unit.
+    void StartParse(CompileUnit cu)
+    {
+        unit = cu;
+        scanner = new Scanner(cu.Text, cu.Path);
+        scanner.errorListener = this.errorListener;
+        OnStartParse();
+    }
+
+    // EndParse - hook called after parsing finishes to allow derived
+    // classes to clean up or perform post-processing.
+    void EndParse()
+    {
+        OnEndParse();
+    }
+
+    // Virtual hooks for parser stages to override.
+    virtual void OnStartParse()
+    {
+    }
+
+    virtual void OnEndParse()
+    {
+    }
+
+    // Error/Warning/Info helpers create diagnostics with current scanner
+    // location and forward them to the error listener.
+    void Error(string str)
+    {
+        errorListener.OnError(CompilerError.Error(str, fileName, scanner.Line, scanner.Column));                
+    }
+
+    void Warning(string str)
+    {
+        errorListener.OnError(CompilerError.Warning(str, fileName, scanner.Line, scanner.Column));
+    }
+
+    void Info(string str)
+    {
+        errorListener.OnError(CompilerError.Info(str));
+    }
+
+    // IsType - determine if the current token is an identifier that resolves
+    // to a known type in the current module or in any using/imports.
+    bool IsType()
+    {
+        if (scanner.Token == Token.Ident)
+        {
+            Symbol type = module.Find(scanner.TokenString);
+
+            if (type == null)
+            {
+                for(int i = 0; i < unit.Usings.count && type == null; ++i)
+                {
+                    ModuleUsing u = unit.Usings[i];
+                    type = u.Module.Find(scanner.TokenString);
+                }
+            }
+
+            if (type != null && type.IsType() && type.SymbolType != SymbolType.Function)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // IsKeyword - convenience to check that the current token is a specific
+    // keyword, and advance the scanner if so.
+    bool IsKeyword(string keyword)
+    {
+        if (scanner.Token == Token.Keyword && scanner.TokenString == keyword)
+        {
+            scanner.NextToken();
+            return true;
+        }        
+
+        return false;
+    }
+
+    // FindOrImport - locate a function by name in the local module or in any
+    // using/imports. If found and it's from another unit, add a symbol ref so
+    // the compile unit records the dependency.
+    Function FindOrImport(string name)
+    {
+        Function fn = module.Find(name) as Function;
+        if (fn != null)
+        {
+            if (unit != null && fn.Unit != unit)
+                unit.AddSymbolRef(fn);
+            return fn;
+        }
+
+        for(int i = 0; i < unit.Usings.count && fn == null; ++i)
+        {
+            ModuleUsing u = unit.Usings[i];
+            fn = u.Module.Find(name) as Function;
+            if (fn != null)
+            {
+                unit.AddSymbolRef(fn);
+            }
+        }
+
+        return fn;
+    }
+
+    // ForceCast - produce an expression that ensures the given expression has
+    // the expected data type. This may return the original expression, a
+    // factory function call (to construct class refs) or an explicit cast
+    // expression. The function handles class-ref conversions where a compatible 
+    // function exists.
+    Expression ForceCast(Expression e, TypeSymbol ctype)
+	{
+        TypeSymbol ts = e.DataType;
+		if(ts.IsEqualTo(ctype))
+		{
+			return e;
+		}
+		else if (ctype.IsClassRef() && ts.IsClassRef()
+                && ((ClassType)ts.ElementType).IsClassOf((ClassType)ctype.ElementType))
+        {
+            // If the expression is a derived-class reference and we are
+            // expecting a base-class reference, it's already compatible.
+            return e;
+        }
+		else
+		{
+            if (ctype.IsClassRef())
+            {
+                // If the target type is a class reference, attempt to find
+                // a factory function that can construct it from the given
+                // expression's type. If found, synthesize a function call.
+                ClassType cls = (ClassType)ctype.ElementType;
+                Function fact = GetFactory(cls);
+                if(fact != null && fact.Parameters.count == 1)
+                {
+                    LocalVariable param = fact.Parameters[0];
+                    TypeSymbol parDt = param.DataType;
+                    TypeSymbol parElemDt = parDt.ElementType;
+                    TypeSymbol eDt = e.DataType;
+                    if(parDt.IsEqualTo(e.DataType) ||
+                            (parDt.IsPointer() && 
+                            eDt.IsArray() && parElemDt.IsEqualTo(eDt.ElementType)))
+                    {
+                        FunctionCallExpression fcall = new FunctionCallExpression(new SymbolExpression(fact));
+                        fcall.Arguments.add(e);
+                        fcall.file = e.file;
+                        fcall.line = e.line;
+                        return fcall;
+                    }
+                }
+            }
+
+            // Fallback to an explicit cast expression.
+            CastExpression cast = new CastExpression(e, ctype);
+            cast.file = e.file;
+            cast.line = e.line;
+            return cast;
+		}
+	}
+
+    // GetFactory - detect a factory function convention for a class type.
+    // Example: for class Foo the factory name would be "Foo__new".
+    Function GetFactory(ClassType t)
+    {
+        string name = string.format("%s__new", t.Name);
+        return FindOrImport(name);
+    }
+
+    // CanConstructFrom - check if a class-ref type can be constructed from
+    // another type using an available factory function (single parameter).
+    bool CanConstructFrom(TypeSymbol t, TypeSymbol f)
+    {
+        if(t.IsClassRef())
+        {
+            ClassType cls = (ClassType)t.ElementType;
+            Function fact = GetFactory(cls);
+            if(fact != null && fact.Parameters.count == 1)
+            {
+                LocalVariable param = fact.Parameters[0];
+                return param.DataType.IsEqualTo(f);
+            }
+        }
+
+        return false;
+    }
+
+    // AutoCast - helper used by binary operators to ensure operands are of the
+    // same type. Chooses to cast the operand with the smaller type code
+    // (less range) to the broader type. Special rules apply for pointers and
+    // class constructors.
+    void AutoCast(Expression @a, Expression @b)
+    {
+        TypeSymbol at = a.DataType;
+        TypeSymbol bt = b.DataType;
+
+        if (at == bt)
+            return;
+
+        if (at.IsPointer() && bt.IsPointer() && !CanConstructFrom(at, bt) && !CanConstructFrom(bt, at))
+            return;
+
+        if (at.TypeCode < bt.TypeCode)
+            a = ForceCast(a, bt);
+        else
+            b = ForceCast(b, at);
+    }
+
+    // AutoThis - transforms references to class members (fields/methods/properties)
+    // inside instance methods into accesses on the implicit "this" parameter.
+    // This rewrites symbol expressions into FieldExpression(new SymbolExpression(function.Parameters[0]), memberSymbol)
+    // when appropriate.
+    void AutoThis(Expression @e)
+    {
+        SymbolExpression sr = e as SymbolExpression;
+        if (sr != null && _class != null && _class.FindChild(sr.Symbol.Name) != null
+            && (sr.Symbol.Flags & SymbolFlags.Static) == 0)
+        {
+            int st = sr.Symbol.SymbolType;
+
+            if (st != SymbolType.Field
+                && st != SymbolType.Method
+                && st != SymbolType.Property)
+                return;
+
+            if (st == SymbolType.Method && sr.Symbol.Parent.Parent != module)
+                FindOrImport(((MethodSymbol)sr.Symbol).DataType.Name);
+
+            e = new FieldExpression(new SymbolExpression(function.Parameters[0]), sr.Symbol);
+        }
+    }
+
+    // TypeToFName - create a string-friendly mangled name for a type used in
+    // operator/function name generation. Arrays and pointers are prefixed with
+    // 'a' / 'p' respectively to make unique names.
+    string TypeToFName(TypeSymbol type)
+    {
+        if (type.IsPointer())
+            return 'p' + TypeToFName(type.ElementType);
+        else if (type.IsArray())
+            return 'a' + TypeToFName(type.ElementType);
+        else
+            return type.Name;
+    }
+
+    // TokenToFName - map operator tokens to textual identifiers used in
+    // operator overloading naming convention.
+    string TokenToFName(Token token)
+    {
+        if(token == Token.Add) return "add";
+        else if(token == Token.Sub) return "sub";
+        else if(token == Token.Mul) return "mul";
+        else if(token == Token.Div) return "div";
+        else if(token == Token.Mod) return "mod";
+        else if(token == Token.Shl) return "lshift";
+        else if(token == Token.Shr) return "rshift";
+        else if(token == Token.Equal) return "equal";
+        else if(token == Token.NEqual) return "nequal";
+        else if(token == Token.Greater) return "greater";
+        else if(token == Token.Less) return "less";
+        else if(token == Token.GEqual) return "gequal";
+        else if(token == Token.LEqual) return "lequal";
+        else if(token == Token.And) return "and";
+        else if(token == Token.Xor) return "xor";
+        else if(token == Token.Or) return "or";
+        else if(token == Token.LAnd) return "land";
+        else if(token == Token.LOr) return "lor";
+        else if(token == Token.Not) return "not";
+        else if(token == Token.LNot) return "lnot";
+        else if(token == Token.Min) return "min";
+        else if(token == Token.Max) return "max";
+        else return "";
+    }
+
+    // Expect - assert that the current token matches the expected token and
+    // advance the lexer. If it does not match emit an appropriate error
+    // message based on the expected token to help the user.
+    bool Expect(Token token)
+    {
+        Token tok = scanner.Token;
+        if (tok != token)
+        {
+            if(token == Token.RBracket) Error("] expected");
+            else if(token == Token.RBrace) Error("} expected");
+            else if(token == Token.LPar) Error("( expected");
+            else if(token == Token.RPar) Error(") expected");
+            else if(token == Token.Semicolon) Error("; expected");
+            else if(token == Token.Colon) Error(": expected");
+            else if(token == Token.Comma) Error(", expected");
+            else if(token == Token.Assign) Error("= expected");
+            else Error(string.format("Token %d expected", token));
+            
+            return false;
+        }
+        else
+        {
+            scanner.NextToken();
+            return true;
+        }
+    }
+
+    // Operator override checks - these functions look for specially named
+    // functions that implement operator overloads. They synthesize a function
+    // call expression when a matching operator override is found.
+    bool CheckBinaryOperatorOverride(int token, Expression @left, Expression @right)
+    {
+        string fname = string.format("operator_%s_%s_%s", TokenToFName(token), 
+                                TypeToFName(left.DataType), TypeToFName(right.DataType));
+
+        Function opovr = FindOrImport(fname);
+
+        if (opovr != null)
+        {
+            FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(opovr));
+            fc.Arguments.add(left);
+            fc.Arguments.add(right);
+            left = fc;
+            return true;
+        }
+
+        // Try pointer-prefixed variants where operator expects pointers instead
+        // of value types. This handles overloads that accept address-of
+        // semantics or reference parameters.
+        fname = string.format("operator_%s_p%s_p%s", TokenToFName(token), 
+                                TypeToFName(left.DataType), TypeToFName(right.DataType));
+            
+        opovr = FindOrImport(fname);
+
+        if (opovr != null)
+        {
+            FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(opovr));
+            fc.Arguments.add(new AddressOfExpression(left));
+            fc.Arguments.add(new AddressOfExpression(right));
+            left = fc;
+            return true;
+        }
+
+        return false;
+    }
+
+    bool CheckUnaryOperatorOverride(Token token, Expression @e)
+    {
+        string fname = string.format("operator_%s_%s", TokenToFName(token), TypeToFName(e.DataType));        
+
+        Function opovr = FindOrImport(fname);
+
+        if (opovr != null)
+        {
+            FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(opovr));
+            fc.Arguments.add(e);
+            e = fc;
+            return true;
+        }
+
+        fname = string.format("operator_%s_p%s", TokenToFName(token), TypeToFName(e.DataType));
+
+        opovr = FindOrImport(fname);
+
+        if (opovr != null)
+        {
+            FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(opovr));
+            fc.Arguments.add(new AddressOfExpression(e));
+            e = fc;
+            return true;
+        }
+
+        return false;
+    }
+
+    // ParseType - if the current token is an identifier that resolves to a
+    // type, consume it and return the TypeSymbol. Otherwise return null.
+    TypeSymbol ParseType()
+    {
+        if (scanner.Token == Token.Ident)
+        {
+            TypeSymbol t = FindType(scanner.TokenString);
+            if (t != null)
+                scanner.NextToken();
+            return t;
+        }
+        return null;
+    }
+
+    // FindType - lookup a type name in the current module or imported modules.
+    // If the type is a struct/class from another compile unit, add symbol
+    // references for that type and its bases so the unit records dependencies.
+    TypeSymbol FindType(string name)
+    {
+        Symbol type = module.Find(name);
+
+        if (type == null)
+        {
+            for(int i = 0; i < unit.Usings.count && type == null; ++i)
+            {
+                ModuleUsing u = unit.Usings[i];
+                type = u.Module.Find(name);
+            }
+        }
+
+        if (type != null && type.IsType() && type.SymbolType != SymbolType.Function)
+        {
+            TypeSymbol ts = (TypeSymbol)type;
+            if (ts != null && (ts.IsStruct() || ts.IsClass()) && ts.Unit != unit)
+            {
+                TypeSymbol atype = ts;
+                while (atype != null)
+                {
+                    if(atype.Unit != unit)
+                        unit.AddSymbolRef(atype);
+                    if(atype.IsClass())
+                        atype = ((ClassType)atype).BaseClass;
+                    else
+                        atype = null;
+                }
+            }
+
+            return (TypeSymbol)type;
+        }
+
+        return null;
+    }
+
+    // ParseClassType - parse either a templated type or a regular class type.
+    // For template arguments, this will attempt to instantiate the template by
+    // generating a temporary compile unit and running subsequent parser
+    // passes. This is a bit heavyweight but makes template usage convenient
+    // in the language.
+    ClassType ParseClassType()
+    {
+        ClassType cls = null;
+        TypeSymbol ts = ParseType();
+        if (ts.SymbolType == SymbolType.Template)
+        {
+            if (!Expect(Token.Less))
+                return null;
+            array<TypeSymbol> targs = new array<TypeSymbol>();
+            while (scanner.Token != Token.Greater && scanner.Token != Token.EOF)
+            {
+                if (IsType())
+                {
+                    Declaration tt = new Declaration();
+                    ParseDeclaration(tt, false, null, true, true);
+                    targs.add(tt.type);
+                }
+                else
+                {
+                    Error("Template arg type expected");
+                    return null;
+                }
+
+                if (scanner.Token != Token.Greater)
+                {
+                    if(!Expect(Token.Comma))
+                        return null;
+                }
+            }
+            if (!Expect(Token.Greater))
+                return null;
+            string name = ts.Name;
+            for(int i = 0; i < targs.count; ++i)
+                name = name + '_' + TypeToFName(targs[i]);
+            cls = FindType(name) as ClassType;
+        }
+        else if (ts.SymbolType == SymbolType.Class)
+        {
+            cls = (ClassType)ts;
+        }
+
+        return cls;
+    }
+
+    static bool isWordChar(byte c)
+	{
+		return (c == '_') || 
+			   (c >= 'A' && c <= 'Z') || 
+			   (c >= 'a' && c <= 'z') || 
+			   (c >= '0' && c <= '9');
+	}
+
+	static int indexOfWord(string str, string word)
+	{
+        int slen = str.length;
+		int wlen = word.length;
+
+		for(int i = 0; i < slen - wlen; ++i)
+		{
+			if(strncmp(str.str+i, word.c_str(), wlen) == 0)
+			{
+				int left = i;
+				int right = i + wlen;
+
+				bool leftOk = (left == 0) || !isWordChar(str.str[left - 1]);
+				bool rightOk = (right == str.length) || !isWordChar(str.str[right]);
+
+				if(leftOk && rightOk)
+				{
+					return i;
+				}
+			}
+		}
+		return -1;
+	}
+
+	static string replaceWord(string str, string find, string repl)
+	{
+		string temp = str;
+        int idx = indexOfWord(temp, find);
+		while(idx != -1)
+        {
+            temp = temp.substr(0, idx) + repl + temp.substr(idx + find.length, temp.length - (idx + find.length));
+            idx = indexOfWord(temp, find);
+        }
+        return temp;
+	}
+
+    // ParseDeclaration - central function that parses a full declaration which
+    // can be a variable, function pointer, parameter, or templated type
+    // instantiation. This routine coordinates ParseDeclarator and post-processes
+    // declarators to construct the final TypeSymbol and declaration metadata.
+    bool ParseDeclaration(Declaration item, bool nameRequired, TypeSymbol initType, bool noName, bool noCheck)
+    {
+        if (initType != null)
+        {
+            TypeSymbol t = initType;
+            item.type = t;
+        }
+        else
+        {
+            item.type = ParseType();
+            if (item.type == null)
+            {
+                Error("Type expected");
+                return false;
+            }
+
+            // Handle template instantiation: collect argument types and either
+            // resolve an existing instantiation or synthesize one by emitting
+            // a temporary compile unit and running the parser passes.
+            if(item.type.SymbolType == SymbolType.Template)
+            {
+                array<TypeSymbol> templateArgs = new array<TypeSymbol>();
+                if (!Expect(Token.Less))
+                    return false;                    
+                while(scanner.Token != Token.Greater && scanner.Token != Token.EOF)
+                {
+                    if(IsType())
+                    {
+                        Declaration tt = new Declaration();
+                        ParseDeclaration(tt, false, null, true, true);
+                        TypeSymbol t = tt.type;
+                        templateArgs.add(t);
+                    }
+                    else
+                    {
+                        Error("Type expected");
+                        return false;
+                    }
+                    if (scanner.Token != Token.Greater)
+                    {
+                        if(!Expect(Token.Comma))
+                            return false;
+                    }
+                }
+                if (!Expect(Token.Greater))
+                    return false;
+
+                // Create the mangled template instance name using TypeToFName
+                // for arguments so the resulting class name is unique.
+                string tname = item.type.Name;
+                for(int i = 0; i < templateArgs.count; ++i)
+                {
+                    tname = tname + '_' + TypeToFName(templateArgs[i]);
+                }
+
+                ClassType existing = FindType(tname) as ClassType;
+                if (existing != null)
+                {
+                    item.type = existing;
+                }
+                else
+                {
+                    if(options.Verbose)
+                        Info(string.format("\t%s", tname));
+
+                    // Instantiate the template by substituting template
+                    // parameters and creating a temporary compile unit which is
+                    // parsed by subsequent parser stages. This registers 
+                    // the generated type into the module.
+                    string src = ((Template)item.type).Source;
+
+                    for (int i = 0; i < templateArgs.count; i++)
+                    {
+                        src = replaceWord(src, ((Template)item.type).TemplateParams[i], templateArgs[i].Name);
+                    }
+
+                    string text = new string("class ") + tname + src;
+                    string fname = string.format("%s.jrt", tname);
+
+                    file.writeAllText(fname, text);
+                    CompileUnit cu = new CompileUnit(fname);
+                    //File.Delete(tname + ".cm");
+
+                    // Run the parser pipeline on the generated compile unit so
+                    // the instantiated template becomes available in "module".
+
+                    Parser1 p1 = new Parser1(module, errorListener);
+                    p1.options = options;
+                    if (!p1.ParseUnit(cu, unit))
+                        return false;
+                    Parser2 p2 = new Parser2(module, errorListener);
+                    p2.options = options;
+                    if (!p2.ParseUnit(cu, unit))
+                        return false;
+                    Parser3 p3 = new Parser3(module, errorListener);
+                    p3.options = options;
+                    if (!p3.ParseUnit(cu, unit))
+                        return false;
+                    Parser4 p4 = new Parser4(module, errorListener);
+                    p4.options = options;
+                    if (!p4.ParseUnit(cu, unit))
+                        return false;
+
+                    existing = module.Find(tname) as ClassType;
+
+                    if (existing == null)
+                        return false;
+
+                    item.type = existing;
+                }
+            }
+        }
+
+        array<Declarator> declarators = new array<Declarator>();
+
+        if (!ParseDeclarator(declarators, nameRequired, noName))
+            return false;
+
+        Declarator decl0 = declarators[0];
+        item.name = decl0.name;
+        item.isGetter = decl0.isGetter;
+        item.isSetter = decl0.isSetter;
+
+        // If this declarator represents an operator overload, and it's followed by a
+        // function declarator, mangle the function name using parameter types.
+        if (declarators[0].op)
+        {
+            bool fnFound = false;
+            for (int i = declarators.count - 1; i >= 1 && !fnFound; i--)
+            {
+                Declarator td = declarators[i];
+                if (td.type == DeclaratorType.Function)
+                {
+                    for(int j = 0; j < td.pars.count; ++j)
+                    {
+                        Declaration a = td.pars[j];
+                        item.name = item.name + '_';
+                        item.name = item.name + TypeToFName(a.type);
+                    }
+                    fnFound = true;
+                }
+            }
+        }
+
+        //// This makes Class and Class* equivalent. (C# like syntax)
+            
+        if(item.type.IsClass() && declarators.last().type != DeclaratorType.Pointer)
+        {
+            item.type = item.type.GetPointerType();
+        }
+
+        ////
+
+        Function originalFn = null;
+
+        // Apply declarator suffixes in reverse order to compute the final type.
+        for (int i = declarators.count - 1; i >= 1; i--)
+        {
+            Declarator td = declarators[i];
+
+            if(td.type == DeclaratorType.Pointer)
+            {
+                if (item.type.IsFunction())
+                    item.type.Name = "";
+                item.type = item.type.GetPointerType();
+            }
+            else if(td.type == DeclaratorType.Reference)
+            {
+                //item.type = item.type.GetPointerType();
+                item.isByRef = true;
+            }
+            else if(td.type == DeclaratorType.Array)
+            {
+                item.type = item.type.GetArrayType(td.arraySize);
+            }
+            else if(td.type == DeclaratorType.Function)
+            {
+                originalFn = module.FindChild(item.name) as Function;
+                // Build a function type from the declarator's parameter list.
+                //Function fptrtype = new Function(module, item.name, item.type);
+                //!Function fptrtype = new Function(RootSymbol.Instance, item.name, item.type);
+                Function fptrtype = new Function(null, item.name, item.type);
+                int ii = 0;
+                for(int i = 0; i < td.pars.count; ++i)
+                {
+                    Declaration a = td.pars[i];
+                    if (a.ellipsis)
+                    {
+                        if (ii != td.pars.count - 1)
+                        {
+                            Error("')' expected");
+                            return false;
+                        }
+                        fptrtype.Flags += SymbolFlags.Variadic;
+                    }
+                    else
+                    {
+                        string sEmpty = "";
+                        for(int j = 0; j < fptrtype.Parameters.count; ++j)
+                        {
+                            LocalVariable p = fptrtype.Parameters[j];
+                            if (a.name != sEmpty && p.Name == a.name)
+                            {
+                                Error("Duplicate definition");
+                                return false;
+                            }
+                        }
+                        string anonName = string.format("p%d", ii);
+                        LocalVariable lv = new LocalVariable(fptrtype, a.name == sEmpty ? anonName : a.name, a.type, null);
+                        if(a.isByRef)
+                            lv.Flags += SymbolFlags.ByRef;
+                        fptrtype.Parameters.add(lv);
+                        lv.Offset = fptrtype.Parameters.count;
+                    }
+                    ii++;
+                }
+                item.type = fptrtype;
+            }
+        }
+
+        // If declaration uses by-ref syntax, convert final type to a pointer
+        // to reflect calling conventions / representation.
+        if(item.isByRef)
+        {
+            item.type = item.type.GetPointerType();
+        }
+
+        // If the declared type is a function and we are not skipping checks,
+        // validate redefinitions and parameter naming using existing function
+        // symbols in the module.
+        if (item.type.IsFunction() && !noCheck)
+        {
+            Function fn = (Function)item.type;
+            Function orig = originalFn;
+
+            if (orig != null)
+            {
+                if (!orig.IsEqualTo(item.type))
+                {
+                    Error(string.format("Invalid redefinition of '%s'", orig.Name));
+                    return false;
+                }
+                item.type = orig;
+            }
+        }
+        return true;
+    }
+
+    // ParseDeclarator - parse pointer/reference prefixes then delegate to the
+    // selector/primary parsing logic. This models C-style declarator grammar
+    // where '*' and '&' are prefix operators on declarators.
+    bool ParseDeclarator(array<Declarator> declarators, bool nameRequired, bool noName)
+    {
+        if (scanner.Token == Token.Mul)
+        {
+            scanner.NextToken();
+            Declarator td = new Declarator();
+            td.type = DeclaratorType.Pointer;
+            if (!ParseDeclarator(declarators, nameRequired, noName))
+                return false;
+            declarators.add(td);
+            return true;
+        }
+        else if(scanner.Token == Token.Reference)
+        {
+            scanner.NextToken();
+            Declarator td = new Declarator();
+            td.type = DeclaratorType.Reference;
+            if(!ParseDeclarator(declarators, nameRequired, noName))
+                return false;
+            declarators.add(td);
+            return true;
+        }
+        else
+        {
+            return ParseDeclaratorSelector(declarators, nameRequired, noName);
+        }
+    }
+
+    // ParseDeclaratorSelector - parse array [] and function () suffixes that
+    // follow a declarator primary. These suffixes are collected and will be
+    // applied in reverse to the base type.
+    bool ParseDeclaratorSelector(array<Declarator> declarators, bool nameRequired, bool noName)
+    {
+        if (!ParseDeclaratorPrimary(declarators, nameRequired, noName))
+            return false;
+
+        while (scanner.Token == Token.LBracket || scanner.Token == Token.LPar)
+        {
+            if (scanner.Token == Token.LBracket)
+            {
+                scanner.NextToken();
+                if (scanner.Token != Token.Int)
+                {
+                    Error("Number expected");
+                    return false;
+                }
+                int size = scanner.TokenInt;
+                scanner.NextToken();
+                if (!Expect(Token.RBracket))
+                {
+                    return false;
+                }
+                Declarator td = new Declarator();
+                td.type = DeclaratorType.Array;
+                td.arraySize = size;
+                declarators.add(td);
+            }
+            else if (scanner.Token == Token.LPar)
+            {
+                scanner.NextToken();
+
+                Declarator td = new Declarator();
+                td.type = DeclaratorType.Function;
+                td.pars = new array<Declaration>();
+
+                while (scanner.Token != Token.RPar && scanner.Token != Token.EOF)
+                {
+                    Declaration aitem = new Declaration();
+                    if (scanner.Token == Token.Ellipsis)
+                    {
+                        aitem.ellipsis = true;
+                        scanner.NextToken();
+                    }
+                    else if (!ParseDeclaration(aitem, false, null, false, false))
+                    {
+                        return false;
+                    }
+
+                    // Arrays as parameters are implicitly passed by reference
+                    // (pointer) in many C-like languages - normalize that here.
+                    if(aitem.type != null && aitem.type.IsArray())
+                    {
+                        aitem.isByRef = true;
+                        aitem.type = aitem.type.GetPointerType();
+                    }
+
+                    td.pars.add(aitem);
+
+                    if (scanner.Token == Token.Comma)
+                        scanner.NextToken();
+                    else if (scanner.Token != Token.RPar)
+                    {
+                        Error(") Expected");
+                        return false;
+                    }
+                }
+
+                if (!Expect(Token.RPar))
+                    return false;
+
+                declarators.add(td);
+            }
+        }
+        return true;
+    }
+
+    // ParseDeclaratorPrimary - parse the base of a declarator which can be
+    // a parenthesized declarator, an identifier (possibly marked as get/set)
+    // or an operator declarator.
+    bool ParseDeclaratorPrimary(array<Declarator> declarators, bool nameRequired, bool noName)
+    {
+        if (scanner.Token == Token.LPar)
+        {
+            scanner.NextToken();
+            if (!ParseDeclarator(declarators, nameRequired, noName))
+                return false;
+            if (!Expect(Token.RPar))
+                return false;
+            return true;
+        }
+        else
+        {
+            bool getter = false;
+            bool setter = false;
+
+            // Support get/set keywords for property declarations.
+            if (IsKeyword("get"))
+            {
+                getter = true;
+            }
+            else if (IsKeyword("set"))
+            {
+                setter = true;
+            }
+            else if (IsKeyword("operator"))
+            {
+                // operator ... : convert token operator into a mangled
+                // operator name (operator_add, operator_sub, ...)
+                string opName = TokenToFName(scanner.Token);
+                if (opName.length == 0)
+                {
+                    Error("Invalid operator");
+                    return false;
+                }
+                Declarator td = new Declarator();
+                td.type = DeclaratorType.Identifier;
+                td.name = string.format("operator_%s", opName);
+                td.op = true;
+                declarators.add(td);
+                scanner.NextToken();
+                return true;
+            }
+
+            if (scanner.Token == Token.Ident)
+            {
+                if (noName)
+                {
+                    Error("Syntax Error");
+                    return false;
+                }
+                Declarator td = new Declarator();
+                td.type = DeclaratorType.Identifier;
+                td.name = scanner.TokenString;
+                td.isSetter = setter;
+                td.isGetter = getter;
+                declarators.add(td);
+                scanner.NextToken();
+                return true;
+            }
+            else if (!nameRequired)
+            {
+                // Anonymous identifier allowed (e.g. unnamed parameter).
+                Declarator td = new Declarator();
+                td.type = DeclaratorType.Identifier;
+                td.name = "";
+                declarators.add(td);
+                return true;
+            }
+            else
+            {
+                Error("Identifier expected");
+                return false;
+            }
+        }
+    }
+}
+
+
+
+
+

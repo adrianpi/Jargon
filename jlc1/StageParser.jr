@@ -1,0 +1,374 @@
+using jargon;
+
+// StageParser - an abtract parser stage that inherits from ExpressionParser.
+// This class is responsible for parsing top-level compilation unit constructs
+// such as using/imports, enums, structures/unions, classes, templates and
+// global declarations or functions. It also provides helper routines used
+// when parsing initializer lists and performing "static" assignments for 
+// global/static data.
+//
+// The class is intentionally lightweight: many of the language-specific
+// parsing details are implemented in virtual methods (ParseUsing,
+// ParseEnum, ParseStructure, ParseClass, ParseGlobalOrFunction, ParseTemplate)
+// so that concrete parser stages (e.g. Parser1..Parser4) can override the
+// default behavior and implement the exact behavior needed at that stage 
+// of compilation.
+
+/*
+
+    The parsing of different language constructs is staged across multiple
+    passes to allow for flexible handling of forward references:         
+     
+                        +-----------+-----------+-----------+-----------+-----------+-----------+-----------+
+                        |Usings		|Enums		|Structs	|Globals	|Functions	|Classes	|Templates  |
+                        +-----------+-----------+-----------+-----------+-----------+-----------+-----------+
+    First Pass			|Full		|Full		|Empty Decl	|Skip		|Skip		|Empty Decl |Full       |
+                        +-----------+-----------+-----------+-----------+-----------+-----------+-----------+
+    Second Pass			|Skip		|Skip		|Full		|Skip		|Proto Decl	|Field+Proto|Skip       |
+                        +-----------+-----------+-----------+-----------+-----------+-----------+-----------+
+    Third Pass			|Skip		|Skip		|Skip		|Definition	|Skip		|Skip       |Skip       |
+                        +-----------+-----------+-----------+-----------+-----------+-----------+-----------+
+    Fourth Pass			|Skip		|Skip		|Skip		|DeInit	    |Full		|Full       |Skip       |
+                        +-----------+-----------+-----------+-----------+-----------+-----------+-----------+
+*/
+
+class StageParser : ExpressionParser
+{    
+    // Constructor: initialize parser with a Module and an error listener.
+    // Note: We do not fully initialize parsing state here; StartParse is
+    // responsible for setting up the scanner and unit before ParseUnit.
+    StageParser constructor(Module module, CompilerErrorListener errorListener)
+    {
+        base();
+        this.module = module;
+        this.errorListener = errorListener;
+        return this;
+    }
+
+    // The following virtual methods provide extension points for different
+    // parser stages. Concrete parsers implement these to handle language
+    // constructs appropriate for the stage, some default implementations
+    // skip the definition but still consume the tokens to allow for later 
+    // passes to focus on different constructs in multiple stages
+    virtual bool ParseUsing()
+    { 
+        while(scanner.Token != Token.EOF)
+        {
+            if (scanner.Token == Token.Semicolon)
+                break;
+            scanner.NextToken();
+        }
+        return Expect(Token.Semicolon);
+    }
+
+    virtual bool ParseEnum()
+    {
+        SkipBraces();
+        return Expect(Token.RBrace);
+    }
+    
+    virtual bool ParseStructure(bool isUnion)
+    {
+        SkipBraces();
+        return Expect(Token.RBrace);
+    }
+
+    virtual bool ParseClass() {}
+
+    virtual bool ParseGlobalOrFunction() {}
+    
+    virtual bool ParseTemplate()
+    {
+        if (!IsKeyword("class"))
+            return false;
+        SkipBraces();
+        return Expect(Token.RBrace);
+    }
+
+    // ParseUnit - entry point for parsing a CompileUnit. This controls the
+    // top-level parsing loop and dispatches to the virtual handlers above.
+    // parentUnit: if provided, the unit is attached as a child to the
+    // parent so symbol references and ordering between units can be tracked.
+    bool ParseUnit(CompileUnit unit, CompileUnit parentUnit)
+    {
+        // Prepare parser state for this compile unit (scanning, error listener)
+        StartParse(unit);
+
+        fileName = unit.Path;
+
+        // If a parent unit is provided, ensure this unit is registered as a
+        // child of the parent (avoiding duplicate children) and then use the
+        // parent as the working unit for symbol imports (templates etc.).
+        if (parentUnit != null)
+        {
+            bool found = false;
+            for(int i = 0; i < parentUnit.Children.count && !found; ++i)
+            {
+                CompileUnit c = parentUnit.Children[i];
+                if (c.Path == unit.Path)
+                {
+                    found = true;
+                }
+            }
+            if(!found)
+                parentUnit.Children.add(unit);
+            // note: switch this.unit to parentUnit so shared symbols from the
+            // parent are visible while parsing this child unit (used for
+            // template instantiation and cross-unit references).
+            this.unit = parentUnit;
+        }
+
+        // Top-level parsing loop: dispatch based on the current token.
+        while (scanner.Token != Token.EOF)
+        {
+            if(IsKeyword("using"))
+            {
+                if (!ParseUsing())
+                    return false;
+            }
+            else if(IsKeyword("enum"))
+            {
+                if (!ParseEnum())
+                    return false;
+            }
+            else if(IsKeyword("struct"))
+            {
+                if (!ParseStructure(false))
+                    return false;
+            }
+            else if(IsKeyword("union"))
+            {
+                if (!ParseStructure(true))
+                    return false;
+            }
+            else if (IsKeyword("class"))
+            {
+                if (!ParseClass())
+                    return false;
+            }
+            else if (IsKeyword("template"))
+            {
+                if (!ParseTemplate())
+                    return false;
+            }
+            else if (!ParseGlobalOrFunction())
+            {
+                // ParseGlobalOrFunction handles variables, function
+                // declarations and definitions. If it returns false we abort.
+                return false;
+            }                
+        }
+
+        // Finalize parsing stage and restore state via OnEndParse hooks.
+        EndParse();
+
+        return true;
+    }
+
+
+    // ParseInitList - parse a braced initializer list for arrays/structs.
+    // This routine constructs an InitList expression whose Elements contain
+    // parsed sub-expressions. It also fills missing initializers with
+    // default values and performs basic arity checks (too many initializers).
+    //
+    // The parsing expects the opening '{' has already been consumed by the
+    // caller; it advances tokens as required and consumes the closing '}'.
+    Expression ParseInitList(TypeSymbol type)
+    {
+        scanner.NextToken();
+        InitList list = new InitList(type);
+        int index = 0;
+        while (scanner.Token != Token.RBrace && scanner.Token != Token.EOF)
+        {
+            Expression e = null;
+            if (scanner.Token == Token.LBrace)
+            {
+                // Nested initializer: select appropriate element/field type
+                StructType st = (type as StructType);
+                Symbol fs = st.Children[index];
+                TypeSymbol fdt = fs.DataType;
+                e = ParseInitList(type.IsArray() ? type.ElementType : fdt);
+            }
+            else
+            {
+                e = ParseExpression();
+            }
+            if (e == null)
+                return null;
+            list.Expressions.add(e);
+            if (scanner.Token == Token.Comma)
+                scanner.NextToken();
+            else if (scanner.Token != Token.RBrace)
+            {
+                // Unexpected token inside initializer list
+                Error("} expected");
+                return null;
+            }
+            ++index;
+        }
+        if (!Expect(Token.RBrace))
+            return null;
+
+        // Post-process initializer list depending on the aggregate type.
+        if(type is StructType)
+        {
+            StructType st = (StructType)type;
+            int cnt = st.Children.count;
+            if((st.Flags & SymbolFlags.Union) != 0)
+                cnt = 0;
+            if(list.Expressions.count == 0)
+                cnt = 0;
+            // If not enough initializers provided, fill remaining fields with defaults
+            for(int i = index; i < cnt; ++i)
+            {
+                FieldSymbol fs = st.Children[i] as FieldSymbol;
+                list.Expressions.add(DefaultFor(fs.DataType));
+            }
+
+            bool isUnion = (st.Flags & SymbolFlags.Union) != 0;
+            bool moreThanOne = list.Expressions.count > 1;
+            // Check for too many initializers or invalid union initialization
+            if(list.Expressions.count > st.Children.count || (isUnion && moreThanOne))
+            {
+                Error("Too many initializers");
+                return null;
+            }
+
+            if(list.Expressions.count == 0)
+            {
+                // An empty initializer list for a struct triggers a zero-initializer
+                // sentinel (represented here as integer 0) handled by later stages.
+                return ConstantExpression.FromInt(0);
+            }
+        }
+        else if(type is ArrayType)
+        {
+            ArrayType at = (ArrayType)type;
+            if(list.Expressions.count > at.ArraySize)
+            {
+                Error("Too many initializers");
+                return null;
+            }
+            // Fill remaining array entries with default values
+            for (int i = index; i < at.ArraySize; ++i)
+                list.Expressions.add(DefaultFor(at.ElementType));
+        }
+
+        return list;
+    }            
+
+    // DefaultFor - produce a default initializer expression for a given type.
+    // This is used when an initializer list does not provide a value for a
+    // particular field/element. For aggregate types we return a sentinel that
+    // signals zero-initialization in later stages.
+    Expression DefaultFor(TypeSymbol type)
+    {
+        if(type == TypeSymbol.Bool)
+        {
+            return ConstantExpression.FromBool(false);
+        }
+        else if(type == TypeSymbol.Byte || type == TypeSymbol.UByte
+            || type == TypeSymbol.Short || type == TypeSymbol.UShort
+            || type == TypeSymbol.Int || type == TypeSymbol.UInt
+            || type == TypeSymbol.Long || type == TypeSymbol.ULong)
+        {
+            return ConstantExpression.FromInt(0);
+        }
+        else if(type == TypeSymbol.Float)
+        {
+            return ConstantExpression.FromFloat(0.0f);
+        }
+        else if(type == TypeSymbol.Double)
+        {
+            return ConstantExpression.FromDouble(0.0);
+        }
+        else if (type.IsPointer())
+        {
+            return ConstantExpression.FromNull();
+        }
+        else if(type.IsStruct())
+        {
+            // For struct/aggregate types return a zero-initializer sentinel.
+            return ConstantExpression.FromInt(0);
+        }
+    }
+
+    // StaticAssign - perform init-time assignment for initialization of
+    // globals or static local variables. The function emits statements into
+    // the provided StatementBlock (sb) representing the initialization
+    // actions. Handles nested init-lists by recursively assigning elements
+    // or fields. The 'decl' parameter is used to attach metadata for the
+    // first assignment in a chain (for codegen to know the declared variable).
+    bool StaticAssign(StatementBlock sb, Expression left, Expression right, int line, LocalVariable decl)
+    {
+        TypeSymbol ldt = left.DataType;
+        if (ldt.IsArray() && right is InitList)
+        {                
+            InitList list = (InitList)right;
+            for (int i = 0; i < list.Expressions.count; ++i) 
+            {
+                if (!StaticAssign(sb, new IndexExpression(left, ConstantExpression.FromInt(i)), list.Expressions[i], line, i == 0 ? decl : null))
+                    return false;
+            }
+            return true;
+        }
+        else if(ldt.IsStruct() && right is ConstantExpression)
+        {
+            // Zero-initializer case for structs uses a constant 0 marker.
+            ConstantExpression ce = (ConstantExpression)right;
+            if(right.DataType != TypeSymbol.Int || ce.value != 0)
+            {
+                Error("Invalid Assignment");
+                return false;
+            }
+            AssignmentExpression ae = new AssignmentExpression(left, right);
+            ae.line = line;
+            ae.decl = decl;
+            ae.isInit = true;
+            sb.Statements.add(new ExpressionStatement(ae));
+            return true;
+        }
+        else if (ldt.IsStruct() && right is InitList)
+        {
+            // Struct aggregate initialization: assign each provided field
+            InitList list2 = (InitList)right;
+            for (int i = 0; i < list2.Expressions.count; ++i)
+                if (!StaticAssign(sb, new FieldExpression(left, ldt.Children[i] as FieldSymbol), list2.Expressions[i], line, i == 0 ? decl : null))
+                    return false;
+            return true;
+        }
+        else
+        {
+            Expression r = right;
+            r = ForceCast(r, left.DataType);
+
+            AssignmentExpression ae = new AssignmentExpression(left, r);
+            ae.line = line;
+            ae.decl = decl;
+            ae.isInit = true;
+            sb.Statements.add(new ExpressionStatement(ae));
+            return true;
+        }
+    }    
+
+    // SkipBraces - utility used to skip over a block delimited by braces. It
+    // counts nested braces and returns when the matching closing brace for
+    // the starting block is found. Useful when encountering constructs the
+    // current parser stage does not need to analyze in detail.
+    void SkipBraces()
+    {
+        int lvl = 0;
+        while (scanner.Token != Token.EOF)
+        {
+            if (scanner.Token == Token.LBrace)
+                lvl++;
+            else if (scanner.Token == Token.RBrace)
+            {
+                lvl--;
+                if (lvl == 0)
+                    return;
+            }
+            scanner.NextToken();
+        }
+    }    
+}

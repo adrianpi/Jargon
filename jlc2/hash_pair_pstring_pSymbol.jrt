@@ -1,0 +1,11 @@
+class hash_pair_pstring_pSymbol
+{
+	string* key;
+	Symbol* data;
+	hash_pair<string*,Symbol*>* next;
+	
+	void destructor()
+	{
+		base();
+	}
+}

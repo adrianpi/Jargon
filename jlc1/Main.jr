@@ -1,0 +1,122 @@
+using jargon;
+
+long GetModuleHandleA(byte *name) external;
+
+int start(array<string> args)
+{
+	println("Jargon Compiler 1.0");
+
+	Compiler compiler = new Compiler();
+	CompilerOptions options = new CompilerOptions();
+
+	options.DebugInfo = false;
+    options.AdditionalFlags = "";
+	options.OutputFileName = null;
+    bool op = false;
+
+	array<string> files = new array<string>();
+    for (int i = 1; i < args.count; ++i)
+    {
+        if (args[i] == "-g")
+        {
+            options.DebugInfo = true;
+        }
+        else if(args[i] == "-k")
+        {
+            options.KeepIntermediateFiles = true;
+        }
+        else if(args[i] == "-V")
+        {
+            options.Verbose = true;
+        }
+        else if (args[i] == "-h" || args[i] == "--help")
+        {
+            println("Usage: llc1 [options] <input files>");
+            println("Options:");
+            println("  -g                Generate debug information");
+            println("  -k                Keep intermediate files");
+            println("  -o <output file>  Specify output file name");
+            println("  -O<level>         Set optimization level (O0, O1, O2, Os, Ofast, Od, Ot, Ox)");
+            println("  -I<dir>           Add directory to library search path");
+            println("  -l<library>       Link with specified library");
+            println("  -V                Verbose output");
+            return 0;
+        }
+        else if (args[i] == "-o")
+        {
+            op = true;
+            i++;
+            if (i < args.count)
+                options.OutputFileName = path.getFullPath(args[i]);
+        }
+        else if (args[i].startsWith("-O"))
+        {
+            options.OptimizationLevel = args[i].substr(1, args[i].length-1);
+        }
+        else if (args[i].startsWith("-I"))
+        {
+            options.LibraryDirectories.add(args[i].substr(2, args[i].length-2));
+        }
+        else if (args[i].startsWith("-l"))
+        {
+            options.AdditionalLibraries.add(args[i].substr(2, args[i].length-2));
+        }
+        else if (!op)
+        {
+			files.add(args[i]);
+        }
+        else
+        {
+            options.AdditionalFlags += args[i] + " ";
+        }
+    }
+
+	if (files.count == 0)
+    {
+        println("No input files.");
+        return -1;
+    }
+    else if (options.OutputFileName == null)
+    {
+        println("No output file (-o) specified.");
+        return -2;
+    }
+    
+    for(int i = 0; i < files.count; ++i)
+        options.InputFiles.add(files[i]);
+
+	options.OutputDirectory = path.getDirectoryName(options.OutputFileName);
+	options.OutputFileName = path.getFileName(options.OutputFileName);	
+
+	int result = 0;
+
+	if(compiler.Compile(options) == 0)
+	{
+		println("Total lines: %d", Parser1.totalLines);
+	}
+	else
+	{
+		result = -1;
+	}
+
+	return result;
+}
+
+int main(int argc, byte **argv)
+{
+	long hModule = GetModuleHandleA(null);
+    //_setReadTypeLog(true);
+	_readTypeInfo(hModule);
+
+	array<string> args = new array<string>();
+	for(int i = 0; i < argc; ++i)
+		args.add(argv[i]);
+
+	int result = start(args);
+	//println("-----------------------------");
+    Scanner.Finalize();
+	TypeSymbol.Finalize();
+
+	//_checkLeaks();
+	return result;
+}

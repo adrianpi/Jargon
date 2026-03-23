@@ -1,0 +1,101 @@
+using jargon;
+
+byte* strcat(byte *dst, byte *src) external;
+
+// StringBuffer - simple dynamic string accumulator used by the code
+// generator and other runtime code. This class manages a raw byte buffer
+// allocated from a low-level memory API and appends C-style strings to it.
+//
+// Design notes:
+// - The internal buffer is grown by doubling when necessary. Growth uses
+//   memory.alloc/memory.free and a memcpy-style copy to the new buffer.
+// - The buffer stores a NUL-terminated C string so we can interoperate
+//   with strcat.
+// - The class frees its buffer in the destructor to avoid memory leaks.
+// - Most methods are simple wrappers: append, appendLine, clear, toString.
+class StringBuffer
+{
+	int size = 256;       // current allocated size in bytes
+	byte *buffer;         // pointer to allocated buffer
+	byte *end;            // pointer to the current string terminator 
+						  // (where next char will be written)
+
+	// constructor - allocate the initial buffer and ensure it's zeroed so
+	// C-string operations work correctly. 'end' initially points at the
+	// buffer start (empty string).
+	StringBuffer constructor()
+	{
+		base();
+		buffer = memory.alloc(size);
+		memory.put(buffer, 0, size); // zero the buffer
+		end = buffer;
+		return this;
+	}
+
+	// destructor - free the allocated buffer when the StringBuffer is
+	// garbage-collected / destroyed. Calls base() afterwards to allow
+	// superclass cleanup.
+	void destructor()
+	{
+		memory.free(buffer);
+		base();
+	}
+
+	// append - append a language string to the builder. If the builder
+	// doesn't have enough space the buffer is reallocated to a larger
+	// size (doubling strategy) and the existing contents are copied.
+	// The implementation uses raw byte operations and the runtime-provided
+	// strcat by relying on the buffer being NUL-terminated.
+	void append(string str)
+	{
+		if(str == null)
+			return;
+
+		// Ensure capacity: if end + str.length + 1 (for NUL) would overflow
+		// the buffer, grow the buffer. Growing doubles size until enough.
+		if(end + str.length + 1 >= buffer + size)
+		{
+			int newSize = size * 2;
+			while(size+str.length+1 > newSize)
+				newSize *= 2;
+			byte *temp = memory.alloc(newSize);
+			memory.put(temp, 0, newSize);
+			memory.copy(temp, buffer, size);
+			size = newSize;
+			int offs = end - buffer; // preserve current write position
+			memory.free(buffer);
+			buffer = temp;
+			end = buffer + offs;
+		}
+
+		// Append using C-style strcat on the raw buffer pointer. After the
+		// call advance 'end' by the appended string length so subsequent
+		// appends write at the correct position.
+		strcat(end, str.c_str());
+		end += str.length;
+	}
+
+	// appendLine - convenience to append a string followed by CRLF.
+	void appendLine(string str)
+	{
+		append(str + new string("\r\n"));
+	}
+
+	// clear - reset the builder: free current buffer and allocate a new
+	// default-sized buffer. This drops previously accumulated contents.
+	void clear()
+	{
+		size = 256;
+		memory.free(buffer);
+		buffer = memory.alloc(size);
+		memory.put(buffer, 0, size);
+		end = buffer;
+	}
+
+	// toString - create a language-level string object from the internal
+	// buffer. The string constructor expects a NUL-terminated byte pointer.
+	string toString()
+	{
+		return new string(buffer);
+	}
+}

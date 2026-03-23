@@ -1,0 +1,76 @@
+using jargon;
+
+long GetModuleHandleA(byte *name) external;
+
+//-----------------------------------------------------------------------------
+
+class A
+{
+	int a;
+	A* constructor(int v)
+	{
+		base();
+		a = v;
+		return this;
+	}
+
+	void print()
+	{
+		println("%p", this);
+	}
+}
+
+int test()
+{
+	println("Second order compilation...");
+
+	Compiler compiler = new Compiler();
+
+	CompilerOptions options = new CompilerOptions();
+	options.OutputFileName = "meta2.exe";
+	options.OutputDirectory = ".";
+
+	options.DebugInfo = false;
+	options.OptimizationLevel = "O2";
+
+
+	options.InputFiles.add("test0.jr");
+	options.InputFiles.add("test0lib.jr");
+
+	int result = 0;
+
+	if(compiler.Compile(options) == 0)
+	{
+		println("Total lines: %d", Parser1.totalLines);
+		// run
+		result = system("meta2.exe");
+		println(string.format("result 2: %d", result));
+	}
+	else
+	{
+		result = -1;
+	}
+
+	Scanner.Finalize();
+
+	TypeSymbol.Finalize();
+
+	return 0;
+}
+
+int main(int argc, byte **argv)
+{
+	long hModule = GetModuleHandleA(null);
+	_readTypeInfo(hModule);
+
+	println("META 2");
+
+	for(int i = 0; i < argc; ++i)
+		println(argv[i]);
+
+	int result = test();
+
+	_checkLeaks();
+
+	return result;
+}

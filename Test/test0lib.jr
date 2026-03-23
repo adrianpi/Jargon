@@ -1,0 +1,7 @@
+int printf(byte* fmt, ...) external;
+
+void FunctionInOtherUnit()
+{
+	printf("I'm in another unit!!!\n");
+}
+

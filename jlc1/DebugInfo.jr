@@ -1,0 +1,886 @@
+using jargon;
+
+// Purpose:
+// - Represent debug metadata (types, files, functions, variables, etc.) in
+//   memory and serialize it into textual LLVM-style metadata lines such as:
+//     !42 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus_14, ...)
+//
+// Key classes:
+// - DINode: base for all metadata nodes. Allocates a unique ID and provides
+//   property-serialization helpers.
+// - DIType hierarchy: DIType, DIBasicType, DIDerivedType, DICompositeType,
+//   DISubrange, DISubroutineType, DIEnumerator
+// - Entity classes: DICompileUnit, DIFile, DIGlobalVariable, DILocalVariable,
+//   DISubprogram, DILocation, DIGlobalVariableExpression, DIText, DINodeList
+//
+// Key function:
+// - DINode.GetTypeInfo(TypeSymbol): maps compiler TypeSymbol objects into
+//   DIType nodes and caches results so identical types are emitted once.
+//
+// Serialization model:
+// - Each node implements Serialize(StringBuffer sb) and uses helpers from
+//   DINode to emit properties in the format expected by downstream tools.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Enumerations and helpers
+// ---------------------------------------------------------------------------
+// Each enum maps to a set of textual names used in serialized metadata. The
+// accompanying ToString helpers return the literal text used in output.
+
+// Language used by the compile unit. Currently only C++14 is represented.
+enum DILanguage
+{
+    DW_LANG_C_plus_plus_14
+}
+
+string DILanguageToString(DILanguage lang)
+{
+    if(lang == DILanguage.DW_LANG_C_plus_plus_14)
+        return "DW_LANG_C_plus_plus_14";
+    else
+        return "Unknown";
+}
+
+// Emission kind describes how much debug information is emitted.
+enum DIEmissionKind
+{
+    FullDebug
+}
+
+string DIEmissionKindToString(DIEmissionKind ek)
+{
+    if(ek == DIEmissionKind.FullDebug)
+        return "FullDebug";
+    else
+        return "Unknown";
+}
+
+// Name table kind used for optional name index tables.
+enum DINameTableKind
+{
+    None
+}
+
+string DINameTableKindToString(DINameTableKind ntk)
+{
+    if(ntk == DINameTableKind.None)
+        return "None";
+    else
+        return "Unknown";    
+}
+
+// Checksum algorithm identifiers for DIFile nodes.
+enum DIChecksumKind
+{
+    CSK_MD5
+}
+
+string DIChecksumKindToString(DIChecksumKind ck)
+{
+    if(ck == DIChecksumKind.CSK_MD5)
+        return "CSK_MD5";
+    else
+        return "Unknown";
+}
+
+// Encodings for primitive data types; maps to DW_ATE_*.
+enum DIEncoding
+{
+    DW_ATE_address,
+    DW_ATE_boolean,
+    DW_ATE_float,
+    DW_ATE_signed,
+    DW_ATE_signed_char,
+    DW_ATE_unsigned,
+    DW_ATE_unsigned_char
+}
+
+string DIEncodingToString(DIEncoding e)
+{
+    if(e == DIEncoding.DW_ATE_address)
+        return "DW_ATE_address";
+    else if(e == DIEncoding.DW_ATE_boolean)
+        return "DW_ATE_boolean";
+    else if(e == DIEncoding.DW_ATE_float)
+        return "DW_ATE_float";
+    else if(e == DIEncoding.DW_ATE_signed)
+        return "DW_ATE_signed";
+    else if(e == DIEncoding.DW_ATE_signed_char)
+        return "DW_ATE_signed_char";
+    else if(e == DIEncoding.DW_ATE_unsigned)
+        return "DW_ATE_unsigned";
+    else if(e == DIEncoding.DW_ATE_unsigned_char)
+        return "DW_ATE_unsigned_char";
+    else
+        return "Unknown";
+}
+
+// Tags to identify DIType subclasses in serialized output.
+enum DITypeTag
+{
+    DW_TAG_const_type,
+    DW_TAG_pointer_type,
+    DW_TAG_array_type,
+    DW_TAG_structure_type,
+    DW_TAG_member,
+    DW_TAG_enumeration_type
+}
+
+string DITypeTagToString(DITypeTag tt)
+{
+    if(tt == DITypeTag.DW_TAG_const_type)
+        return "DW_TAG_const_type";
+    else if(tt == DITypeTag.DW_TAG_pointer_type)
+        return "DW_TAG_pointer_type";
+    else if(tt == DITypeTag.DW_TAG_array_type)
+        return "DW_TAG_array_type";
+    else if(tt == DITypeTag.DW_TAG_structure_type)
+        return "DW_TAG_structure_type";
+    else if(tt == DITypeTag.DW_TAG_member)
+        return "DW_TAG_member";
+    else if(tt == DITypeTag.DW_TAG_enumeration_type)
+        return "DW_TAG_enumeration_type";
+    else
+        return "Unknown";
+}
+
+// General DI flags (placeholder examples).
+enum DIFlags
+{
+    DIFlagPrototyped
+}
+
+string DIFlagsToString(DIFlags flags)
+{
+    if(flags == DIFlags.DIFlagPrototyped)
+        return "DIFlagPrototyped";
+    else
+        return "Unknown";
+}
+
+// Subprogram-specific flags (placeholder examples).
+enum DISPFlags
+{
+    DISPFlagDefinition
+}
+
+string DISPFlagsToString(DISPFlags flags)
+{
+    if(flags == DISPFlags.DISPFlagDefinition)
+        return "DISPFlagDefinition";
+    else
+        return "Unknown";
+}
+
+// ---------------------------------------------------------------------------
+// DINode: base class for all metadata nodes
+// ---------------------------------------------------------------------------
+// Responsibilities:
+// - Assign unique IDs to nodes (used when serializing references).
+// - Register nodes in AllNodes for iteration/emission.
+// - Provide helper methods to serialize properties consistently.
+// - Maintain static caches for mapping language entities to DI nodes.
+class DINode
+{
+    // Unique numeric ID assigned at construction. Used as the textual
+    // metadata reference (e.g., "!5").
+    int ID;
+
+    // Controls comma insertion between serialized properties. When a
+    // property is emitted, 'prev' is set to 1 so subsequent properties
+    // insert a comma before appending.
+    int prev = 0;
+
+    // Global counter used to allocate node IDs sequentially.
+    static int id = 0;    
+
+    // Global list of all created nodes. Useful for emitting all nodes
+    // in creation order or for debugging.
+    static array<DINode> AllNodes = new array<DINode>();
+
+    // Caches for unique node creation:
+    // - TypeMap: maps TypeSymbol -> DIType so the same DI type is reused.
+    // - LocalMap / FunctionMap / GlobalMap: map language-level entities to
+    //   DI nodes so each language entity matches a single DI node.
+    static dictionary<TypeSymbol, DINode> TypeMap = new dictionary<TypeSymbol, DINode>();
+    static dictionary<LocalVariable, DILocalVariable> LocalMap = new dictionary<LocalVariable, DILocalVariable>();
+    static dictionary<Function, DISubprogram> FunctionMap = new dictionary<Function, DISubprogram>();
+    static dictionary<GlobalVariable, DIGlobalVariableExpression> GlobalMap = new dictionary<GlobalVariable, DIGlobalVariableExpression>();
+
+    // Collected global variable expression nodes.
+    static array<DIGlobalVariableExpression> Globals = new array<DIGlobalVariableExpression>();
+
+    // Reset global caches and ID counter. Useful when regenerating metadata
+    // within the same process so IDs start from zero and maps are cleared.
+    static void Reset()
+    {
+        DINode.AllNodes.clear();
+        DINode.TypeMap.clear();
+        DINode.LocalMap.clear();
+        DINode.FunctionMap.clear();
+        DINode.GlobalMap.clear();
+        DINode.Globals.clear();
+        DINode.id = 0;
+    }
+
+    // Release references to static collections. After calling this the
+    // DI system can no longer be used.
+    static void Finalize()
+    {
+        DINode.AllNodes = null;
+        DINode.TypeMap = null;
+        DINode.LocalMap = null;
+        DINode.FunctionMap = null;
+        DINode.GlobalMap = null;
+        DINode.Globals = null;
+    }
+
+    // Constructor: allocate an ID and register the node.
+    DINode constructor()
+    {
+        base();
+        ID = DINode.id++;
+        DINode.AllNodes.add(this);
+        return this;
+    }
+
+    // Derived nodes override Serialize(StringBuffer) to append their
+    // textual representation. The default does nothing.
+    virtual void Serialize(StringBuffer sb) {}
+
+    // Append the ID prefix used when emitting the node definition.
+    void SerializeID(StringBuffer sb)
+    {
+        sb.append(string.format("!%d = ", ID));
+    }
+
+    // Append the class name for this node, e.g. "!DICompileUnit".
+    // Also resets the 'prev' flag so the first property doesn't print
+    // a leading comma.
+    void SerializeClassName(StringBuffer sb)
+    {
+        sb.append(string.format("!%s", this.getClassName()));
+        prev = 0;
+    }
+
+    // Property helpers. They handle comma insertion and formatting so
+    // individual node Serialize implementations are concise.
+    void SerializeStringProperty(StringBuffer sb, string name, string value)
+    {
+        if (prev == 1)
+            sb.append(", ");
+        sb.append(name);
+        sb.append(": ");
+        sb.append("\"");
+        sb.append(value);
+        sb.append("\"");
+        prev = 1;
+    }
+
+    void SerializeNodeProperty(StringBuffer sb, string name, DINode node)
+    {
+        if (prev == 1)
+            sb.append(", ");
+        sb.append(name);
+        sb.append(": ");
+        if (node == null)
+            sb.append("null");
+        else
+        {
+            // Emit a reference to the other node by its ID.
+            sb.append(string.format("!%d", node.ID));
+        }
+        prev = 1;
+    }
+
+    void SerializeBoolProperty(StringBuffer sb, string name, bool value)
+    {
+        if (prev == 1)
+            sb.append(", ");
+        sb.append(name);
+        sb.append(": ");
+        sb.append(value ? "true" : "false");
+        prev = 1;
+    }
+
+    void SerializeIntProperty(StringBuffer sb, string name, int value)
+    {
+        if (prev == 1)
+            sb.append(", ");
+        sb.append(name);
+        sb.append(": ");
+        sb.append(string.format("%d", value));
+        prev = 1;
+    }
+
+    void SerializeLongProperty(StringBuffer sb, string name, long value)
+    {
+        if (prev == 1)
+            sb.append(", ");
+        sb.append(name);
+        sb.append(": ");
+        sb.append(string.format("%lld", value));
+        prev = 1;
+    }
+
+    // Emit an enum property: the caller provides the textual value
+    // (via the helper functions above) so we append it unquoted.
+    void SerializeEnumProperty(StringBuffer sb, string name, string value)
+    {
+        if (prev == 1)
+            sb.append(", ");
+        sb.append(name);
+        sb.append(": ");
+        sb.append(value);
+        prev = 1;
+    }
+
+    // -----------------------------------------------------------------------
+    // GetTypeInfo: Convert a language type symbol to a DI type node.
+    // The function returns a DIType derived instance and caches it so the
+    // same TypeSymbol maps to a unique DI node.
+    // -----------------------------------------------------------------------
+    static DIType GetTypeInfo(TypeSymbol t)
+    {
+        // Void types have no DI representation.
+        if (t == TypeSymbol.Void)
+            return null;
+
+        // Return cached DI node if one exists.
+        if (TypeMap.contains(t))
+        {
+            return TypeMap[t];
+        }
+
+        // Primitive types -> DIBasicType
+        if (t.IsPrimitive())
+        {
+            PrimitiveType pt = t as PrimitiveType;
+            DIBasicType bt = new DIBasicType();
+            bt.name = pt.Name;
+            bt.size = pt.Size * 8; // store size in bits
+            if (pt.IsPointer())
+                bt.encoding = DIEncoding.DW_ATE_address;
+            else if (pt.IsBool())
+                bt.encoding = DIEncoding.DW_ATE_boolean;
+            else if (pt.IsFloatingPoint())
+                bt.encoding = DIEncoding.DW_ATE_float;
+            else
+            {
+                if (pt == TypeSymbol.UByte)
+                    bt.encoding = DIEncoding.DW_ATE_unsigned_char;
+                else if (pt == TypeSymbol.Byte)
+                    bt.encoding = DIEncoding.DW_ATE_signed_char;
+                else if (pt.IsUnsigned())
+                    bt.encoding = DIEncoding.DW_ATE_unsigned;
+                else
+                    bt.encoding = DIEncoding.DW_ATE_signed;
+            }
+            TypeMap[pt] = bt;
+            return bt;
+        }
+        // Array types -> DICompositeType with a DISubrange child describing
+        // the number of elements.
+        else if (t.IsArray())
+        {
+            ArrayType at = t as ArrayType;
+            DICompositeType ct = new DICompositeType();
+            ct.tag = DITypeTag.DW_TAG_array_type;
+            ct.baseType = GetTypeInfo(at.ElementType);
+            ct.size = at.ElementType.Size * 8 * at.ArraySize;
+            ct.elements = new DINodeList();
+            DISubrange sr = new DISubrange();
+            sr.count = at.ArraySize;
+            ct.elements.add(sr);
+            TypeMap[at] = ct;
+            return ct;
+        }
+        // Pointer types -> DIDerivedType with pointer tag
+        else if (t.IsPointer())
+        {
+            PointerType pt = t as PointerType;
+            DIDerivedType dt = new DIDerivedType();
+            dt.tag = DITypeTag.DW_TAG_pointer_type;
+            dt.baseType = GetTypeInfo(pt.ElementType);
+            dt.size = 64; // assumed pointer size in bits
+            TypeMap[pt] = dt;
+            return dt;
+        }
+        // Struct types -> DICompositeType with members
+        else if (t.IsStruct())
+        {
+            StructType st = t as StructType;
+            DICompositeType ct = new DICompositeType();
+            ct.tag = DITypeTag.DW_TAG_structure_type;
+            ct.name = st.Name;
+            ct.size = st.Size * 8;
+            ct.elements = new DINodeList();
+            TypeMap[st] = ct;
+            for(int i = 0; i < st.Children.count; ++i)
+            {
+                FieldSymbol fs = st.Children[i] as FieldSymbol;
+                DIDerivedType dt = new DIDerivedType();
+                dt.tag = DITypeTag.DW_TAG_member;
+                dt.name = fs.Name;
+                dt.baseType = GetTypeInfo(fs.DataType);
+                dt.offset = fs.Offset * 8;
+                dt.size = fs.DataType.Size * 8;
+                ct.elements.add(dt);
+            }
+            return ct;
+        }
+        // Class types -> similar to structs but include base classes
+        else if (t.IsClass())
+        {
+            ClassType st = t as ClassType;
+            DICompositeType ct = new DICompositeType();
+            ct.tag = DITypeTag.DW_TAG_structure_type;
+            ct.name = st.Name;
+            ct.size = st.Size * 8;
+            ct.elements = new DINodeList();
+            TypeMap[st] = ct;
+            while (st != null)
+            {
+                for(int i = 0; i < st.Children.count; ++i)
+                {
+                    FieldSymbol fs = st.Children[i] as FieldSymbol;
+                    if (fs != null && (fs.Flags & SymbolFlags.Static) == 0)
+                    {
+                        DIDerivedType dt = new DIDerivedType();
+                        dt.tag = DITypeTag.DW_TAG_member;
+                        dt.name = fs.Name;
+                        dt.baseType = GetTypeInfo(fs.DataType);
+                        dt.offset = fs.Offset * 8;
+                        dt.size = fs.DataType.Size * 8;
+                        ct.elements.add(dt);
+                    }
+                }
+                st = st.BaseClass;
+            }
+            return ct;
+        }
+        // Enum types -> DICompositeType with DIEnumerator entries
+        else if (t.IsEnum())
+        {
+            EnumType et = t as EnumType;
+            DICompositeType ct = new DICompositeType();
+            ct.tag = DITypeTag.DW_TAG_enumeration_type;
+            ct.baseType = GetTypeInfo(et.ElementType);
+            ct.name = et.Name;
+            ct.size = et.Size * 8;
+            ct.align = ct.size;
+            ct.elements = new DINodeList();
+            TypeMap[et] = ct;
+            for(int i = 0; i < et.Children.count; ++i)
+            {
+                EnumValue ev = et.Children[i] as EnumValue;
+                if(ev != null)
+                {
+                    DIEnumerator dt = new DIEnumerator();
+                    dt.name = ev.Name;
+                    dt.value = ev.Value;
+                    ct.elements.add(dt);
+                }
+            }
+            return ct;
+        }
+        else
+        {
+            // Unknown or unsupported type symbol.
+            return null;
+        }
+    }
+
+    // Returns the textual reference for this node (e.g., "!3").
+    string toString()
+    {
+        return string.format("!%d", ID);
+    }
+}
+
+// Compile unit: top-level metadata node representing a translation unit.
+class DICompileUnit : DINode
+{
+    DILanguage language = DILanguage.DW_LANG_C_plus_plus_14;    // language of the unit
+    DIFile file;                                                // primary source file
+    string producer = "clang version 21.1.2";                   // producer string
+    bool isOptimized = false;                                   // optimization flag
+    int runtimeVersion = 0;                                     // runtime version
+    DIEmissionKind emissionKind = DIEmissionKind.FullDebug;     // emission level
+    DINodeList globals;                                         // list of global metadata
+    DINameTableKind nameTableKind = DINameTableKind.None;       // name table usage
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        sb.append("distinct ");
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeEnumProperty(sb, "language", DILanguageToString(language));
+        SerializeNodeProperty(sb, "file", file);
+        SerializeStringProperty(sb, "producer", producer);
+        SerializeBoolProperty(sb, "isOptimized", isOptimized);
+        SerializeIntProperty(sb, "runtimeVersion", runtimeVersion);
+        SerializeEnumProperty(sb, "emissionKind", DIEmissionKindToString(emissionKind));
+        SerializeNodeProperty(sb, "globals", globals);
+        SerializeEnumProperty(sb, "nameTableKind", DINameTableKindToString(nameTableKind));
+        sb.appendLine(")");
+    }
+}
+
+// Source file descriptor node.
+class DIFile : DINode
+{
+    string filename;
+    string directory;
+    DIChecksumKind checksumkind = DIChecksumKind.CSK_MD5;
+    string checksum;
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeStringProperty(sb, "filename", filename);
+        SerializeStringProperty(sb, "directory", directory);
+        SerializeEnumProperty(sb, "checksumkind", DIChecksumKindToString(checksumkind));
+        SerializeStringProperty(sb, "checksum", checksum);
+        sb.appendLine(")");
+    }
+}
+
+// Global variable expression: describes how to find/load a global. The
+// constructor registers the node in the global list so it's emitted
+// with compile-unit globals.
+class DIGlobalVariableExpression : DINode
+{
+    DIGlobalVariable var;
+
+    DIGlobalVariableExpression constructor()
+    {
+        base();
+        Globals.add(this);
+        return this;
+    }
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeNodeProperty(sb, "var", var);
+        sb.append(", expr: !DIExpression()");
+        sb.appendLine(")");
+    }
+}
+
+// Global variable descriptor.
+class DIGlobalVariable : DINode
+{
+    string name;
+    string linkageName;
+    DIType type;
+    bool isLocal = false;
+    bool isDefinition = true;
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        sb.append("distinct ");
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeStringProperty(sb, "name", name);
+        SerializeStringProperty(sb, "linkageName", linkageName);
+        SerializeNodeProperty(sb, "type", type);
+        SerializeBoolProperty(sb, "isLocal", isLocal);
+        SerializeBoolProperty(sb, "isDefinition", isDefinition);
+        sb.appendLine(")");
+    }
+}
+
+// Local variable (argument or stack variable) descriptor.
+class DILocalVariable : DINode
+{
+    string name;
+    int arg;
+    DISubprogram scope;
+    DIFile file;
+    int line;
+    DIType type;
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeStringProperty(sb, "name", name);
+        if (arg != 0)
+            SerializeIntProperty(sb, "arg", arg);
+        SerializeNodeProperty(sb, "scope", scope);
+        SerializeNodeProperty(sb, "file", file);
+        SerializeIntProperty(sb, "line", line);
+        SerializeNodeProperty(sb, "type", type);
+        sb.appendLine(")");
+    }
+}
+
+// Base type node.
+class DIType : DINode
+{
+}
+
+// Basic primitive type node.
+class DIBasicType : DIType
+{
+    string name;
+    int size; // size in bits
+    DIEncoding encoding = DIEncoding.DW_ATE_signed;
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeStringProperty(sb, "name", name);
+        SerializeIntProperty(sb, "size", size);
+        SerializeEnumProperty(sb, "encoding", DIEncodingToString(encoding));
+        sb.appendLine(")");
+    }
+}
+
+// Derived type: pointer/member/const qualifiers, etc.
+class DIDerivedType : DIType
+{
+    DITypeTag tag;
+    string name;
+    DIType baseType;
+    int size;
+    int offset;
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeEnumProperty(sb, "tag", DITypeTagToString(tag));
+        if (name != null)
+            SerializeStringProperty(sb, "name", name);
+        SerializeNodeProperty(sb, "baseType", baseType);
+        if (offset != 0)
+            SerializeIntProperty(sb, "offset", offset);
+        SerializeIntProperty(sb, "size", size);
+        sb.appendLine(")");
+    }
+}
+
+// Composite types: struct, class, enum, array descriptors.
+class DICompositeType : DIType
+{
+    DITypeTag tag;
+    string name;
+    DIType baseType;
+    int size;
+    int align;
+    DINodeList elements;
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeEnumProperty(sb, "tag", DITypeTagToString(tag));
+        if (name != null)
+            SerializeStringProperty(sb, "name", name);
+        if (baseType != null)
+            SerializeNodeProperty(sb, "baseType", baseType);
+        SerializeIntProperty(sb, "size", size);
+        if (tag == DITypeTag.DW_TAG_enumeration_type)
+            SerializeIntProperty(sb, "align", align);
+        SerializeNodeProperty(sb, "elements", elements);
+        sb.appendLine(")");
+    }
+}
+
+// Subrange used to describe array element counts.
+class DISubrange : DINode
+{
+    int count;
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeIntProperty(sb, "count", count);
+        sb.appendLine(")");
+    }
+}
+
+// Function type node (return + parameter types).
+class DISubroutineType : DIType
+{
+    DINodeList types;
+
+    DISubroutineType constructor()
+    {
+        base();
+        types = new DINodeList();
+        return this;
+    }
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeNodeProperty(sb, "types", types);
+        sb.appendLine(")");
+    }
+}
+
+// Enumerator element inside an enum type.
+class DIEnumerator : DINode
+{
+    string name;
+    long value;
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeStringProperty(sb, "name", name);
+        SerializeLongProperty(sb, "value", value);
+        sb.appendLine(")");
+    }
+}
+
+// Subprogram (function) node. Tracks name/linkage, file/line and an
+// internal list of DILocation nodes for source locations referenced by
+// the function. GetLocation() deduplicates locations by line number.
+class DISubprogram : DINode
+{
+    string name;
+    string linkageName;
+    DINode scope;
+    DIFile file;
+    int line;
+    DISubroutineType type;
+    int scopeLine;
+    DIFlags flags = DIFlags.DIFlagPrototyped;
+    DISPFlags spFlags = DISPFlags.DISPFlagDefinition;
+    DICompileUnit unit;
+    DINodeList retainedNodes;
+    array<DILocation> locations = new array<DILocation>();
+
+    DISubprogram constructor()
+    {
+        base();
+        retainedNodes = new DINodeList();
+        return this;
+    }
+
+    // Return an existing DILocation for a given line or create a new one.
+    DILocation GetLocation(int line)
+    {
+        for(int i = 0; i < locations.count; ++i)
+        {
+            DILocation loc = locations[i];
+            if (loc.line == line)
+                return loc;
+        }
+        DILocation dloc = new DILocation();
+        dloc.line = line;
+        dloc.scope = this;
+        locations.add(dloc);
+        return dloc;
+    }
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        sb.append("distinct ");
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeStringProperty(sb, "name", name);
+        SerializeStringProperty(sb, "linkageName", linkageName);
+        SerializeNodeProperty(sb, "scope", scope);
+        SerializeNodeProperty(sb, "file", file);
+        SerializeIntProperty(sb, "line", line);
+        SerializeNodeProperty(sb, "type", type);
+        SerializeIntProperty(sb, "scopeLine", scopeLine);
+        SerializeEnumProperty(sb, "flags", DIFlagsToString(flags));
+        SerializeEnumProperty(sb, "spFlags", DISPFlagsToString(spFlags));
+        SerializeNodeProperty(sb, "unit", unit);
+        SerializeNodeProperty(sb, "retainedNodes", retainedNodes);
+        sb.appendLine(")");
+    }
+}
+
+// Location node: simple node containing a line number and scope
+class DILocation : DINode
+{
+    int line;
+    DISubprogram scope;
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        SerializeClassName(sb);
+        sb.append("(");
+        SerializeIntProperty(sb, "line", line);
+        SerializeNodeProperty(sb, "scope", scope);
+        sb.appendLine(")");
+    }
+}
+
+// DIText: raw text node useful for injecting custom metadata lines.
+class DIText : DINode
+{
+    string text;
+
+    DIText constructor(string s)
+    {
+        base();
+        text = s;
+        return this;
+    }
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        sb.appendLine(text);
+    }
+}
+
+// DINodeList: container of node references. Serialized in the form
+// !{!id, !id, null, ...}
+class DINodeList : DINode
+{
+    array<DINode> items = new array<DINode>();
+
+    int get count() => items.count;
+
+    DINode get_item(int index) => items[index];
+    void set_item(int index, DINode value) { items[index] = value; }
+    void add(DINode item) { items.add(item); }
+    void clear() { items.clear(); }
+
+    void Serialize(StringBuffer sb)
+    {
+        SerializeID(sb);
+        sb.append("!{");
+        for(int i = 0; i < items.count; ++i)
+        {
+            DINode item = items[i];
+            if (i != 0)
+                sb.append(", ");
+            if (item == null)
+                sb.append("null");
+            else
+                sb.append(string.format("!%d", item.ID));
+        }
+        sb.appendLine("}");
+    }
+}

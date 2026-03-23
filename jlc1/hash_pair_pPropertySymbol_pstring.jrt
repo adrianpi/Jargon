@@ -1,0 +1,11 @@
+class hash_pair_pPropertySymbol_pstring
+{
+	PropertySymbol* key;
+	string* data;
+	hash_pair<PropertySymbol*,string*>* next;
+	
+	void destructor()
+	{
+		base();
+	}
+}

@@ -1,0 +1,71 @@
+using jargon;
+
+long GetModuleHandleA(byte *name) external;
+
+int start()
+{
+	println("Compiling compiler...");
+
+	Compiler compiler = new Compiler();
+
+	CompilerOptions options = new CompilerOptions();
+	options.OutputFileName = "meta.exe";
+	options.OutputDirectory = ".";
+	//options.InputFiles.add("test0lib.cmf");
+	//options.InputFiles.add("test0.cmf");
+	options.InputFiles.add("..\\jlc1\\Scanner.jr");
+	options.InputFiles.add("..\\jlc1\\Expression.jr");
+	options.InputFiles.add("..\\jlc1\\Symbol.jr");
+	options.InputFiles.add("..\\jlc1\\Statement.jr");
+	options.InputFiles.add("..\\jlc1\\TypeInfo.jr");
+	options.InputFiles.add("..\\jlc1\\BaseParser.jr");
+	options.InputFiles.add("..\\jlc1\\ExpressionParser.jr");
+	options.InputFiles.add("..\\jlc1\\StageParser.jr");
+	options.InputFiles.add("..\\jlc1\\Parser1.jr");
+	options.InputFiles.add("..\\jlc1\\Parser2.jr");
+	options.InputFiles.add("..\\jlc1\\Parser3.jr");
+	options.InputFiles.add("..\\jlc1\\Parser4.jr");
+	options.InputFiles.add("..\\jlc1\\StringBuffer.jr");
+	options.InputFiles.add("..\\jlc1\\DebugInfo.jr");
+	options.InputFiles.add("..\\jlc1\\LLVMCodeGen.jr");
+	options.InputFiles.add("..\\jlc1\\CodeTransform.jr");
+	options.InputFiles.add("..\\jlc1\\Compiler.jr");
+	options.InputFiles.add("Main2.jr");
+
+	options.AdditionalLibraries.add("advapi32.lib");
+
+	options.OptimizationLevel = "O2";
+	options.DebugInfo = false;
+	options.Verbose = true;
+
+	int result = 0;
+
+	if(compiler.Compile(options) == 0)
+	{
+		println("Total lines: %d", Parser1.totalLines);
+		// run
+		result = system("meta.exe");
+		println(string.format("result: %d", result));
+	}
+	else
+	{
+		result = -1;
+	}
+
+	Scanner.Finalize();
+
+	TypeSymbol.Finalize();
+
+	return result;
+}
+
+int main()
+{
+	long hModule = GetModuleHandleA(null);
+	_readTypeInfo(hModule);
+
+	int result = start();
+	println("-----------------------------");
+	_checkLeaks();
+	return result;
+}

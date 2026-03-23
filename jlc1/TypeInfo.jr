@@ -1,0 +1,740 @@
+using jargon;
+
+class BinaryReader
+{
+    array<byte> buffer;
+    int pos = 0;
+
+    BinaryReader constructor(array<byte> buff)
+    {
+        base();
+        this.buffer = buff;
+        return this;
+    }
+
+    byte readByte()
+    {
+        return buffer[pos++];
+    }
+
+    short readShort()
+    {
+        ubyte b1 = buffer[pos++];
+        ubyte b2 = buffer[pos++];
+        return (short)(b1 | (b2 << 8));
+    }
+
+    int readInt()
+    {
+        ubyte b1 = buffer[pos++];
+        ubyte b2 = buffer[pos++];
+        ubyte b3 = buffer[pos++];
+        ubyte b4 = buffer[pos++];
+        
+        return b1 | (b2 << 8) | (b3 << 16) | (b4 << 24);
+    }
+
+    long readLong()
+    {
+        long l = readInt();
+        l = l | ((long)readInt() << 32);
+        return l;
+    }
+
+    string readString()
+    {
+        string str = "";
+        byte c = buffer[pos++];
+        while(c != 0)
+        {
+            str = str + c;
+            c = buffer[pos++];
+        }
+        return str;
+    }
+
+    float readFloat()
+    {
+        int i = readInt();
+        float f = *(float*)&i;
+        return f;
+    }
+
+    double readDouble()
+    {
+        long l = readLong();
+        double d = *(double*)&l;
+        return d;
+    }
+}
+
+class TypeInfo
+{
+    static void WriteByte(array<byte> buffer, byte value)
+    {
+        buffer.add(value);
+    }
+
+    static void WriteShort(array<byte> buffer, short value)
+    {
+        buffer.add((byte)(value & 0xff));
+        buffer.add((byte)((value >> 8) & 0xff));
+    }
+
+	static void WriteInt(array<byte> buffer, int value)
+	{
+		buffer.add((value & 0xff));
+		buffer.add(((value >> 8) & 0xff));
+		buffer.add(((value >> 16) & 0xff));
+		buffer.add(((value >> 24) & 0xff));
+	}
+
+    static void WriteLong(array<byte> buffer, long value)
+    {
+        WriteInt(buffer, value & 0xffffffff);
+        WriteInt(buffer, value >> 32);
+    }
+
+	static void WriteString(array<byte> buffer, string value)
+	{
+		for(int i = 0; i < value.length; ++i)
+			buffer.add(value[i]);
+		buffer.add(0);
+	}
+
+
+    static void WriteFloat(array<byte> buffer, float value)
+    {
+        byte* b = (byte*)&value;
+        for(int i = 0; i < 4; ++i)
+            buffer.add(b[i]);
+    }
+
+    static void WriteDouble(array<byte> buffer, double value)
+    {
+        byte* b = (byte*)&value;
+        for(int i = 0; i < 8; ++i)
+            buffer.add(b[i]);
+    }
+
+	static void WriteType(array<byte> buffer, TypeSymbol type)
+    {
+        if(type == null)
+        {
+            WriteByte(buffer, (byte)TypeCode.None);
+            return;
+        }
+
+        WriteByte(buffer, (byte)type.TypeCode);
+
+        if(type.TypeCode == TypeCode.Pointer)
+        {
+            WriteType(buffer, type.ElementType);
+        }
+        else if(type.TypeCode == TypeCode.Array)
+        {
+            WriteInt(buffer, (int)(type as ArrayType).ArraySize);
+            WriteType(buffer, type.ElementType);
+        }
+        else if(type.TypeCode == TypeCode.Struct)
+        {
+            WriteString(buffer, type.Name);
+        }
+    }    
+
+    static void Write(array<byte> buffer, Module m)
+    {
+        WriteByte(buffer, (int)SymbolType.Module);
+        WriteInt(buffer, (int)0x01000000);
+        WriteString(buffer, m.Name);
+
+        /*todo:foreach(var u in m.Usings)
+        {
+            WriteString(bw, u.Name);
+        }*/
+        WriteString(buffer, "");
+
+        ConstantExpression cexpr = null;
+        
+        for(int i = 0; i < m.Children.count; ++i)
+        {
+            Symbol c = m.Children[i];
+
+            if ((c.Flags & SymbolFlags.External) == 0)
+            {
+                if(c.SymbolType == SymbolType.Constant)
+                {
+                    cexpr = (c as ConstantValue).Value as ConstantExpression;
+                    if (cexpr != null)
+                    {
+                        WriteByte(buffer, c.SymbolType);
+                        WriteShort(buffer, c.Flags);
+                        WriteType(buffer, c.DataType);
+                        WriteString(buffer, c.Name);
+                        cexpr = (c as ConstantValue).Value as ConstantExpression;
+                        if (cexpr.DataType.TypeCode == TypeCode.Bool)
+                            WriteByte(buffer, (byte)cexpr.value);
+                        else if (cexpr.DataType.TypeCode == TypeCode.Byte || cexpr.DataType.TypeCode == TypeCode.UByte)
+                            WriteByte(buffer, (byte)cexpr.value);
+                        else if (cexpr.DataType.TypeCode == TypeCode.Short || cexpr.DataType.TypeCode == TypeCode.UShort)
+                            WriteShort(buffer, (short)cexpr.value);
+                        else if (cexpr.DataType.TypeCode == TypeCode.Int || cexpr.DataType.TypeCode == TypeCode.UInt)
+                            WriteInt(buffer, cexpr.value);
+                        else if (cexpr.DataType.TypeCode == TypeCode.Long || cexpr.DataType.TypeCode == TypeCode.ULong)
+                            WriteLong(buffer, cexpr.value64);
+                        else if (cexpr.DataType.TypeCode == TypeCode.Float)
+                            WriteFloat(buffer, cexpr.fValue);
+                        else if (cexpr.DataType.TypeCode == TypeCode.Double)
+                            WriteDouble(buffer, cexpr.dValue);
+                    }
+                }
+                if(c.SymbolType == SymbolType.Enum)
+                {
+                    WriteByte(buffer, c.SymbolType);
+                    WriteShort(buffer, c.Flags);
+                    WriteType(buffer, (c as EnumType).ElementType);
+                    WriteString(buffer, c.Name);
+                    for(int j = 0; j < c.Children.count; ++j)
+                    {
+                        Symbol cc = c.Children[j];
+                        EnumValue ev = cc as EnumValue;
+                        if (ev != null) 
+                        {
+                            WriteByte(buffer, cc.SymbolType);
+                            WriteShort(buffer, cc.Flags);
+                            WriteString(buffer, cc.Name);
+                            WriteLong(buffer, ev.Value);
+                        }
+                    }
+                    WriteByte(buffer, 0);
+                }
+                else if(c.SymbolType == SymbolType.Function)
+                {
+                    WriteByte(buffer, c.SymbolType);
+                    WriteShort(buffer, c.Flags);
+                    WriteType(buffer, (c as Function).ReturnType);
+                    WriteString(buffer, c.Name);
+                    if ((c as Function).Verbatim != null)
+                        WriteString(buffer, (c as Function).Verbatim);
+                    else
+                        WriteString(buffer, "");
+                    for(int j = 0; j < (c as Function).Parameters.count; ++j)
+                    {
+                        LocalVariable p = (c as Function).Parameters[j];
+                        WriteByte(buffer, p.SymbolType);
+                        WriteShort(buffer, p.Flags);
+                        WriteType(buffer, p.DataType);
+                        WriteString(buffer, p.Name);
+                        WriteByte(buffer, p.Offset);
+                    }
+                    WriteByte(buffer, 0);
+                }
+                else if(c.SymbolType == SymbolType.Struct)
+                {
+                    WriteByte(buffer, c.SymbolType);
+                    WriteShort(buffer, c.Flags);
+                    WriteString(buffer, c.Name);
+                    WriteShort(buffer, (c as StructType).Size);
+                    for(int j = 0; j < c.Children.count; ++j)
+                    {
+                        FieldSymbol fs = c.Children[j] as FieldSymbol;
+                        if (fs != null)
+                        {
+                            WriteByte(buffer, fs.SymbolType);
+                            WriteShort(buffer, fs.Flags);
+                            WriteType(buffer, fs.DataType);
+                            WriteString(buffer, fs.Name);
+                            WriteShort(buffer, fs.Offset);
+                            WriteShort(buffer, fs.Index);
+                        }
+                    }
+                    WriteByte(buffer, 0);
+                }
+                else if(c.SymbolType == SymbolType.Class)
+                {
+                    ClassType cls = (ClassType)c;
+                    WriteByte(buffer, c.SymbolType);
+                    WriteShort(buffer, c.Flags);
+                    WriteString(buffer, c.Name);
+                    WriteType(buffer, cls.BaseClass);
+                    WriteShort(buffer, cls.Size);
+                    WriteShort(buffer, cls.FieldCount);
+                    for(int j = 0; j < c.Children.count; ++j)
+                    {
+                        Symbol cc = c.Children[j];
+                        FieldSymbol fs = cc as FieldSymbol;
+                        MethodSymbol mthd = cc as MethodSymbol;
+                        PropertySymbol ps = cc as PropertySymbol;
+                        if (fs != null)
+                        {
+                            WriteByte(buffer, cc.SymbolType);
+                            WriteShort(buffer, cc.Flags);
+                            WriteType(buffer, fs.DataType);
+                            WriteString(buffer, cc.Name);
+                            WriteShort(buffer, fs.Offset);
+                            WriteShort(buffer, fs.Index);
+                        }
+                        else if (mthd != null)
+                        {
+                            WriteByte(buffer, cc.SymbolType);
+                            WriteShort(buffer, cc.Flags);
+                            WriteString(buffer, cc.Name);
+                            Function fn = mthd.GetFunction();
+                            string tname = string.format("%s__%s", cls.Name, mthd.Name);
+                            if(fn.Name != tname)
+                                WriteString(buffer, fn.Name);
+                            else
+                                WriteString(buffer, "");
+                            WriteShort(buffer, mthd.VSlot);
+                        }
+                        else if (ps != null)
+                        {
+                            WriteByte(buffer, cc.SymbolType);
+                            WriteShort(buffer, cc.Flags);
+                            WriteType(buffer, ps.DataType);
+                            WriteString(buffer, cc.Name);
+                            byte getset = 0;
+                            if (ps.Getter != null)
+                                getset |= 1;
+                                /*WriteString(buffer, ps.Getter.Name);
+                            else
+                                WriteString(buffer, "");*/
+                            if (ps.Setter != null)
+                                getset |= 2;
+                                /*WriteString(buffer, ps.Setter.Name);
+                            else
+                                WriteString(buffer, "");*/
+                            WriteByte(buffer, getset);
+                        }
+                    }
+                    
+                    WriteByte(buffer, 0);
+
+                    for(int j = 0; j < (c as ClassType).VirtualMethods.count; ++j)
+                    {
+                        MethodSymbol vm = (c as ClassType).VirtualMethods[j];
+                        if (vm != null) 
+                            WriteString(buffer, vm.Name);
+                    }
+                    WriteString(buffer, "");
+                }
+                else if(c.SymbolType == SymbolType.Template)
+                {
+                    WriteByte(buffer, c.SymbolType);
+                    WriteShort(buffer, c.Flags);
+                    WriteString(buffer, c.Name);
+                    for(int j = 0; j < (c as Template).TemplateParams.count; ++j)
+                        WriteString(buffer, (c as Template).TemplateParams[j]);
+                    WriteString(buffer, "");
+                    WriteString(buffer, ((c as Template).Source));
+                }
+            }
+        }
+        WriteByte(buffer, 0);
+    }
+
+    static array<byte> GetSectionData(string filePath, string sectionName)
+    {
+        file f = file.open(filePath.c_str(), "rb");
+        if(f == null)
+            return null;
+
+        // Verify DOS header
+        ushort dosHeader;
+        f.read(&dosHeader, sizeof(ushort));
+        if(dosHeader != 0x5A4D)
+            return null;
+
+        // Get offset to NT header
+        f.seek(0x3c, SeekPos.Start);
+        int ntOffset;
+        f.read(&ntOffset, sizeof(int));
+
+        // Verify NT header
+        int ntHeader;
+        f.seek(ntOffset, SeekPos.Start);
+        f.read(&ntHeader, sizeof(int));
+        if(ntHeader != 0x00004550)
+            return null;
+
+        // Read IMAGE_FILE_HEADER
+        f.seek(2, SeekPos.Current); // Machine
+        ushort numSections;
+        f.read(&numSections, sizeof(ushort));
+        f.seek(4, SeekPos.Current); // Timestamp
+        f.seek(4, SeekPos.Current); // PointerToSymbolTable
+        f.seek(4, SeekPos.Current); // NumberOfSymbols
+        ushort sizeOfOptionalHeader;
+        f.read(&sizeOfOptionalHeader, sizeof(ushort));
+        f.seek(2, SeekPos.Current); // Characteristics
+
+        f.seek(sizeOfOptionalHeader, SeekPos.Current);
+
+        for (ushort i = 0; i < numSections; i++)
+        {
+            byte nameBytes[9];
+            f.read(nameBytes, 8);
+            nameBytes[8] = 0;
+            string secName = new string(nameBytes);
+            uint virtualSize;
+            uint virtualAddress;
+            uint sizeOfRawData;
+            uint pointerToRawData;
+            f.read(&virtualSize, sizeof(uint));
+            f.read(&virtualAddress, sizeof(uint));
+            f.read(&sizeOfRawData, sizeof(uint));
+            f.read(&pointerToRawData, sizeof(uint));
+
+            f.seek(16, SeekPos.Current);
+
+            if(secName == sectionName)
+            {
+                array<byte> buffer = new array<byte>();
+                f.seek(pointerToRawData, SeekPos.Start);
+                for(int i = 0; i < virtualSize; i++)
+                {
+                    byte b;
+                    f.read(&b, sizeof(byte));
+                    buffer.add(b);
+                }
+                return buffer;
+            }
+        }
+        return null;
+    }
+
+    static TypeSymbol ReadType(BinaryReader br, Module module)
+    {
+        TypeCode tc = (TypeCode)br.readByte();
+        if (tc == TypeCode.None)
+            return null;
+        else if (tc == TypeCode.Void)
+            return TypeSymbol.Void;
+        else if (tc == TypeCode.Bool)
+            return TypeSymbol.Bool;
+        else if (tc == TypeCode.Byte)
+            return TypeSymbol.Byte;
+        else if (tc == TypeCode.UByte)
+            return TypeSymbol.UByte;
+        else if (tc == TypeCode.Short)
+            return TypeSymbol.Short;
+        else if (tc == TypeCode.UShort)
+            return TypeSymbol.UShort;
+        else if (tc == TypeCode.Int)
+            return TypeSymbol.Int;
+        else if (tc == TypeCode.UInt)
+            return TypeSymbol.UInt;
+        else if (tc == TypeCode.Long)
+            return TypeSymbol.Long;
+        else if (tc == TypeCode.ULong)
+            return TypeSymbol.ULong;
+        else if (tc == TypeCode.Float)
+            return TypeSymbol.Float;
+        else if (tc == TypeCode.Double)
+            return TypeSymbol.Double;
+        else if(tc == TypeCode.Pointer)
+        {
+            TypeSymbol t = ReadType(br, module);
+            return t.GetPointerType();
+        }
+        else if(tc == TypeCode.Array)
+        {
+            int sz = br.readInt();
+            TypeSymbol t = ReadType(br, module);
+            return t.GetArrayType(sz);
+        }
+        else if(tc == TypeCode.Struct)
+        {
+            string name = br.readString();
+            //println("type is struct %s", name);
+            TypeSymbol t = module.Find(name) as TypeSymbol;
+            if(t == null)
+            {
+                /*foreach(var u in module.Usings)
+                {
+                    t = u.Module.Find(name) as TypeSymbol;
+                    if (t != null)
+                        return t;
+                }
+                System.Diagnostics.Debug.Assert(false);*/
+                return null;
+            }
+            return t;
+        }
+        else
+        {
+            //System.Diagnostics.Debug.Assert(false);
+            return null;
+        }
+    }
+
+    static Module ParseModule(string filePath)
+    {
+        array<byte> typeInfo = GetSectionData(filePath, ".module");
+        if(typeInfo == null)
+            return null;
+
+        BinaryReader br = new BinaryReader(typeInfo);
+        string strEmpty = new string("");
+
+        SymbolType st = (SymbolType)br.readByte();
+        if(st != SymbolType.Module)
+            return null;
+        uint version = (uint)br.readInt();
+        if (version != 0x01000000)
+            return null;
+        string name = br.readString();
+
+        Module module = new Module(name);
+
+        string un = br.readString();
+        while(un != strEmpty)
+        {
+            /*var mu = new ModuleUsing(un);
+            mu.Module = ParseModule(mu.Name+".dll");
+            module.Usings.Add(mu);*/
+            un = br.readString();
+        }
+
+        int flags = 0;
+        st = (SymbolType)br.readByte();
+
+        dictionary<MethodSymbol, string> methodMap = new dictionary<MethodSymbol, string>();
+        dictionary<PropertySymbol, string> getterMap = new dictionary<PropertySymbol, string>();
+        dictionary<PropertySymbol, string> setterMap = new dictionary<PropertySymbol, string>();
+
+        while(st != SymbolType.None)
+        {
+            if(st == SymbolType.Constant)
+            {
+                flags = br.readShort();
+                TypeSymbol t = ReadType(br, module);
+                name = br.readString();
+                ConstantExpression cexpr = null;
+                if (t.TypeCode == TypeCode.Bool)
+                    cexpr = ConstantExpression.FromBool(br.readByte() != 0);
+                else if (t.TypeCode == TypeCode.Byte)
+                    cexpr = ConstantExpression.FromByte(br.readByte());
+                else if(t.TypeCode == TypeCode.UByte)
+                    cexpr = ConstantExpression.FromByte(br.readByte());
+                else if (t.TypeCode == TypeCode.Short)
+                    cexpr = ConstantExpression.FromShort(br.readShort());
+                else if (t.TypeCode == TypeCode.UShort)
+                    cexpr = ConstantExpression.FromUShort(br.readShort());
+                else if (t.TypeCode == TypeCode.Int)
+                    cexpr = ConstantExpression.FromInt(br.readInt());
+                else if (t.TypeCode == TypeCode.UInt)
+                    cexpr = ConstantExpression.FromUInt(br.readInt());
+                else if (t.TypeCode == TypeCode.Long)
+                    cexpr = ConstantExpression.FromLong(br.readLong());
+                else if (t.TypeCode == TypeCode.ULong)
+                    cexpr = ConstantExpression.FromULong(br.readLong());
+                else if (t.TypeCode == TypeCode.Float)
+                    cexpr = ConstantExpression.FromFloat(br.readFloat());
+                else if (t.TypeCode == TypeCode.Double)
+                   cexpr = ConstantExpression.FromDouble(br.readDouble());
+                ConstantValue cv = new ConstantValue(module, name, cexpr);
+                cv.Flags = (SymbolFlags)flags;
+            }
+            else if(st == SymbolType.Enum)
+            {
+                flags = br.readShort();
+                TypeSymbol et = ReadType(br, module);
+                name = br.readString();
+                EnumType enu = new EnumType(module, name, et);
+                enu.Flags = (SymbolFlags)flags;
+                SymbolType st2 = (SymbolType)br.readByte();
+                while(st2 != 0)
+                {
+                    flags = br.readShort();
+                    name = br.readString();
+                    long value = br.readLong();
+                    EnumValue ev = new EnumValue(enu, name, value);
+                    ev.Flags = (SymbolFlags)flags;
+                    st2 = (SymbolType)br.readByte();
+                }
+            }
+            else if(st == SymbolType.Function)
+            {
+                flags = br.readShort();
+                TypeSymbol t = ReadType(br, module);
+                name = br.readString();
+                Function fn = new Function(module, name, t);
+                fn.Flags = (SymbolFlags)flags;
+                fn.Verbatim = br.readString();
+                if (fn.Verbatim == strEmpty)
+                    fn.Verbatim = null;
+                SymbolType st2 = (SymbolType)br.readByte();
+                while(st2 != 0)
+                {
+                    flags = br.readShort();
+                    TypeSymbol pt = ReadType(br, module);
+                    name = br.readString();
+                    int offs = br.readByte();
+                    LocalVariable p = new LocalVariable(fn, name, pt, null);
+                    p.Flags = (SymbolFlags)flags;
+                    p.Offset = offs;
+                    fn.Parameters.add(p);
+                    st2 = (SymbolType)br.readByte();
+                }
+            }                 
+            else if(st == SymbolType.Struct)
+            {
+                flags = br.readShort();
+                name = br.readString();
+                int sz = br.readShort();
+                StructType struc = new StructType(module, name);
+                struc.Flags = (SymbolFlags)flags;
+                struc.SetSize(sz);
+                SymbolType st2 = (SymbolType)br.readByte();
+                while (st2 != 0)
+                {
+                    flags = br.readShort();
+                    TypeSymbol ft = ReadType(br, module);
+                    name = br.readString();
+                    int offs = br.readShort();
+                    int idx = br.readShort();
+                    FieldSymbol f = new FieldSymbol(struc, name, ft);
+                    f.Flags = (SymbolFlags)flags;
+                    f.Offset = offs;
+                    f.Index = idx;
+                    st2 = (SymbolType)br.readByte();
+                }
+            }
+            else if(st == SymbolType.Class)
+            {
+                flags = br.readShort();
+                name = br.readString();
+                ClassType baseType = ReadType(br, module) as ClassType;
+                int csz = br.readShort();
+                int fcnt = br.readShort();
+                ClassType cls = new ClassType(module, name);
+                cls.Flags = (SymbolFlags)flags;
+                // flag static fields as External when importing a class for static fields to work
+                //if((cls.Flags & SymbolFlags.Static) != 0)
+                //    cls.Flags += SymbolFlags.External;
+                cls.BaseClass = baseType;
+                cls.SetSize(csz);
+                cls.FieldCount = fcnt;
+                SymbolType st2 = (SymbolType)br.readByte();
+                while (st2 != 0)
+                {
+                    if(st2 == SymbolType.Field)
+                    {
+                        flags = br.readShort();
+                        TypeSymbol ft = ReadType(br, module);
+                        name = br.readString();
+                        int offs = br.readShort();
+                        int idx = br.readShort();
+                        FieldSymbol field = new FieldSymbol(cls, name, ft);
+                        field.Flags = (SymbolFlags)flags;
+                        // flag static fields as External when importing a class for static fields to work
+                        if((field.Flags & SymbolFlags.Static) != 0)
+                            field.Flags += SymbolFlags.External;                
+                        field.Offset = offs;
+                        field.Index = idx;
+                    }
+                    else if(st2 == SymbolType.Method)                    
+                    {
+                        flags = br.readShort();
+                        name = br.readString();
+                        string fname = br.readString();
+                        if(fname.length == 0)
+                            fname = string.format("%s__%s", cls.Name, name);
+                        int vslot = br.readShort();
+                        MethodSymbol mi = new MethodSymbol(cls, name, null);
+                        mi.Flags = (SymbolFlags)flags;
+                        mi.VSlot = vslot;
+                        methodMap[mi] = fname;
+                    }
+                    else if(st2 == SymbolType.Property)
+                    {
+                        flags = br.readShort();
+                        TypeSymbol pt = ReadType(br, module);
+                        name = br.readString();
+                        /*string getter = br.readString();
+                        string setter = br.readString();*/
+                        PropertySymbol prop = new PropertySymbol(cls, name, pt);
+                        /*if (getter != strEmpty)
+                            getterMap[prop] = getter;
+                        if (setter != strEmpty)
+                            setterMap[prop] = setter;*/
+                        byte getset = br.readByte();
+                        if((getset & 1) != 0)
+                            getterMap[prop] = string.format("get_%s", name);
+                        if((getset & 2) != 0)
+                            setterMap[prop] = string.format("set_%s", name);
+                    }                            
+                    st2 = (SymbolType)br.readByte();
+                }
+                cls.VirtualMethods.clear();
+                name = br.readString();
+                while(name != strEmpty)
+                {
+                    MethodSymbol m = cls.FindChild(name) as MethodSymbol;
+                    //System.Diagnostics.Debug.Assert(m != null);
+                    cls.VirtualMethods.add(m);
+                    name = br.readString();
+                }
+                if (cls.VirtualMethods.count == 0)
+                    cls.VirtualMethods.add(null);
+            }
+            else if(st == SymbolType.Template)
+            {
+                flags = br.readShort();
+                name = br.readString();
+                Template tmpl = new Template(module, name);
+                tmpl.Flags = (SymbolFlags)flags;
+                string tp = br.readString();
+                while(tp != strEmpty)
+                {
+                    tmpl.TemplateParams.add(tp);
+                    tp = br.readString();
+                }
+                tmpl.Source = br.readString();
+            }
+            st = (SymbolType)br.readByte();
+        }
+
+        array<MethodSymbol> methodKeys = methodMap.keys;
+        for(int i = 0; i < methodKeys.count; ++i)
+        {
+            MethodSymbol m = methodKeys[i];
+            Function fn = module.Find(methodMap[m]) as Function;
+            //System.Diagnostics.Debug.Assert(fn != null);
+            m.SetFunction(fn);
+
+            /*todo:if ((m.Flags & SymbolFlags.Static) != 0
+                && (m.DataType as Function).Parameters.count > 0
+                && (m.DataType as Function).Parameters[0].Name == new string("this"))
+            {
+                // load extension method
+                TypeSymbol typeToExtend = (m.DataType as Function).Parameters[0].DataType;
+                if(typeToExtend.IsClassRef())
+                    typeToExtend = typeToExtend.ElementType;
+                MethodSymbol extensionMethod = new MethodSymbol(typeToExtend, m.Name, m.DataType as Function);
+            }*/
+        }
+
+        array<PropertySymbol> getterKeys = getterMap.keys;
+        for(int i = 0; i < getterKeys.count; ++i)
+        {
+            PropertySymbol p = getterKeys[i];
+            MethodSymbol msym = p.Parent.Find(getterMap[p]) as MethodSymbol;
+            //System.Diagnostics.Debug.Assert(msym != null);
+            p.Getter = msym;
+        }
+
+        array<PropertySymbol> setterKeys = setterMap.keys;
+        for(int i = 0; i < setterKeys.count; ++i)
+        {
+            PropertySymbol p = setterKeys[i];
+            MethodSymbol msym = p.Parent.Find(setterMap[p]) as MethodSymbol;
+            //System.Diagnostics.Debug.Assert(msym != null);
+            p.Setter = msym;
+        }
+
+        return module;
+    }
+
+}

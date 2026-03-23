@@ -1,0 +1,158 @@
+class dictionary_pstring_pstring
+{
+	hash_pair<string*,string*>** buckets;
+	int size;
+	int count;
+	
+	dictionary<string*,string*>* constructor() {
+        base();        
+        size = 64;
+		count = 0;
+        buckets = memory.alloc(size * sizeof(hash_pair<string*,string*>));  
+		memory.put(buckets, 0, size * sizeof(hash_pair<string*,string*>));
+        return this;
+    }
+	
+	void destructor() { 
+        clear();
+        memory.free(buckets);
+        base();
+    }
+	
+	void clear() {
+        for (int i = 0; i < size; ++i) {
+            hash_pair<string*,string*>* current = buckets[i];
+            hash_pair<string*,string*>* prev = null;
+            while (current != null) {
+				hash_pair<string*,string*>* temp = current;
+                current = current.next;
+                temp.key = 0;
+                temp.data = (string*)0;
+                if(prev != null)
+                    prev.next = null;
+                prev = temp;
+            }
+            buckets[i] = null;
+        }
+		count = 0;
+    }
+	
+	void set_item(string* key, string* value) {
+        long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+		//println("Adding key: %s, hash: %lld, index: %d", key.toString().c_str(), h, index);
+
+        hash_pair<string*,string*>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                current.data = value;
+				//println("Already present");
+                return;
+            }
+            current = current.next;
+        }
+
+        hash_pair<string*,string*>* newItem = new hash_pair<string*,string*>();        
+        newItem.key = key;    
+        newItem.data = value;
+        newItem.next = buckets[index];
+        buckets[index] = newItem;
+		++count;
+		//println("Added");
+    }
+	
+	string* get_item(string* key) {
+
+        long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_pair<string*,string*>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                return current.data;
+            }
+            current = current.next;
+        }
+		
+        return (string*)0;
+    }
+
+	void remove(string* key)
+	{
+		long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_pair<string*,string*>* current = buckets[index];
+		hash_pair<string*,string*>* prev = null;
+
+        while (current != null) {
+            if (current.key == key) {
+                
+				if(prev) {
+					prev.next = current.next;
+				}
+				else {
+					buckets[index] = current.next;
+				}
+				--count;
+                return;
+            }
+			prev = current;
+            current = current.next;
+        }
+	}
+
+	array<string*>* get keys()
+	{
+		array<string*>* result = new array<string*>();
+		for(int i = 0; i < size; ++i)
+		{
+			hash_pair<string*,string*>* pair = buckets[i];
+			while(pair != null)
+			{
+				result.add(pair.key);
+				pair = pair.next;
+			}
+		}
+		return result;
+	}
+
+	array<string*>* get values()
+	{
+		array<string*>* result = new array<string*>();
+		for(int i = 0; i < size; ++i)
+		{
+			hash_pair<string*,string*>* pair = buckets[i];
+			while(pair != null)
+			{
+				result.add(pair.data);
+				pair = pair.next;
+			}
+		}
+		return result;
+	}
+
+	bool contains(string* key)
+	{
+		long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_pair<string*,string*>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                return true;
+            }
+            current = current.next;
+        }
+		
+        return false;
+	}
+}

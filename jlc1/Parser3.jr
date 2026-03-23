@@ -1,0 +1,255 @@
+using jargon;
+
+// Parser3 - third parsing stage in the multi-pass pipeline. This stage
+// finalizes class factory functions, registers global variables, and
+// synthesizes the runtime construction sequence for objects. Parser3 relies
+// on the earlier stages (Parser1 & Parser2) to have declared symbols and
+// prepared class/type skeletons. It focuses on wiring together the
+// initializer/call chains (newObj -> init -> constructor) and registering
+// initializers with the per-unit static_init function.
+class Parser3 : StageParser
+{
+    Parser3 constructor(Module module, CompilerErrorListener errorListener)
+    {
+        base(module, errorListener);
+        return this;
+    }
+
+    // ParseClass - finalize per-class factory function and ensure the class
+    // type is fully wired for later stages. Parser3 visits the class body,
+    // but primarily to ensure the factory creation occurs. It relies on
+    // earlier stages to have created field/method symbols and recorded the
+    // virtual method table.
+    bool ParseClass()
+    {
+        if (scanner.Token != Token.Ident)
+        {
+            Error("Identifier expected");
+            return false;
+        }
+        string name = scanner.TokenString;
+        scanner.NextToken();
+        ClassType cls = module.Find(name) as ClassType;
+        _class = cls;            
+
+        if (scanner.Token == Token.Colon)
+        {
+            // Accept optional base class token here; detailed linking was
+            // handled in Parser2.
+            scanner.NextToken();
+            if(scanner.Token != Token.Ident)
+                return false;
+            scanner.NextToken();
+        }
+        if (scanner.Token == Token.LBrace)
+        {
+            // Skip the class body tokens - Parser3 does not parse member
+            // implementations fully either. We simply advance to the closing
+            // brace and then create the factory function which depends on the
+            // class layout and vtable information populated by previous stages.
+            SkipBraces();
+
+            // Create factory function for new operator: this synthesizes the
+            // runtime allocation and init/constructor call chain.
+            if (!CreateFactoryFunction(cls))
+                return false;                
+
+            _class = null;
+            return Expect(Token.RBrace);
+        }
+        else
+        {
+            return Expect(Token.Semicolon);
+        }
+    }
+
+    // CreateFactoryFunction - synthesize the body for the class factory
+    // function (class.Factory). The generated sequence roughly corresponds
+    // to: return constructor(initN(...init2(init1(newObj(size, vtable)), params...));
+    //
+    // Steps performed:
+    // - Locate vtable global for the class and the 'newObj' allocation helper.
+    // - Create a FunctionCall expression for newObj(size, vtable).
+    // - Walk the class hierarchy top-down and wrap the allocation expression
+    //   with calls to each class's __init function so derived initializers
+    //   run after base initializers.
+    // - If a constructor exists, call it with the initialized object and
+    //   factory parameters and return the constructor result. If no
+    //   constructor exists, report an error (the design expects a constructor
+    //   to exist or earlier passes to have synthesized one).
+    bool CreateFactoryFunction(ClassType cls)
+    {
+        // Factory function was created in earlier stage (Parser1/Parser2)
+        Function factory = cls.Factory;
+        GlobalVariable vtab = module.Find(string.format("%s__vtable", cls.Name)) as GlobalVariable;
+        // vtable must have been created by Parser2; if missing this is an error
+        if(vtab == null)
+        {
+            Error(string.format("No vtable for %s", cls.Name));
+            return false;
+        }
+
+        // Find allocation helper 'newObj' (runtime-provided). This function
+        // must exist for allocation to succeed.
+        Function newObj = FindOrImport("newObj");
+        if(newObj == null)
+        {
+            Error("No newObj function");
+            return false;
+        }
+
+        // Build call: newObj(size, (void*)vtable)
+        FunctionCallExpression newObjCall = new FunctionCallExpression(
+                            new SymbolExpression(newObj));
+        newObjCall.Arguments.add(ConstantExpression.FromInt(cls.Size));
+        newObjCall.Arguments.add(new CastExpression(new SymbolExpression(vtab), TypeSymbol.Void.GetPointerType()));
+
+        // Collect class hierarchy and call each __init in top-down order.
+        // The __init function for each class initializes fields declared in
+        // that class. We must invoke base __init before derived __init so
+        // inheritance semantics are preserved.
+        array<ClassType> hierarchy = new array<ClassType>();
+        hierarchy.add(cls);
+        ClassType hc = cls.BaseClass;
+        while (hc != null)
+        {
+            hierarchy.add(hc);
+            hc = hc.BaseClass;
+        }
+        hierarchy.reverse(); // make class hierarchy top-down
+        Expression arg = newObjCall;
+        // Wrap allocation with successive init calls: arg = init(arg)
+        for(int i = 0; i < hierarchy.count; ++i)
+        {
+            ClassType c = hierarchy[i];
+            Function initFn = FindOrImport(string.format("%s__init", c.Name));
+            if(initFn == null)
+            {
+                Error(string.format("No init method for %s", cls.Name));
+                return false;
+            }
+            FunctionCallExpression initCall = new FunctionCallExpression(new SymbolExpression(initFn));
+            initCall.Arguments.add(arg);
+            arg = initCall;
+        }
+        // After init chain, call the constructor (if present) passing the
+        // initialized object and any factory parameters, then return its result.
+        Function ctor = FindOrImport(string.format("%s__constructor", cls.Name));
+        factory.Body = new StatementBlock();
+        if (ctor != null)
+        {
+            FunctionCallExpression ctorCall = new FunctionCallExpression(new SymbolExpression(ctor));
+            ctorCall.Arguments.add(arg);
+            for(int i = 0; i < factory.Parameters.count; ++i) {
+                LocalVariable p = factory.Parameters[i];
+                ctorCall.Arguments.add(new SymbolExpression(p));
+            }
+            factory.Body.Statements.add(new ReturnStatement(ctorCall));
+        }
+        else
+        {
+            // The project expects a constructor to exist (or be synthesized
+            // earlier). If it is missing at this point, treat as an error.
+            if(ctor == null)
+            {
+                Error(string.format("No ctor for %s", cls.Name));
+                return false;
+            }
+        }
+
+        factory.Flags += SymbolFlags.NoDebug;
+
+        return true;
+    }
+
+    // ParseGlobalOrFunction - handle global variables and functions. For
+    // global variables with initializers, create GlobalVariable symbols and
+    // register their initialization code in the unit.staticInit function so
+    // they will be initialized at program startup.
+    bool ParseGlobalOrFunction()
+    {
+        if(IsKeyword("const"))
+        {
+            while (scanner.Token != Token.EOF && scanner.Token != Token.Semicolon)
+                scanner.NextToken();
+            return Expect(Token.Semicolon);
+        }
+
+        int line = scanner.Line;
+
+        if (IsType())
+        {
+            Declaration decl = new Declaration();
+            if (!ParseDeclaration(decl, true, null, false, false))
+            {
+                return false;
+            }
+
+            if (decl.type.IsFunction())
+            {
+                // Function declarations/definitions are skipped or here,
+                // bodies are not parsed in detail at this stage yet.
+                if (scanner.Token == Token.LBrace)
+                {
+                    SkipBraces();
+                    return Expect(Token.RBrace);
+                }
+                else if(scanner.Token == Token.DoubleArrow)
+                {
+                    scanner.NextToken();
+                    while (scanner.Token != Token.Semicolon && scanner.Token != Token.EOF)
+                        scanner.NextToken();
+                    return Expect(Token.Semicolon);
+                }
+                else
+                {
+                    if (IsKeyword("external"))
+                    {}
+                    else if(IsKeyword("verbatim"))
+                        scanner.NextToken();
+
+                    return Expect(Token.Semicolon);
+                }
+            }
+            else
+            {
+                // Global variable declaration: parse optional initializer and
+                // create a GlobalVariable symbol. If an initializer was
+                // provided, register static initialization statements in the
+                // unit's static_init function so the value is set at startup.
+                Expression init = null;
+                if (scanner.Token == Token.Assign)
+                {
+                    scanner.NextToken();
+                    if (scanner.Token == Token.LBrace)
+                        init = ParseInitList(decl.type);
+                    else
+                        init = ParseExpression();
+                }
+
+                GlobalVariable gv = new GlobalVariable(module, decl.name, decl.type, init);
+                gv.Unit = unit;
+                gv.line = line;
+                unit.AddSymbol(gv);
+
+                if (init != null)
+                {
+                    Function static_init = unit.staticInit;
+                    if (static_init != null)
+                    {
+                        StatementBlock sb = static_init.Body;
+                        SymbolExpression se = new SymbolExpression(gv);
+                        StaticAssign(sb, se, init, scanner.Line, null);
+                    }
+                }
+
+                return Expect(Token.Semicolon);
+            }
+        }
+        else
+        {
+            Error("Syntax error");
+            return false;
+        }
+    }
+}

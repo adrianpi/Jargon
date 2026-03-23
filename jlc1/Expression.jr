@@ -1,0 +1,608 @@
+using jargon;
+
+/*
+ Expression.cm
+
+ This file defines the Abstract Syntax Tree (AST) nodes used to represent
+ expressions and some statements in the Jargon compiler. It also defines the
+ CodeVisitor base class used to traverse/transform the AST and the VisitMode
+ enumeration describing how expressions are inspected (loading a value vs
+ taking an address).
+
+ The AST is intentionally lightweight: each node exposes a DataType getter and
+ a Visit(...) method so visitors (parser/transforms/codegen) can operate on
+ the tree without depending on concrete node implementations.
+*/
+
+// VisitMode indicates how an expression is being used by a visitor:
+//  - Load: evaluate the expression and produce a value
+//  - Address: obtain the address of the expression (for lvalues)
+enum VisitMode
+{
+	Load,
+	Address
+}
+
+// Empty Label type used by backends or codegen to represent labels/tags
+// (kept empty here for portability; backends subclass).
+class Label
+{
+}
+
+// CodeVisitor: visitor base class for walking and transforming the AST.
+// Subclasses override the visit methods for relevant node kinds. Methods
+// take a VisitMode so visitors can adapt behavior when computing addresses
+// versus loading values.
+class CodeVisitor
+{
+	virtual void VisitConstantExpression(ConstantExpression e, VisitMode mode) {}
+	virtual void VisitBinaryExpression(BinaryExpression e, VisitMode mode) {}
+	virtual void VisitUnaryExpression(UnaryExpression e, VisitMode mode) {}
+	virtual void VisitCastExpression(CastExpression e, VisitMode mode) {}
+	virtual void VisitSymbolExpression(SymbolExpression e, VisitMode mode) {}
+	virtual void VisitFunctionCallExpression(FunctionCallExpression e, VisitMode mode) {}
+	virtual void VisitAssignmentExpression(AssignmentExpression e, VisitMode mode) {}
+	virtual void VisitFieldExpression(FieldExpression e, VisitMode mode) {}
+	virtual void VisitIndexExpression(IndexExpression e, VisitMode mode) {}
+	virtual void VisitAddressOfExpression(AddressOfExpression e, VisitMode mode) {}
+	virtual void VisitDerefExpression(DerefExpression e, VisitMode mode) {}
+	virtual void VisitTernaryExpression(TernaryExpression e, VisitMode mode) {}
+	virtual void VisitPostFixExpression(PostFixExpression e, VisitMode mode) {}
+
+	virtual void VisitGlobalVariable(GlobalVariable s) {}
+	virtual void VisitFunction(Function s) {}
+	virtual void VisitStruct(StructType s) {}
+	virtual void VisitClass(ClassType s) {}
+
+	virtual void VisitReturnStatement(ReturnStatement s) {}
+	virtual void VisitStatementBlock(StatementBlock s) {}
+	virtual void VisitExpressionStatement(ExpressionStatement s) {}
+	virtual void VisitIfStatement(IfStatement s) {}
+	virtual void VisitWhileStatement(WhileStatement s) {}
+	virtual void VisitBreakStatement(BreakStatement s) {}
+	virtual void VisitContinueStatement(ContinueStatement s) {}
+	virtual void VisitDoStatement(DoStatement s) {}
+	virtual void VisitForStatement(ForStatement s) {}
+}
+
+// Base Expression class
+// All expression nodes inherit from this and implement DataType and Visit.
+// Tag is a utility string used by the code generator to store temporary
+// names or SSA tags.
+class Expression
+{
+	string Tag;
+	string file;
+    int line;
+
+	virtual TypeSymbol get DataType() => TypeSymbol.Void;
+
+	virtual void Visit(CodeVisitor visitor, VisitMode mode) {}
+}
+
+// ConstantExpression: represents literal constants (int/float/string/null/etc.)
+// Factory methods create typed constants; codegen reads the appropriate payload
+// field depending on the TypeSymbol.
+class ConstantExpression : Expression
+{
+	TypeSymbol type;
+	int value;
+	int value64;
+	float fValue;
+	double dValue;
+	string CStr;
+
+	TypeSymbol get DataType() => type;
+
+	static ConstantExpression FromInt(int value)
+	{
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol.Int;
+		e.value = value;
+		return e;
+	}
+
+	static ConstantExpression FromUInt(uint value)
+	{
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol.UInt;
+		e.value = value;
+		return e;
+	}
+
+	static ConstantExpression FromLong(long value)
+	{
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol.Long;
+		e.value64 = value;
+		return e;
+	}
+
+	static ConstantExpression FromULong(ulong value)
+	{
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol.ULong;
+		e.value64 = value;
+		return e;
+	}
+
+	static ConstantExpression FromBool(bool value)
+	{
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol.Bool;
+		e.value = value ? 1 : 0;
+		return e;
+	}
+
+	static ConstantExpression FromByte(byte value)
+	{
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol.Byte;
+		e.value = value;
+		return e;
+	}
+
+	static ConstantExpression FromUByte(ubyte value)
+	{
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol.UByte;
+		e.value = value;
+		return e;
+	}
+
+	static ConstantExpression FromShort(short value)
+	{
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol.Short;
+		e.value = value;
+		return e;
+	}
+
+	static ConstantExpression FromUShort(ushort value)
+	{
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol.UShort;
+		e.value = value;
+		return e;
+	}
+
+	static ConstantExpression FromFloat(float value)
+	{
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol.Float;
+		e.fValue = value;
+		return e;
+	}
+
+	static ConstantExpression FromDouble(double value)
+	{
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol.Double;
+		e.dValue = value;
+		return e;
+	}
+
+	static ConstantExpression FromNull()
+	{
+		// null is represented as a void* with value 0
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol._void.GetPointerType();
+		e.value = 0;
+		return e;
+	}
+
+	static ConstantExpression FromString(string key)
+	{
+		// Strings are represented as byte* pointing to a module string constant
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol._byte.GetPointerType();
+		e.CStr = key;
+		return e;
+	}
+
+	void Visit(CodeVisitor visitor, VisitMode mode)
+	{
+		visitor.VisitConstantExpression(this, mode);
+	}
+}
+
+// Binary operations (arithmetic, logical, comparisons)
+enum BinOp
+{
+	Add,
+	Sub,
+	Mul,
+	Div,
+	Mod,
+	And,
+	Or,
+	Xor,
+	Shl,
+	Shr,	
+	Equal,
+    NEqual,
+    Less,
+    Greater,
+    LEqual,
+    GEqual,
+	LAnd,
+	LOr,
+}
+
+// BinaryExpression: binary operator with left/right operands.
+// DataType is determined from operand types and operator kind (comparisons
+// yield bool; pointer arithmetic handled specially).
+class BinaryExpression : Expression
+{
+	BinOp op;
+	Expression Left;
+	Expression Right;
+
+	BinaryExpression constructor(BinOp op, Expression left, Expression right)
+	{
+		base();
+		this.op = op;
+		this.Left = left;
+		this.Right = right;
+		return this;
+	}
+
+	TypeSymbol get DataType() 
+	{
+		// comparison operators -> bool
+		if(op >= BinOp.Equal && op <= BinOp.GEqual)
+		{
+			return TypeSymbol.Bool;
+		}
+
+		if(op == BinOp.LAnd || op == BinOp.LOr)
+		{
+			return TypeSymbol.Bool;
+		}
+
+		TypeSymbol lt = Left.DataType;
+		TypeSymbol rt = Right.DataType;
+
+		// pointer arithmetic: pointer +/- integer -> pointer type
+		if(lt.IsPointer())
+		{
+			if(rt.IsPointer())
+				return TypeSymbol.Long;
+			else
+				return lt;
+		}
+
+		// choose the wider type by TypeCode ordering for arithmetic
+		return lt.TypeCode > rt.TypeCode ? lt : rt;
+	}
+
+	void Visit(CodeVisitor visitor, VisitMode mode)
+	{
+		visitor.VisitBinaryExpression(this, mode);
+	}
+}
+
+// Unary operations (negation, bitwise not, logical not)
+enum UnaryOp
+{
+	Neg,
+	Not,
+	LNot,
+}
+
+class UnaryExpression : Expression
+{
+	UnaryOp op;
+	Expression Expression;
+
+	UnaryExpression constructor(UnaryOp op, Expression expression)
+	{
+		base();
+		this.op = op;
+		this.Expression = expression;
+		return this;
+	}
+
+	TypeSymbol get DataType() 
+	{
+		if(op == UnaryOp.LNot)
+			return TypeSymbol.Bool;
+		else
+			return this.Expression.DataType;
+	}
+
+	void Visit(CodeVisitor visitor, VisitMode mode)
+	{
+		visitor.VisitUnaryExpression(this, mode);
+	}
+}
+
+// CastExpression: explicit cast of an expression to a type. DataType is the target type.
+class CastExpression : Expression
+{
+	Expression Expression;
+	TypeSymbol CastType;
+
+	TypeSymbol get DataType() => this.CastType;
+
+	CastExpression constructor(Expression e, TypeSymbol ctype)
+	{
+		base();
+		this.Expression = e;
+		this.CastType = ctype;
+		return this;
+	}
+
+	void Visit(CodeVisitor visitor, VisitMode mode)
+	{
+		visitor.VisitCastExpression(this, mode);
+	}
+}
+
+// SymbolExpression: reference to a Symbol (variable, function, etc.). The
+// DataType is the underlying symbol's DataType. A weak reference is used to
+// avoid ownership cycles; callers must ensure the symbol lifetime.
+class SymbolExpression : Expression
+{
+	weak Symbol Symbol;
+	
+	TypeSymbol get DataType() => this.Symbol.DataType;
+	
+	SymbolExpression constructor(Symbol s)
+	{
+		base();
+		this.Symbol = s;
+		return this;
+	}
+
+	void Visit(CodeVisitor visitor, VisitMode mode)
+	{
+		visitor.VisitSymbolExpression(this, mode);
+	}
+}
+
+// Function call expression: callee can be a symbol or an expression returning
+// a function pointer. Arguments are evaluated in order. The DataType is the
+// function's return type (handle function ptr vs direct function symbol).
+class FunctionCallExpression : Expression
+{
+	array<Expression> Arguments;
+	Expression Callee;
+
+	FunctionCallExpression constructor(Expression callee)
+	{
+		base();
+		Callee = callee;
+		Arguments = new array<Expression>();
+		return this;
+	}
+
+	TypeSymbol get DataType()
+    {
+		TypeSymbol dt = Callee.DataType;
+		// Calle.DataType.IsPointer causes a leak!
+        // If the callee is a pointer to a Function, extract the element's return type
+		if (dt.IsPointer() && dt.ElementType is Function)
+        {
+			Function fn = (Function)dt.ElementType;
+            return fn.ReturnType;
+        }
+        else
+        {
+			// Otherwise the callee's DataType itself is a Function type
+			Function fn = (Function)dt;
+            return fn.ReturnType;
+        }
+    }
+
+	void Visit(CodeVisitor visitor, VisitMode mode)
+	{
+		visitor.VisitFunctionCallExpression(this, mode);
+	}
+}
+
+// Assignment expression: left := right. DataType is the left-hand side type.
+class AssignmentExpression : Expression
+{
+	Expression Left;
+	Expression Right;
+
+	LocalVariable decl;
+	bool isInit;
+
+	TypeSymbol get DataType() => this.Left.DataType;
+
+	AssignmentExpression constructor(Expression left, Expression right)
+	{
+		base();
+		this.Left = left;
+		this.Right = right;
+		return this;	
+	}
+
+	void Visit(CodeVisitor visitor, VisitMode mode)
+	{
+		visitor.VisitAssignmentExpression(this, mode);
+	}
+}
+
+// FieldExpression: access to a field or method on an object/struct. The
+// Field symbol carries the field's type; Explicit marks an explicit base/virtual lookup.
+class FieldExpression : Expression
+{
+	Expression Expression;
+	Symbol Field;
+	bool Explicit;
+
+	TypeSymbol get DataType() => this.Field.DataType;
+
+	FieldExpression constructor(Expression expression, Symbol field)
+	{
+		base();
+		this.Expression = expression;
+		this.Field = field;
+		return this;
+	}
+
+	void Visit(CodeVisitor visitor, VisitMode mode)
+	{
+		visitor.VisitFieldExpression(this, mode);
+	}
+}
+
+// InitList: initializer list expression used for aggregate initialization.
+// The type field indicates the target type (array/struct) and Expressions
+// holds the individual initializer expressions.
+class InitList : Expression
+{
+    TypeSymbol type;
+    array<Expression> Expressions;
+
+    InitList constructor(TypeSymbol type)
+    {
+		base();
+        this.type = type;
+		this.Expressions = new array<Expression>();
+		return this;
+    }
+
+    TypeSymbol get DataType() => this.type;    
+}
+
+// IndexExpression: array or pointer indexing. If the expression type is a
+// class reference that defines get_item, the index expression resolves to the
+// get_item return type. Otherwise returns the element type.
+class IndexExpression : Expression
+{
+	Expression Expression;
+	Expression Index;
+
+	TypeSymbol get DataType()
+	{
+		TypeSymbol et = this.Expression.DataType;
+		if(et.IsClassRef())
+		{
+			ClassType cls = (ClassType)et.ElementType;
+			MethodSymbol ms = cls.FindChild("get_item") as MethodSymbol;
+			if(ms != null)
+			{
+				Function fn = ms.GetFunction();
+				return fn.ReturnType;
+			}
+		}
+		return et.ElementType;
+	}
+
+	IndexExpression constructor(Expression expression, Expression index)
+	{
+		base();
+		this.Expression = expression;
+		this.Index = index;
+		return this;
+	}
+
+	void Visit(CodeVisitor visitor, VisitMode mode)
+	{
+		visitor.VisitIndexExpression(this, mode);
+	}
+}
+
+// AddressOfExpression: produces the address of an expression (pointer to the
+// expression's DataType). Used when taking addresses for byref semantics.
+class AddressOfExpression : Expression
+{
+	Expression Expression;
+
+	TypeSymbol get DataType() 
+	{
+		TypeSymbol dt = this.Expression.DataType;
+		return dt.GetPointerType();
+	}
+
+	AddressOfExpression constructor(Expression expression)
+	{
+		base();
+		this.Expression = expression;
+		return this;
+	}
+
+	void Visit(CodeVisitor visitor, VisitMode mode)
+	{
+		visitor.VisitAddressOfExpression(this, mode);
+	}
+}
+
+// DerefExpression: dereference a pointer expression (e.g. *p). DataType is the
+// pointer's element type.
+class DerefExpression : Expression
+{
+    Expression Expression;
+
+    TypeSymbol get DataType()
+	{
+		TypeSymbol dt = this.Expression.DataType;
+		return dt.ElementType;
+	}
+
+    DerefExpression constructor(Expression expression)
+    {
+		base();
+        this.Expression = expression;
+		return this;
+    }
+
+    void Visit(CodeVisitor visitor, VisitMode mode)
+    {
+        visitor.VisitDerefExpression(this, mode);
+    }
+}
+
+// TernaryExpression: conditional (?:) expression. The DataType is taken from
+// the positive branch (both branches are expected to be compatible, normalized
+// by the parser).
+class TernaryExpression : Expression
+{
+    Expression Condition;
+    Expression Positive;
+    Expression Negative;
+
+    TypeSymbol get DataType() => Positive.DataType;
+
+    TernaryExpression constructor(Expression condition, Expression positive, Expression negative)
+    {
+		base();
+        Condition = condition;
+        Positive = positive;
+        Negative = negative;
+		return this;
+    }
+
+    void Visit(CodeVisitor visitor, VisitMode mode)
+    {
+        visitor.VisitTernaryExpression(this, mode);
+    }
+}
+
+// PostFixExpression: used to represent postfix operations where the operation
+// is expressed separately from the operand (e.g. x++ represented as operand
+// x and operation as an assignment expression). The DataType matches the operand.
+class PostFixExpression : Expression
+{
+    Expression Operand;
+    Expression Operation;
+
+    PostFixExpression constructor(Expression operand, Expression operation)
+    {
+		base();
+        this.Operand = operand;
+        this.Operation = operation;
+		return this;
+    }
+
+    TypeSymbol get DataType() => Operand.DataType;
+
+    void Visit(CodeVisitor visitor, VisitMode mode)
+    {
+        visitor.VisitPostFixExpression(this, mode);
+    }
+}

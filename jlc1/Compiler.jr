@@ -1,0 +1,537 @@
+
+// Compiler.cm
+// -----------
+// Main driver for the Jargon compiler. Implements a multi-pass compilation
+// pipeline that reads source files, parses them, performs semantic analysis,
+// transforms the intermediate representation, emits LLVM IR (.ll files),
+// and invokes the compiler/linker (clang-cl) to produce the final
+// executable or DLL.
+
+using jargon;
+
+int system(byte *cmd) external; // Execute a shell command
+
+// Windows CryptoAPI declarations used for computing MD5 checksums of files.
+// These checksums are embedded in debug metadata to help ensure reproducible
+// and debuggable builds (source file checksums in the debug info).
+bool CryptAcquireContextA(void **phProv, byte* pszContainer, byte* pszProvider, uint dwProvType, int dwFlags) external;
+bool CryptCreateHash(void *hProv, uint Algid, ulong hKey, int dwFlags, void** phHash) external;
+bool CryptHashData(void *hHash, byte *pbData, uint dwDataLen, int dwFlags) external;
+bool CryptGetHashParam(void *hHash, uint dwParam, byte *pbData, uint *pdwDataLen, int dwFlags) external;
+void CryptDestroyHash(void *hHash) external;
+void CryptReleaseContext(void *hProv, int dwFlags) external;
+uint GetLastError() external;
+
+// computeMD5 - helper that uses CryptoAPI to compute MD5 of a buffer.
+// Parameters:
+//   data - pointer to bytes to hash
+//   dataLen - number of bytes to hash
+//   digest - output buffer (must be at least 16 bytes) where MD5 digest is written
+// Returns true on success, false on failure. Resources are cleaned up inside.
+bool computeMD5(byte *data, uint dataLen, byte *digest)
+{
+    void* hProv = null; // Crypt provider
+    void* hHash = null; // Hash object
+    uint cbHash = 16;   // MD5 digest length
+    bool success = false;
+
+    // Acquire a cryptographic context. If this fails we abort hashing.
+    // Uses PROV_RSA_FULL (1) and CRYPT_VERIFYCONTEXT-like flags (0xF0000000)
+    if (!CryptAcquireContextA(&hProv, null, null, 1, 0xF0000000))
+	{
+		uint err = GetLastError(); // capture error for potential diagnostics
+        return false;
+	}
+
+    // Create a hash object for MD5 (CALG_MD5 = 0x00008003)
+    if (CryptCreateHash(hProv, 0x00008003, 0, 0, &hHash))
+    {
+		// Feed the data into the hash object
+		if (CryptHashData(hHash, data, dataLen, 0))
+		{
+			// Retrieve the final hash value (HP_HASHVAL = 0x0002)
+			if (CryptGetHashParam(hHash, 0x0002, digest, &cbHash, 0))
+				success = true;
+		}
+	}
+
+    // Destroy hash object and release provider if they were acquired
+    if (hHash) CryptDestroyHash(hHash);
+    if (hProv) CryptReleaseContext(hProv, 0);
+    return success;
+}
+
+// ComputeMD5 - convenience wrapper to return hex string of MD5 digest.
+// Returns a 32-character hex string on success or null on failure.
+string ComputeMD5(void *data, uint dataLen)
+{
+	ubyte digest[16];
+	if (computeMD5((byte*)data, dataLen, digest))
+	{
+		string result = "";
+		for (int i = 0; i < 16; i++)
+			result += string.format("%02x", (uint)digest[i]);
+		return result;
+	}
+	return null;
+}
+
+// ComputeMD5FromFile - read full file and compute its MD5 checksum.
+// If the file doesn't exist or can't be read, returns null.
+string ComputeMD5FromFile(string filePath)
+{
+	if(!file.exists(filePath))
+		return null;
+	file f = file.open(filePath, "rb");
+	if(f == null)
+		return null;
+	// Determine file size
+	f.seek(0, SeekPos.End);
+	long size = f.position;
+	f.seek(0, SeekPos.Start);
+	byte *mem = memory.alloc(size);
+	f.read(mem, size);
+	f.close();
+	return ComputeMD5(mem, size);
+}
+
+// Escape - convert a string to a form safe for inclusion in LLVM IR string
+// constants. Non-printable characters and quotes are escaped as hex sequences
+// (\xx), backslashes are doubled, and printable characters are left intact.
+string Escape(string s)
+{
+	string result = "";
+	for(int i = 0; i < s.length; ++i)
+	{
+		byte c = s[i];
+		// If character is outside normal printable ASCII range or a quote,
+		// emit it as an escaped hex sequence \xx
+		if(c < ' ' || c > 'z' || c == '\"')
+			result += string.format("\\%2.2x", (long)c);
+		// Double-up existing backslashes so LLVM sees a single backslash
+		else if(c == '\\')
+			result = result + new string("\\\\");
+		else
+			result = result + c;
+	}
+	return result;
+}
+
+// Compiler class - drives the compilation pipeline. Implements
+// CompilerErrorListener so it can receive and report errors/warnings.
+class Compiler : CompilerErrorListener
+{
+	CompilerOptions options;           // options/configuration provided by caller
+	array<CompileUnit> units = new array<CompileUnit>(); // compilation units
+	// Error counter used by the compiler to tally errors encountered
+	int errorCount = 0;
+	// Constructor - forwards to base and returns this instance
+	Compiler constructor()
+	{
+		base();
+		return this;
+	}
+
+	// OnError - called by parsers/visitors to report compile errors.
+	// The default behavior is to print the error and increment the counter.
+	void OnError(CompilerError error) 
+	{
+		println(error.toString());
+		if(error.Severity == ErrorSeverity.Error)
+			++errorCount;
+	}
+
+	// SanitizePath - converts filesystem path separators to escaped backslashes
+	// so paths embed properly in LLVM debug metadata and string literals.
+	static string SanitizePath(string path)
+	{
+		string result = "";
+		for(int i = 0; i < path.length; ++i)
+		{
+			byte c = path[i];
+			if(c == '\\' || c == '/')
+			{
+				// Replace a single slash with two backslashes in the emitted string
+				result += "\\\\";
+			}
+			else
+			{
+				result += c;
+			}
+		}
+		return result;
+	}
+
+	// CreateDebugInfo - constructs debug metadata for a compilation unit and its
+	// functions/variables. This metadata allows debuggers to map the generated code
+	// back to source files, line numbers, and variable names/types. The metadata
+	// is built using the DINode classes and attached to the DICompileUnit for the
+	// unit. Each source file gets a DIFile with an MD5 checksum, and each function
+	// gets a DISubprogram with associated DILocalVariable entries for parameters and locals.
+	void CreateDebugInfo(CompileUnit cu, DICompileUnit @unit)
+	{
+		DINode.Reset();
+
+        dictionary<string, DIFile> diFiles = new dictionary<string, DIFile>();
+
+        // Create DIFile for primary source file and compute its checksum
+        DIFile file = new DIFile();
+        file.filename = cu.FileName;				
+        file.directory = SanitizePath(path.getDirectoryName(cu.Path));
+        file.checksumkind = DIChecksumKind.CSK_MD5;
+        file.checksum = ComputeMD5FromFile(cu.Path);
+        diFiles[cu.Path] = file;
+
+		// Create DIFile entries for included/child compilation units
+		for(int j = 0; j < cu.Children.count; ++j)
+        {
+			CompileUnit ch = cu.Children[j];
+            DIFile file2 = new DIFile();
+            file2.filename = ch.FileName;
+            file2.directory = SanitizePath(path.getDirectoryName(ch.Path));
+            file2.checksumkind = DIChecksumKind.CSK_MD5;
+            file2.checksum = ComputeMD5FromFile(ch.Path);
+			diFiles[ch.Path] = file2;
+        }
+
+        // Create the compile unit debug metadata structure
+        unit = new DICompileUnit();
+        unit.file = file;
+        unit.globals = new DINodeList();
+
+		// For each function in the unit, create subprogram and local variable
+		// debug metadata so debuggers can map code to source.
+		for(int j = 0; j < cu.Symbols.count; ++j)
+        {
+			Symbol c = cu.Symbols[j];
+			Function fn = c as Function;
+            if (fn != null)
+            {
+                // Skip external declarations which have no body
+                if ((fn.Flags &SymbolFlags.External) != 0)
+					continue;
+						
+				// Build function signature types for debug metadata
+				DISubroutineType st = new DISubroutineType();
+				if (fn.ReturnType == TypeSymbol.Void)
+					st.types.add(null);
+				else
+					st.types.add(DINode.GetTypeInfo(fn.ReturnType));
+
+				for(int k = 0; k < fn.Parameters.count; ++k)
+				{
+					LocalVariable p = fn.Parameters[k];
+					st.types.add(DINode.GetTypeInfo(p.DataType));
+				}
+
+				// Create the subprogram (function) debug node
+				DISubprogram sp = new DISubprogram();
+				sp.name = fn.Name;
+				// If the function is a class method remove the class prefix
+				if (fn.declaringClass != null)
+					sp.name = sp.name.replace(fn.declaringClass.Name + "__", "");
+				sp.linkageName = fn.Name;
+				// Set scope: either class or file scope
+				if (fn.declaringClass != null)
+					sp.scope = DINode.GetTypeInfo(fn.declaringClass);
+				else
+					sp.scope = (fn.fileName == null ? file : diFiles[fn.fileName]);
+				sp.file = fn.fileName == null ? file : diFiles[fn.fileName];
+				sp.line = fn.line;
+				sp.scopeLine = fn.line + 1;
+				sp.unit = unit;
+				sp.type = st;
+				DINode.FunctionMap[fn] = sp;
+
+				// Create parameter local variable metadata
+				for(int k = 0; k < fn.Parameters.count; ++k)
+				{
+					LocalVariable lv = fn.Parameters[k];
+					DILocalVariable dlv = new DILocalVariable();
+					dlv.name = lv.Name;
+					dlv.scope = sp;
+					dlv.file = file;
+					dlv.line = lv.line;
+					dlv.type = DINode.GetTypeInfo(lv.DataType);
+					dlv.arg = lv.Offset; // argument index
+					DINode.LocalMap[lv] = dlv;
+				}
+
+				// Create local variable metadata entries
+				for(int k = 0; k < fn.Locals.count; ++k)
+				{
+					LocalVariable lv = fn.Locals[k];
+					DILocalVariable dlv = new DILocalVariable();
+					dlv.name = lv.Name;
+					dlv.scope = sp;
+					dlv.file = file;
+					dlv.line = lv.line;
+					dlv.type = DINode.GetTypeInfo(lv.DataType);
+					DINode.LocalMap[lv] = dlv;
+				}						
+            }
+        }
+	}
+
+	// Compile - main entry point to compile input files.
+	// High-level flow:
+	//  - Validate and load input files into CompileUnit objects
+	//  - Perform four parser passes (parser1..parser4) to build and
+	//    validate AST, symbols, and types
+	//  - Transform code (CodeTransform)
+	//  - Generate LLVM IR for each unit (CodeGenVisitor)
+	//  - Optionally emit debug metadata (DINode/DIFiles)
+	//  - Write .ll files, then invoke clang-cl to compile/link the result
+	// Returns 0 on success or a negative/positive error code on failure.
+	int Compile(CompilerOptions options)
+	{
+		this.options = options;
+
+		units.clear();
+
+		// Validate input files and create CompileUnit for each
+		for(int i = 0; i < options.InputFiles.count; ++i)
+		{
+			string fileName = options.InputFiles[i];
+			if(!file.exists(fileName))
+			{
+				OnError(CompilerError.Error(string.format("Could not open file %s", fileName), null, 0, 0));
+				return -100; // file open error
+			}
+			CompileUnit cu = new CompileUnit(fileName);
+			units.add(cu);
+		}
+
+		// Create module object representing the whole compilation output
+		Module module = new Module(path.getFileNameWithoutExtension(options.OutputFileName));
+
+		// PASS 1: initial parsing
+		if(options.Verbose)
+			OnError(CompilerError.Info("Pass 1..."));
+
+		Parser1 parser1 = new Parser1(module, this);
+		parser1.options = options;
+
+		for(int i = 0; i < units.count; ++i)
+		{
+			CompileUnit cu = units[i];
+
+			if(options.Verbose)
+				OnError(CompilerError.Info(cu.Path));
+
+			if(!parser1.ParseUnit(cu, null))
+				return -1; // parse error during pass 1
+		}
+
+		// PASS 2: symbol resolution and additional semantic analysis
+		if(options.Verbose)
+			OnError(CompilerError.Info("Pass 2..."));
+
+		Parser2 parser2 = new Parser2(module, this);
+		parser2.options = options;
+
+		for(int i = 0; i < units.count; ++i)
+		{
+			CompileUnit cu = units[i];
+
+			if(options.Verbose)
+				OnError(CompilerError.Info(cu.Path));
+
+			if(!parser2.ParseUnit(cu, null))
+				return -2; // parse error during pass 2
+		}
+
+		// PASS 3: type checking and validation
+		if(options.Verbose)
+			OnError(CompilerError.Info("Pass 3..."));
+
+		Parser3 parser3 = new Parser3(module, this);
+		parser3.options = options;
+
+		for(int i = 0; i < units.count; ++i)
+		{
+			CompileUnit cu = units[i];
+
+			if(options.Verbose)
+				OnError(CompilerError.Info(cu.Path));
+
+			if(!parser3.ParseUnit(cu, null))
+				return -3; // parse error during pass 3
+		}
+
+		// PASS 4: final pass
+		if(options.Verbose)
+			OnError(CompilerError.Info("Pass 4..."));
+
+		Parser4 parser4 = new Parser4(module, this);
+		parser4.options = options;
+
+		for(int i = 0; i < units.count; ++i)
+		{
+			CompileUnit cu = units[i];
+			
+			if(options.Verbose)
+				OnError(CompilerError.Info(cu.Path));
+
+			if(!parser4.ParseUnit(cu, null))
+				return -4; // parse error during pass 4
+		}
+
+		// Collections used during code generation/linking
+		array<string> usingLibs = new array<string>();
+		array<string> outFiles = new array<string>();
+
+		// Code translation/transform phase - apply transformations to AST/IR
+		if(options.Verbose)
+			OnError(CompilerError.Info("Code translation..."));
+
+		// Translate all units prior to codegen
+		for(int i = 0; i < units.count; ++i)
+		{
+			CompileUnit cu = units[i];
+
+			CodeTransform cx = new CodeTransform();
+			cx.Parser = parser4; // pass final parser context to transformer
+			cx.Unit = cu;
+			cx.errorListener = this;
+
+			for(int j = 0; j < cu.Symbols.count; ++j)
+			{
+				Symbol s = cu.Symbols[j];
+				s.Visit(cx);
+			}
+
+			// Also transform static init code
+			cu.staticInit.Visit(cx);
+		}
+
+		if(errorCount > 0)
+		{
+			return -5; // transform error
+		}
+
+		// Code generation: produce LLVM IR for each compilation unit
+		if(options.Verbose)
+			OnError(CompilerError.Info("Code generation..."));
+
+		for(int i = 0; i < units.count; ++i)
+		{
+			CompileUnit cu = units[i];
+
+			// Output file for this unit (same base name with .ll extension)
+			string outFile = path.getFileNameWithoutExtension(cu.FileName) + new string(".ll");
+
+			if(options.Verbose)
+				OnError(CompilerError.Info(cu.FileName + " -> " + outFile));
+
+			// Collect referenced libraries from using directives in the unit
+			for(int j = 0; j < cu.Usings.count; ++j)
+			{
+				string libName = string.format("%s.lib", cu.Usings[j].Name);
+				if(!usingLibs.contains(libName))
+					usingLibs.add(libName);
+			}
+
+			// Debug info: create DI files and other metadata
+			DICompileUnit unit = null;
+															
+			if (options.DebugInfo)
+            {
+				CreateDebugInfo(cu, unit);
+            }
+		
+			// Set up code generation visitor and generate LLVM IR
+			CodeGenVisitor cg = new CodeGenVisitor();
+			cg.unit = cu;
+			cg.options = options;
+			cg.errorListener = this;
+
+			cg.VisitUnit(cu, module, unit, cu == units.last());
+
+			if(errorCount > 0)
+			{
+				return -6; // codegen error
+			}
+
+			// write to file
+			file.writeAllText(outFile, cg.sb.toString());
+
+			outFiles.add(outFile);
+		}
+
+		// Reset DINode global state after generation
+		DINode.Reset();
+
+		if(options.Verbose)
+			OnError(CompilerError.Info("Building..."));
+
+		// Add any user-specified additional libraries to the link list
+		for(int i = 0; i < options.AdditionalLibraries.count; ++i)
+			usingLibs.add(options.AdditionalLibraries[i]);
+
+		// Build library search path string, supporting environment variable
+		// substitution when a directory starts with '$'
+		string libPaths = "";
+		for(int i = 0; i < options.LibraryDirectories.count; ++i)
+        {
+			string ld = options.LibraryDirectories[i];
+            string ldd = ld;
+            if (ld.startsWith("$")) {
+				string sub = ld.substr(1, ld.length-1);
+                ldd = getenv(sub.c_str());
+                if (ldd == null)
+                    continue;
+            }
+            libPaths += string.format(" /LIBPATH:\"%s\"", ldd);
+        }
+
+		// Compose lists of files and libraries for clang-cl
+		string fileList = "";
+		for(int i = 0; i < outFiles.count; ++i)
+			fileList += outFiles[i] + ' ';
+		string libList = "";
+		for(int i = 0; i < usingLibs.count; ++i)
+			libList += usingLibs[i] + ' ';
+		// If producing a DLL, add /LD flag
+		string sdll = "";
+		if(options.OutputFileName.toLower().endsWith(".dll"))
+			sdll = "/LD";
+		string flags = options.AdditionalFlags;
+
+		// Build final output path and clang-cl command line
+		string outFilePath = options.OutputDirectory;
+		outFilePath += '\\';
+		outFilePath += options.OutputFileName;
+
+		string cmd = string.format("clang-cl.exe -g /MD %s -%s %s %s -o %s /link %s %s", sdll, options.OptimizationLevel, flags, fileList, outFilePath, libList, libPaths);
+
+		OnError(CompilerError.Info(cmd));
+
+		// Run the compiler/linker command
+		int result = system(cmd.c_str());
+
+		// Remove intermediate .ll files unless the user requested to keep them
+		if(!options.KeepIntermediateFiles)
+		{
+			for(int i = 0; i < outFiles.count; ++i)
+				file.deleteFile(outFiles[i]);
+		}
+
+		// clang-cl sometimes returns 3 for certain non-fatal cases; treat 0 and 3 as success
+		if(result != 0 && result != 3) {
+			println(string.format("Compilation error: %d", result));
+			return result;
+		}
+		else
+		{
+			println("\t%s -> %s", module.Name, outFilePath);
+		}
+
+		// Finalize debug nodes and print an object instance count diagnostic
+		DINode.Finalize();
+
+		println("Object Instances: %d", _getObjectInstances());
+
+		return 0; // success
+	}
+}

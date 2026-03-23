@@ -1,0 +1,948 @@
+using jargon;
+
+// Parser4 - the final parsing stage where function bodies are parsed and
+// statements are turned into AST nodes. This stage depends on symbols and
+// layout created in earlier passes (Parser1..Parser3). Parser4 performs
+// statement-level parsing, local variable handling, function body parsing,
+// destructor/finalizer call generation, and registers static initializers
+// created in previous stages.
+class Parser4 : StageParser
+{
+    Parser4 constructor(Module module, CompilerErrorListener errorListener)
+    {
+        base(module, errorListener);
+        return this;
+    }
+
+    // OnEndParse - after all parsing is done, we need to update the static
+    // deinit method to release any static fields that are class references.
+    // We iterate all global variables and for those that are pointers to classes 
+    // we emit a call to 'object__release' in the static deinit function.
+    void OnEndParse()
+    {
+        Function deinit = unit.staticDeInit;
+        Function releaseFn = FindOrImport("object__release");
+
+        for (int i = unit.Symbols.count - 1; i >= 0; --i)
+        {
+            GlobalVariable gv = unit.Symbols[i] as GlobalVariable;
+            if (gv != null && gv.DataType.IsPointer() && gv.DataType.ElementType.IsClass())
+            {
+                FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(releaseFn));
+                fc.Arguments.add(new SymbolExpression(gv));
+                deinit.Body.Statements.add(new ExpressionStatement(fc));
+            }
+        }
+    }
+    
+    // SetStatContext - Utility function to annotate statements with file/line
+    // information. The scanner provides file/line lookup
+    void SetStatContext(Statement s, int line)
+    {
+        s.file = scanner.FileName;
+        s.line = line == -1 ? scanner.Line : line;
+    }
+
+    // ParseClass - now parses method bodies and field initializers. This is
+    // the stage where implementations of methods (function bodies) are
+    // parsed into statements. For fields with initial values, static
+    // initialization is registered with unit.staticInit and instance field
+    // initializers are collected for per-class __init functions.
+    bool ParseClass()
+    {
+        if(scanner.Token != Token.Ident)
+        {
+            Error("Identifier expected");
+            return false;
+        }
+        string name = scanner.TokenString;
+        scanner.NextToken();
+        ClassType cls = module.Find(name) as ClassType;
+        _class = cls;
+        if(scanner.Token == Token.Colon)
+        {
+            // Accept but do not re-resolve base type here; base linking was done
+            // in earlier stages.
+            scanner.NextToken();
+            if(scanner.Token != Token.Ident)
+                return false;
+            scanner.NextToken();
+        }
+        if (scanner.Token == Token.LBrace)
+        {
+            scanner.NextToken();
+            while (scanner.Token != Token.RBrace && scanner.Token != Token.EOF)
+            {
+                bool _static = false;
+                bool _const = false;
+
+                if(IsKeyword("const"))
+                {
+                    _const = true;
+                }
+                else
+                {
+                    if (IsKeyword("virtual")) 
+                    {}
+                    else if (IsKeyword("static"))
+                        _static = true;
+
+                    if (IsKeyword("weak")) 
+                    {}
+                }
+
+                int line = scanner.Line;
+
+                Declaration decl = new Declaration();
+
+                // Parse the member declaration. The call allows parsing of
+                // function types and declarations; bodies will be handled here.
+                if (!ParseDeclaration(decl, true, null, false, true))
+                {
+                    _class = null;
+                    return false;
+                }
+                Function fn = decl.type as Function;
+                if (fn != null)
+                {
+                    // Member is a method: handle getter/setter naming and
+                    // extension methods (static methods with first param 'this').
+                    if (decl.isGetter)
+                    {
+                        fn.Name = string.format("get_%s", decl.name);
+                    }
+                    else if (decl.isSetter)
+                    {
+                        fn.Name = string.format("set_%s", decl.name);
+                    }
+
+                    if(_static
+                        && fn.Parameters.count > 0
+                        && fn.Parameters[0].Name == "this")
+                    {
+                        // Extension method: rename to ext_<name>
+                        fn.Name = string.format("ext_%s", fn.Name);
+                    }
+
+                    // Mangle method name into class scope and attempt to find
+                    // the existing function symbol declared in earlier stages.
+                    fn.Name = string.format("%s__%s", cls.Name, fn.Name);
+
+                    Function existingFn = module.Find(fn.Name) as Function;
+                    //!fn.Parent.RemoveChild(fn);
+                    fn = existingFn;
+                    fn.fileName = fileName;
+                    for(int i = 0; i < fn.Parameters.count; ++i)
+                    {
+                        LocalVariable p = fn.Parameters[i];
+                        p.line = line;
+                    }
+                    // Record the declaring class for the function so later
+                    // stages know which class it belongs to.
+                    fn.declaringClass = cls;
+
+                    // Parse the method body (either brace-delimited or
+                    // double-arrow shorthand). ParseStatementBlock will
+                    // produce a StatementBlock AST for the function body.
+                    if (scanner.Token == Token.LBrace || scanner.Token == Token.DoubleArrow)
+                    {
+                        scope = fn;
+                        function = fn;
+                        fn.Body = ParseStatementBlock();
+                        if (fn.Body == null)
+                        {
+                            _class = null;
+                            function = null;
+                            return false;
+                        }
+                        scope = fn.Parent;
+                        function = null;
+                    }
+                    else
+                    {
+                        Error("Syntax error");
+                        return false;
+                    }
+                }
+                else
+                {
+                    if(_const)
+                    {
+                        while(scanner.Token != Token.EOF)
+                        {
+                            scanner.NextToken();
+                            if(scanner.Token == Token.Semicolon)
+                                break;
+                        }
+                    }
+                    else
+                    {
+                        // Field with optional initializer. For static fields we
+                        // create or find the corresponding GlobalVariable and
+                        // register its initialization into unit.staticInit. For
+                        // instance fields, initializers are stored on the
+                        // FieldSymbol and later applied into the class's __init.
+                        FieldSymbol fs = cls.FindChild(decl.name) as FieldSymbol;
+
+                        if (scanner.Token == Token.Assign)
+                        {
+                            scanner.NextToken();
+                            Expression init = null;
+                            if(scanner.Token == Token.LBrace)
+                            {
+                                init = ParseInitList(fs.DataType);
+                            }
+                            else
+                            {
+                                init = ParseExpression();
+                                // Cast initializer to field type to ensure type
+                                // compatibility. Note: ForceCast may allocate a
+                                // CastExpression, but lifetime management is handled
+                                // elsewhere in the pipeline.
+                                init = ForceCast(init, fs.DataType); // not sure this is necessary (done in static assign?)
+                            }
+                            if(init == null)
+                                return false;
+                            fs.InitialValue = init;
+                        }
+
+                        if((fs.Flags & SymbolFlags.Static) != 0)
+                        {
+                            // Ensure or create the corresponding GlobalVariable that
+                            // holds storage for the static field. Register static
+                            // initialization into the unit.staticInit function if
+                            // an initializer is present.
+                            string gname = string.format("%s__%s", cls.Name, fs.Name);
+                            GlobalVariable gv = module.Find(gname) as GlobalVariable;
+                            if(gv == null) {
+                                gv = new GlobalVariable(module, gname, fs.DataType, null);
+                                unit.AddSymbol(gv);
+                                gv.Unit = unit;
+                            }
+                            Function static_init = unit.staticInit;
+                            if (static_init != null && fs.InitialValue != null)
+                            {
+                                StatementBlock sb = static_init.Body;
+                                SymbolExpression se = new SymbolExpression(gv);
+                                StaticAssign(sb, se, fs.InitialValue, scanner.Line, null);
+                            }
+                        }
+                    }
+
+                    if(!Expect(Token.Semicolon))
+                    {
+                        _class = null;
+                        return false;
+                    }
+                }
+            }
+            _class = null;
+
+            // Update the per-class instance init method so that it assigns
+            // any initializer expressions to instance fields. This populates
+            // the __init body with assignment statements and a return of 'this'.
+            if (!UpdateInstanceInitMethod(cls))
+                return false;
+
+            return Expect(Token.RBrace);
+        }
+        else
+        {
+            return Expect(Token.Semicolon);
+        }
+    }
+
+    // UpdateInstanceInitMethod - populate the class's __init method body
+    // with assignments that set instance field defaults. Each field that
+    // has an InitialValue produces an assignment 'this.field = <init>'.
+    // The method ends by returning 'this'.
+    bool UpdateInstanceInitMethod(ClassType cls)
+    {
+        Function init = module.Find(string.format("%s__init", cls.Name)) as Function;
+        LocalVariable iniThis = init.Parameters[0];
+        
+        for(int i = 0; i < cls.Children.count; ++i)
+        {
+            Symbol c = cls.Children[i];
+            FieldSymbol fs = c as FieldSymbol;
+            if (fs != null && (fs.Flags & SymbolFlags.Static) == 0 && fs.InitialValue != null)
+            {
+                FieldExpression fe = new FieldExpression(new SymbolExpression(iniThis), fs);
+                // Emit assignment into the init method body via StaticAssign,
+                // which handles nested init-lists and aggregate initialization.
+                StaticAssign(init.Body, fe, fs.InitialValue, fs.line, null);
+            }
+        }
+        init.Body.Statements.add(new ReturnStatement(new SymbolExpression(iniThis)));
+
+        return true;
+    }
+
+    // ParseGlobalOrFunction - in Parser4 we parse full function bodies and
+    // also finalize global declarations. For functions, we parse the full
+    // statement block for the function body.
+    bool ParseGlobalOrFunction()
+    {
+        if(IsKeyword("const"))
+        {
+            while (scanner.Token != Token.EOF && scanner.Token != Token.Semicolon)
+                scanner.NextToken();
+            return Expect(Token.Semicolon);
+        }
+
+        int line = scanner.Line;
+
+        if (IsType())
+        {
+            Declaration decl = new Declaration();
+            if (!ParseDeclaration(decl, true, null, false, false))
+            {
+                return false;
+            }
+
+            if (decl.type.IsFunction())
+            {
+                Function f = (Function)decl.type;
+                function = f;
+                f.line = line;
+                f.fileName = fileName;
+                for(int i = 0; i < f.Parameters.count; ++i)
+                {
+                    LocalVariable p = f.Parameters[i];
+                    p.line = line;
+                }
+
+                // Populate function-level metadata (file/line) if needed.
+
+                if (scanner.Token == Token.LBrace || scanner.Token == Token.DoubleArrow)
+                {
+                    // Parse the function body into an AST StatementBlock.
+                    f.Flags = f.Flags & ~SymbolFlags.External;
+                    scope = f;
+                    f.Body = ParseStatementBlock();
+                    if (f.Body == null)
+                    {
+                        return false;
+                    }
+                    scope = module;
+                    function = null;
+                    return true;
+                }
+                else
+                {
+                    // Declaration-only: handle modifiers like 'external' or
+                    // 'verbatim' and consume the trailing semicolon.
+                    if (IsKeyword("external")) {}                        
+                    else if (IsKeyword("verbatim"))
+                        scanner.NextToken();
+
+                    function = null;
+                    return Expect(Token.Semicolon);
+                }
+            }
+            else
+            {
+                // Global variable declarations without detailed initializer
+                // handling (should have been handled in Parser3) are skipped
+                // to the semicolon here.
+                while (scanner.Token != Token.EOF)
+                {
+                    if (scanner.Token == Token.Semicolon)
+                        break;
+                    scanner.NextToken();
+                }
+                return Expect(Token.Semicolon);
+            }
+        }
+        else
+        {
+            Error("Syntax error");
+            return false;
+        }
+    }
+
+    // ParseStatementBlock - parse either a double-arrow single-expression
+    // shorthand or a full brace-delimited block of statements. The function
+    // manages scope creation for local variables and translates declarations
+    // within the block into LocalVariable entries in the current function.
+    StatementBlock ParseStatementBlock()
+    {
+        if(scanner.Token == Token.DoubleArrow)
+        {
+            // Double-arrow shorthand: single expression followed by semicolon
+            scanner.NextToken();
+            Expression expression = ParseExpression();
+            if (expression == null) 
+                return null;
+            if (!Expect(Token.Semicolon))
+                return null;
+            StatementBlock blk = new StatementBlock();
+            Statement rs = null;
+            if(function.ReturnType != TypeSymbol.Void)
+                rs = new ReturnStatement(expression);
+            else {
+                rs = new ExpressionStatement(expression);
+                // Ensure function-call results that return class references are
+                // assigned to a temporary variable so their lifecycle is
+                // managed (released) at scope exit.
+                rs = AssignToTempVarIfFCallReturnsClassRef(rs, blk.Scope);
+            }
+            SetStatContext(rs, -1);
+            blk.Statements.add(rs);
+            return blk;
+        }
+
+        // Full block: consume '{' and create a StatementBlock
+        scanner.NextToken();
+        StatementBlock block = new StatementBlock();
+
+        // Reparent and switch to the new block's scope so local declarations
+        // are added into block.Scope which is the active scope for parsing.
+        block.Scope.Reparent(scope);
+        scope = block.Scope;
+
+        while (scanner.Token != Token.RBrace)
+        {
+            bool _const = false;
+            if(IsKeyword("const"))
+                _const = true;
+
+            if(IsType())
+            {
+                if (_const)
+                {
+                    Declaration decl = new Declaration();
+
+                    if (!ParseDeclaration(decl, true, null, false, true))
+                        return null;
+
+                    if (decl.isByRef)
+                    {
+                        Error("Reference not allowed here");
+                        return null;
+                    }
+
+                    Expression value = null;
+                    if(!Expect(Token.Assign))
+                        return null;
+                    value = ParseExpression();
+                    if(value == null) 
+                        return null; 
+                    if(!(value is ConstantExpression))
+                    {
+                        Error("Constant expression expected");
+                        return null;
+                    }
+                    value = ForceCast(value, decl.type);
+                    ConstantValue cv = new ConstantValue(scope, decl.name, value);
+                    if (!Expect(Token.Semicolon))
+                        return null;
+                }
+                else
+                {
+                    // Ambiguity: a leading type can indicate a declaration or an
+                    // expression starting with a type name followed by a '.'. To
+                    // disambiguate, snapshot scanner state and check the next
+                    // token; if it is a '.', treat the sequence as an expression.
+                    ScannerState state = scanner.GetState();
+                    TypeSymbol t = ParseType();
+                    if (scanner.Token == Token.Period)
+                    {
+                        // It's an expression that begins with a type name (e.g.
+                        // a static member access) - restore state and parse as
+                        // expression instead of a local declaration.
+                        scanner.RestoreState(state);
+                        Expression e = ParseExpression();
+                        if (e == null)
+                            return null;
+                        Statement s = new ExpressionStatement(e);
+                        if (!Expect(Token.Semicolon))
+                            return null;
+                        block.Statements.add(s);
+                    }
+                    else
+                    {
+                        // It's a local declaration: restore state and parse
+                        scanner.RestoreState(state);
+
+                        Declaration decl = new Declaration();
+
+                        if(!ParseDeclaration(decl, true, null, false, false))
+                        {
+                            return null;
+                        }
+
+                        if(decl.isByRef)
+                        {
+                            Error("Reference not allowed here");
+                            return null;
+                        }
+                
+                        string name = decl.name;
+                        TypeSymbol type = decl.type;
+
+                        Expression init = null;
+
+                        if(scanner.Token == Token.Assign)
+                        {
+                            scanner.NextToken();
+                            if(scanner.Token == Token.LBrace)
+                                init = ParseInitList(type);
+                            else
+                                init = ParseExpression();
+                            if(init == null)
+                                return null;
+                        }
+
+                        // Create a LocalVariable entry for the declaration and add
+                        // it to the current function's locals list. The offset is
+                        // negative as locals are typically addressed relative to the
+                        // frame pointer (assembly/codegen detail).
+                        LocalVariable lv = new LocalVariable(scope, name, type, init);
+                        lv.Offset = -(++function.LocalsCount);
+                        lv.line = scanner.Line;
+
+                        function.Locals.add(lv);
+                        if(init != null)
+                        {
+                            // For local initializers, use StaticAssign which handles
+                            // nested initializer lists and aggregate initialization
+                            // strategy; it will emit appropriate assignment
+                            // statements into the current block.
+                            SymbolExpression se = new SymbolExpression(lv);
+                            if(!StaticAssign(block, se, init, scanner.Line, lv))
+                                return null;
+                        }
+                        if(!Expect(Token.Semicolon))
+                            return null;
+                    }
+                }
+            }
+            else
+            {
+                int line = scanner.Line;
+                Statement s = ParseStatement();
+                if (s == null)
+                    return null;
+                // Optionally set file/line context for the statement
+                SetStatContext(s, line);
+                block.Statements.add(s);
+            }
+        }
+
+        block.endLine = scanner.Line;
+
+        // Restore previous scope after finishing the block
+        scope = scope.Parent;
+
+        if(!Expect(Token.RBrace))
+            return null;
+
+        return block;
+    }
+
+    // ParseStatementOrBlock - utility that accepts either a brace-delimited
+    // block or a single statement and returns a Statement instance.
+    StatementBlock ParseStatementOrBlock()
+    {
+        if(scanner.Token == Token.LBrace)
+            return ParseStatementBlock();
+        else
+        {
+            int line = scanner.Line;
+            Statement s = ParseStatement();
+            if(s == null)
+                return null;
+            SetStatContext(s, line);
+            return s;
+        }
+    }
+
+    // ParseStatement - dispatch to specific statement parsers based on the
+    // current token/keyword. If none match, treat the input as an expression
+    // statement. Expression statements that are function calls returning
+    // class references are wrapped to assign the result into a temporary
+    // local so the reference can be released appropriately at scope exit.
+    Statement ParseStatement()
+    {
+        if(IsKeyword("return"))
+        {
+            return ParseReturn();
+        }
+        else if(IsKeyword("if"))
+        {
+            return ParseIf();
+        }
+        else if(IsKeyword("while"))
+        {
+            return ParseWhile();
+        }
+        else if(IsKeyword("do"))
+        {
+            return ParseDo();
+        }
+        else if(IsKeyword("for"))
+        {
+            return ParseFor();
+        }
+        else if(IsKeyword("break"))
+        {
+            return ParseBreak();
+        }
+        else if(IsKeyword("continue"))
+        {
+            return ParseContinue();
+        }
+        else if(IsKeyword("delete"))
+        {
+            return ParseDelete();
+        }
+        else if(scanner.Token == Token.LBrace)
+        {
+            return ParseStatementBlock();
+        }
+        else if(scanner.Token == Token.Semicolon)
+        {
+            scanner.NextToken();
+            return new EmptyStatement();
+        }
+        else
+        {
+            int line = scanner.Line;
+            Statement s = ParseExpressionStatement();
+            if(s == null)
+                return null;
+
+            // Wrap expression statements that are function calls returning
+            // class references in a temporary assignment so that cleanup can
+            // be managed (release) when exiting the scope.
+            s = AssignToTempVarIfFCallReturnsClassRef(s, scope);
+
+            SetStatContext(s, line);
+
+            return s;
+        }
+    }
+
+    // ParseReturn - parse optional return expression and coerce it to the
+    // function return type.
+    Statement ParseReturn()
+    {
+        Expression e = null;
+        if(scanner.Token != Token.Semicolon)
+        {
+            e = ParseExpression();
+            if(e == null)
+                return null;
+            e = ForceCast(e, function.ReturnType);
+        }
+        if(!Expect(Token.Semicolon))
+            return null;
+        return new ReturnStatement(e);
+    }
+
+    Statement ParseExpressionStatement()
+    {
+        Expression exp = ParseExpression();
+        if(exp == null)
+            return null;
+        if(!Expect(Token.Semicolon))
+            return null;
+        return new ExpressionStatement(exp);
+    }
+
+    // ParseIf/ParseWhile/ParseDo - typical control-flow parsing with condition
+    // expression coercion to boolean and nested statement/block parsing.
+    Statement ParseIf()
+    {
+        if(!Expect(Token.LPar))
+            return null;
+        Expression cond = ParseExpression();
+        if(cond == null)
+            return null;
+        cond = ForceCast(cond, TypeSymbol.Bool);
+        if(!Expect(Token.RPar))
+            return null;
+        Statement _then = ParseStatementOrBlock();
+        if(_then == null)
+            return null;
+        Statement _else = null;
+        if(IsKeyword("else"))
+        {
+            _else = ParseStatementOrBlock();
+            if(_else == null)
+                return null;
+        }
+        return new IfStatement(cond, _then, _else);
+    }
+
+    Statement ParseWhile()
+    {
+        if(!Expect(Token.LPar))
+            return null;
+        Expression cond = ParseExpression();
+        if(cond == null)
+            return null;
+        cond = ForceCast(cond, TypeSymbol.Bool);
+        if(!Expect(Token.RPar))
+            return null;
+        Statement body = ParseStatementOrBlock();
+        if(body == null)
+            return null;
+        body = ForceBlock(body);
+        return new WhileStatement(cond, body);
+    }
+
+    Statement ParseDo()
+    {
+        Statement body = ParseStatementOrBlock();
+        if(body == null)
+            return null;
+        body = ForceBlock(body);
+        if(!IsKeyword("while"))
+        {
+            Error("Syntax error");
+            return null;
+        }
+        if(!Expect(Token.LPar))
+            return null;
+        Expression cond = ParseExpression();
+        if(cond == null)
+            return null;
+        cond = ForceCast(cond, TypeSymbol.Bool);
+        if(!Expect(Token.RPar))
+            return null;
+        if(!Expect(Token.Semicolon))
+            return null;
+        return new DoStatement(body, cond);
+    }
+
+    // ForceBlock - ensure a statement is represented as a StatementBlock
+    // (primarly for loop constructs where the body must be a block For
+    // break & continue to release local variable up to the loop itself).
+    StatementBlock ForceBlock(Statement s)
+    {
+        if(s is StatementBlock)
+        {
+            return (StatementBlock)s;
+        }
+        else
+        {
+            StatementBlock block = new StatementBlock();
+            block.Statements.add(s);
+            return block;
+        }
+    }
+
+    // ParseFor - parse the C-style for( init; cond; iter ) body. The init
+    // part may be a declaration or an expression; we create a BlockScope for
+    // variables declared in the for-init and attach it to the created ForStatement.
+    Statement ParseFor()
+    {
+        Expression init = null;
+        Expression cond = null;
+        Expression iter = null;
+        Statement body = null;
+        BlockScope bs = new BlockScope();
+        if(!Expect(Token.LPar))
+            return null;
+        bs.Reparent(scope);
+        scope = bs;
+        if(scanner.Token != Token.Semicolon)
+        {
+            init = ParseDeclarationOrExpression();
+            if(init == null)
+                return null;
+        }
+        if(!Expect(Token.Semicolon))
+            return null;
+        if(scanner.Token != Token.Semicolon)
+        {
+            cond = ParseExpression();
+            if(cond == null)
+                return null;
+            cond = ForceCast(cond, TypeSymbol.Bool);
+        }
+        if(!Expect(Token.Semicolon))
+            return null;
+        if(scanner.Token != Token.RPar)
+        {
+            iter = ParseExpression();
+            if(iter == null)
+                return null;
+        }
+        if(!Expect(Token.RPar))
+            return null;
+        body = ParseStatementOrBlock();
+        if(body == null)
+            return null;
+        scope = bs.Parent;
+        body = ForceBlock(body);
+        ForStatement fs = new ForStatement(init, cond, iter, body);
+        fs.Scope = bs;
+        return fs;
+    }
+
+    Statement ParseBreak()
+    {
+        if (!Expect(Token.Semicolon))
+            return null;
+        return new BreakStatement();
+    }
+
+    Statement ParseContinue()
+    {
+        if (!Expect(Token.Semicolon))
+            return null;
+        return new ContinueStatement();
+    }
+
+    // ParseDelete - handle object deletion. For classes with virtual
+    // destructors, emit a virtual call via the vtable. Then call finalizer
+    // (also virtual) and free memory by calling 'free' if available.
+    Statement ParseDelete()
+    {
+        Expression e = ParseExpression();
+        if (e == null)
+            return null;
+        if (!Expect(Token.Semicolon))
+            return null;
+
+        TypeSymbol dt = e.DataType;
+
+        if (!dt.IsClassRef())
+        {
+            Error("Pointer to class expected");
+            return null;
+        }
+        ClassType cls = (ClassType)dt.ElementType;
+
+        StatementBlock sb = new StatementBlock();
+
+        MethodSymbol dtor = cls.FindChild("destructor") as MethodSymbol;
+        if(dtor == null)
+        {
+            Error("Internal error: No destructor found in class hierarchy");
+        }
+
+        if ((dtor.Flags & SymbolFlags.Virtual) != 0)
+        {
+            // Virtual destructor: look up function pointer in vtable and
+            // call it with the object as argument.
+            // Todo: Use GetInvokationMethod
+            Function dtorfn = dtor.GetFunction();
+            FieldExpression vtf = new FieldExpression(e, cls.FindChild("vtable"));
+            IndexExpression vie = new IndexExpression(vtf, ConstantExpression.FromInt(dtor.VSlot));
+            CastExpression vcs = new CastExpression(vie, dtorfn);
+            FunctionCallExpression fc = new FunctionCallExpression(vcs);
+            fc.line = e.line;
+            fc.Arguments.add(e);
+            sb.Statements.add(new ExpressionStatement(fc));
+        }
+        else
+        {
+            // Destructors are expected to be virtual in this language
+            Error("Internal error: Destructors must be virtual");
+            return null;
+        }
+
+        MethodSymbol finalize = cls.FindChild("finalize") as MethodSymbol;
+
+        if(finalize != null)
+        {
+            if((finalize.Flags & SymbolFlags.Virtual) != 0)
+            {
+                // Todo: Use GetInvokationMethod
+                FieldExpression vtf = new FieldExpression(e, cls.FindChild("vtable"));
+                IndexExpression vie = new IndexExpression(vtf, ConstantExpression.FromInt(finalize.VSlot));
+                CastExpression vcs = new CastExpression(vie, finalize.DataType.GetPointerType());
+                FunctionCallExpression fc = new FunctionCallExpression(vcs);
+                fc.Arguments.add(e);
+                fc.line = e.line;
+                sb.Statements.add(new ExpressionStatement(fc));
+            }
+            else
+            {
+                Error("Finalizer should be virtual");
+            }
+        }
+
+        Function free = module.Find("free") as Function;
+        if (free != null)
+        {
+            FunctionCallExpression fcall = new FunctionCallExpression(new SymbolExpression(free));
+            fcall.Arguments.add(e);
+            sb.Statements.add(new ExpressionStatement(fcall));
+        }
+        else
+        {
+            Error("free() not found");
+        }
+
+        return sb;
+    }
+
+    // AssignToTempVarIfFCallReturnsClassRef - helper that takes an
+    // ExpressionStatement which is a FunctionCall returning a class ref and
+    // rewrites it into an assignment to a temp local variable. This ensures
+    // the returned object reference is stored in a local so that the runtime
+    // can manage lifetimes (release at scope exit) instead of leaking the
+    // value when used as a bare expression statement.
+    Statement AssignToTempVarIfFCallReturnsClassRef(Statement s, Symbol scope)
+    {
+        ExpressionStatement es = s as ExpressionStatement;
+        if(es != null && es.Expression is FunctionCallExpression)
+        {
+            FunctionCallExpression fce = (FunctionCallExpression)es.Expression;
+            if(fce.DataType.IsClassRef())
+            {
+                LocalVariable lv = new LocalVariable(scope, string.format("__temp%d", scanner.Line), fce.DataType, null);
+                lv.Offset = -(++function.LocalsCount);
+                function.Locals.add(lv);
+
+                AssignmentExpression assign = new AssignmentExpression(new SymbolExpression(lv), es.Expression);
+                return new ExpressionStatement(assign);
+            }
+        }
+        return s;
+    }
+
+    // ParseDeclarationOrExpression - within for-init the parser must accept
+    // either a declaration (type name followed by variable and initializer) 
+    // or a plain expression. This helper implements the declaration path: it 
+    // parses the declaration and produces an assignment expression that 
+    // performs the initialization.
+    Expression ParseDeclarationOrExpression()
+    {
+        if (IsType())
+        {
+            Declaration decl = new Declaration();
+
+            if (!ParseDeclaration(decl, true, null, false, false))
+                return null;
+
+            string name = decl.name;
+            TypeSymbol type = decl.type;
+
+            if (!Expect(Token.Assign))
+                return null;
+            Expression init = ParseExpression();
+            if (init == null)
+                return null;
+
+            LocalVariable lv = new LocalVariable(scope, name, type, init);
+            lv.Offset = -(++function.LocalsCount);
+            function.Locals.add(lv);
+            init = ForceCast(init, type);
+            AssignmentExpression a = new AssignmentExpression(
+                    new SymbolExpression(lv),
+                    init);
+            SetContext(a, -1);
+            return a;
+        }
+        else
+        {
+            return ParseExpression();
+        }
+    }
+}

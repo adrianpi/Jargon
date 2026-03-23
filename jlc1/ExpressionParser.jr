@@ -1,0 +1,1170 @@
+using jargon;
+
+// ExpressionParser: implements expression parsing on top of BaseParser.
+// This class contains the recursive-descent parsing routines for primary
+// expressions, selectors (member access / function calls / indexing), unary
+// and binary operators, and full expression precedence handling. It also
+// contains helpers to translate language constructs (e.g. method invocation,
+// "is"/"as" checks, "base" usage, array-to-pointer normalization, etc.)
+class ExpressionParser : BaseParser
+{
+    // GetMethodInvokation - helper that transforms a virtual or non-virtual
+    // method symbol into an expression suitable for invocation.
+    // If the method has no virtual slot (VSlot == -1) or the caller requested
+    // an explicit invocation, we return a direct SymbolExpression referencing
+    // the underlying function object. Otherwise we build an expression which
+    // looks up the function pointer in the object's vtable at the method's
+    // VSlot index and casts it to the appropriate function pointer type.
+    Expression GetMethodInvokation(MethodSymbol ms, Expression _this, bool explicit)
+    {
+        if(ms.VSlot == -1 || explicit)
+        {
+            // Non-virtual or explicit call: call concrete function directly.
+            SymbolExpression se = new SymbolExpression(ms.GetFunction());
+            return se;
+        }
+        else
+        {
+            // Virtual call: translate _this.vtable[VSlot] to a function pointer
+            // and cast it to the method's function pointer type.
+            TypeSymbol ts = _this.DataType;
+            FieldExpression vtf = new FieldExpression(_this, ts.ElementType.FindChild("vtable"));
+            IndexExpression vie = new IndexExpression(vtf, ConstantExpression.FromInt(ms.VSlot));
+            CastExpression vcs = new CastExpression(vie, ms.DataType.GetPointerType());
+            return vcs;
+        }
+    }
+
+    // ParsePrimary - parse the smallest expression units: literals, strings,
+    // parenthesized expressions and casts, identifiers, keywords like null/
+    // sizeof/base/new and simple constructs that do not include selectors
+    // (member access / calls / indexing).
+    Expression ParsePrimary()
+	{
+		// Integer literal
+		if(scanner.Token == Token.Int)
+		{
+			ConstantExpression ce = ConstantExpression.FromInt(scanner.TokenInt);
+			scanner.NextToken();
+			return ce;
+		}
+		// Unsigned integer literal
+		if(scanner.Token == Token.UInt)
+		{
+			ConstantExpression ce = ConstantExpression.FromUInt(scanner.TokenInt);
+			scanner.NextToken();
+			return ce;
+		}
+        // Long literal
+		if(scanner.Token == Token.Long)
+		{
+			ConstantExpression ce = ConstantExpression.FromLong(scanner.TokenLong);
+			scanner.NextToken();
+			return ce;
+		}
+		// Unsigned Long literal
+		if(scanner.Token == Token.ULong)
+		{
+			ConstantExpression ce = ConstantExpression.FromULong(scanner.TokenLong);
+			scanner.NextToken();
+			return ce;
+		}
+		// Boolean literal
+		else if(scanner.Token == Token.Bool)
+		{
+			ConstantExpression ce = ConstantExpression.FromBool(scanner.TokenInt != 0);
+			scanner.NextToken();
+			return ce;
+		}
+		// Byte literal
+		else if(scanner.Token == Token.Byte)
+		{
+			ConstantExpression ce = ConstantExpression.FromByte(scanner.TokenInt);
+			scanner.NextToken();
+			return ce;
+		}
+        // Float literal
+        else if(scanner.Token == Token.Float)
+        {
+            ConstantExpression ce = ConstantExpression.FromFloat(scanner.TokenFloat);
+            scanner.NextToken();
+            return ce;
+        }
+        // Double literal
+        else if(scanner.Token == Token.Double)
+        {
+            ConstantExpression ce = ConstantExpression.FromDouble(scanner.TokenDouble);
+            scanner.NextToken();
+            return ce;
+        }
+        // String literal (concatenates adjacent string tokens)
+        else if(scanner.Token == Token.String)
+        {
+            string str = scanner.TokenString;
+            scanner.NextToken();
+            while (scanner.Token == Token.String)
+            {
+                str += scanner.TokenString;
+                scanner.NextToken();
+            }
+            string key = module.AddString(str);
+            unit.Strings.add(key);
+            return ConstantExpression.FromString(key);
+        }
+        // Parenthesized sub-expression or cast: either (type)expr or (expr)
+        else if(scanner.Token == Token.LPar)
+		{
+			scanner.NextToken();
+
+            if(IsType())
+            {
+                // C-style cast: (Type)expr. Parse the type, then parse a
+                // pointer-op expression and wrap with CastExpression.
+                Declaration decl = new Declaration();
+                if(!ParseDeclaration(decl, false, null, true, true))
+                    return null;
+                if(!Expect(Token.RPar))
+                    return null;
+                Expression e = ParsePointerOp();
+                if(e == null)
+					return null;
+                return new CastExpression(e, decl.type);
+            }
+            else
+            {
+				// Parenthesized sub-expression: (expr)
+				Expression e = ParseExpression();
+				if(e == null)
+					return null;
+                if(!Expect(Token.RPar))
+                    return null;
+				return e;
+            }
+		}
+        // Identifier: resolve symbol in scope/module/class/usings and return a
+        // SymbolExpression (or DerefExpression for by-ref params). If symbol
+        // is a function from another unit, register a dependency.
+        else if(scanner.Token == Token.Ident)
+        {
+            string name = scanner.TokenString;
+            scanner.NextToken();
+            Symbol sc = scope;
+            if(sc == null)
+                sc = module;
+
+            Symbol s = sc.Find(name);
+            if (s == null && _class != null)
+            {
+                // Also check current class members; if property found then
+                // ensure getter/setter functions are available for import.
+                s = _class.FindChild(name);
+                if (s != null && s is PropertySymbol)
+                {
+                    PropertySymbol ps = (PropertySymbol)s;
+                    if (ps.Getter != null)
+                        FindOrImport(ps.Getter.DataType.Name);
+                    if (ps.Setter != null)
+                        FindOrImport(ps.Setter.DataType.Name);
+                }
+            }
+
+            if (s == null)
+            {
+                s = FindOrImport(name);
+            }
+
+            if(s == null)
+            {
+                // Also check symbols from using/imported modules
+                for(int i = 0; i < unit.Usings.count && s == null; ++i)
+                {
+                    ModuleUsing u = unit.Usings[i];
+                    s = u.Module.Find(name);
+                }
+            }
+
+            if(s == null)
+            {
+                Error(string.format("Undefined symbol '%s'", name));
+                return null;
+            }
+
+            // If this is a function coming from a different unit, record the
+            // reference so the compile unit knows about cross-unit dependencies.
+            Function fn = s as Function;
+            if (fn != null && fn.Unit != unit)
+                unit.AddSymbolRef(fn);
+
+            // If the symbol is marked as ByRef, the expression should produce
+            // a dereference of the symbol (i.e. *) so wrap it accordingly.
+            if ((s.Flags & SymbolFlags.ByRef) != 0)
+                return new DerefExpression(new SymbolExpression(s));
+            else
+                return new SymbolExpression(s);
+        }
+        // null literal
+        else if(IsKeyword("null"))
+        {
+            return ConstantExpression.FromNull();
+        }
+        // sizeof(...) - either sizeof(type) or sizeof(expr)
+        else if(IsKeyword("sizeof"))
+        {
+            if(!Expect(Token.LPar))
+                return null;
+            TypeSymbol ts = null;
+            if(IsType())
+            {
+                Declaration decl = new Declaration();
+                if(!ParseDeclaration(decl, false, null, true, true))
+                    return null;
+                ts = decl.type;
+            }
+            else
+            {
+                // sizeof(expression) -> compute size from expression type
+                Expression *e = ParseExpression();
+                if(e == null)
+                    return null;
+                ts = e.DataType;
+            }
+            if(!Expect(Token.RPar))
+                return null;
+            return ConstantExpression.FromInt(ts.Size);
+        }
+        // base - access to base class method in instance methods
+        else if (IsKeyword("base"))
+        {
+            MethodSymbol m = null;
+            // base is only valid inside non-static instance methods of classes
+            if (_class == null || _class.BaseClass == null || (function.Flags & SymbolFlags.Static) != 0)
+            {
+                Error("Invalid use of base");
+                return null;
+            }
+            // Find which method we are currently in by matching function signature
+            for(int i = 0; i < _class.Children.count && m == null; ++i)
+            {
+                Symbol c = _class.Children[i];
+                MethodSymbol ms = c as MethodSymbol;
+                if (ms != null && ms.DataType == function)
+                {
+                    m = ms;
+                }
+            }
+            if (m == null)
+            {
+                Error("Invalid use of base");
+                return null;
+            }
+            // Locate the overridden method in the base class
+            m = _class.BaseClass.FindChild(m.Name) as MethodSymbol;
+            if (m == null)
+            {
+                Error("Invalid use of base");
+                return null;
+            }
+            // Build a FieldExpression referencing 'this.method' but mark it
+            // explicit so that the call infrastructure does not try to
+            // perform a vtable lookup for it.
+            FieldExpression fe = new FieldExpression(new SymbolExpression(function.FindChild("this")), m);
+            fe.Explicit = true;
+
+            if (_class.BaseClass.Parent != module)
+            {
+                // Ensure method declaration is imported if base class is in
+                // another module.
+                Function temp = FindOrImport(m.DataType.Name);
+            }
+
+            return fe;
+        }
+        // new ClassType(...) - object construction via factory "xxx__new" convention
+        else if(IsKeyword("new"))
+        {
+            ClassType cls = ParseClassType();
+            if (cls == null)
+            {
+                Error("Class expected");
+                return null;
+            }
+            array<Expression> args = new array<Expression>();
+            if (!Expect(Token.LPar))
+                return null;
+            // Look up constructor/factory function by naming convention
+            Function ctor = FindOrImport(string.format("%s__new", cls.Name));
+            int idx = 0;
+            while (scanner.Token != Token.RPar)
+            {
+                Expression e = ParseExpression();
+                if (e == null)
+                    return null;
+                if (idx < ctor.Parameters.count) {
+                    LocalVariable param = ctor.Parameters[idx];
+                    TypeSymbol pdt = param.DataType;
+                    // Apply implicit conversions / casts to match parameter type
+                    e = ForceCast(e, pdt);
+                }
+                args.add(e);
+                if (scanner.Token != Token.RPar)
+                {
+                    if(!Expect(Token.Comma))
+                        return null;
+                }
+                ++idx;
+            }
+            if (!Expect(Token.RPar))
+                return null;
+            FunctionCallExpression ctorCall = new FunctionCallExpression(new SymbolExpression(ctor));
+            SetContext(ctorCall, -1);
+            //Pass arguments to the function call expression
+            for(int i = 0; i < args.count; ++i)
+                ctorCall.Arguments.add(args[i]);
+            return ctorCall;
+        }
+		else
+		{
+			Error("Syntax Error");
+			return null;
+		}
+	}
+
+    void SetContext(Expression e, int line)
+    {
+        e.file = scanner.FileName;
+        e.line = line == -1 ? scanner.Line : line;
+    }
+
+    // ParseSelector - extend a primary expression with selectors. This handles
+    // function call syntax ( ... ), member access ( .name ), and indexing [i].
+    // After a selector is applied, loop to allow chains like obj.f().g(x)[i].
+    Expression ParseSelector()
+    {
+        Expression left = ParsePrimary();
+        if(left == null)
+            return null;
+        SetContext(left, -1);
+
+        while(scanner.Token == Token.LPar || scanner.Token == Token.Period || scanner.Token == Token.LBracket)
+        {
+            if(scanner.Token == Token.LPar)
+            {
+                // Function call: determine the function type for 'left'. The
+                // type might be Function or a pointer-to-Function.
+                Function fn = null;
+		        TypeSymbol cdt = left.DataType;
+		        if(cdt.IsFunction())
+				    fn = (Function)cdt;
+		        else if(cdt.IsPointer())
+		        {
+				if(cdt.ElementType.IsFunction())
+					fn = (Function)cdt.ElementType;
+		        }
+		        if (fn == null)
+                {
+                    Error("Could not find function type");
+                    return;
+                }
+
+                // Record cross-unit dependency if function is defined elsewhere
+                if(fn.Unit != unit)
+                    unit.AddSymbolRef(fn);
+
+                // Convert implicit references to class members into explicit
+                // this-based accesses when necessary.
+                AutoThis(left);
+
+                scanner.NextToken();
+                array<Expression> args = new array<Expression>();
+                int index = 0;
+                int line = scanner.Line;
+                // If left is an instance method (FieldExpression referencing a
+                // MethodSymbol) we need to turn it into an invokable function
+                // expression (either direct function or vtable lookup) and
+                // insert the instance as the first argument.
+                FieldExpression fe = left as FieldExpression;
+                if(fe != null && fe.Field is MethodSymbol)
+                {
+                    MethodSymbol ms = (MethodSymbol)fe.Field;
+                                        
+                    left = GetMethodInvokation(ms, fe.Expression, fe.Explicit);
+
+                    // push 'this' as first argument for instance methods
+                    args.add(fe.Expression);
+                    ++index;
+                }
+                else if(left is SymbolExpression)
+                {
+                    // Static method symbol: replace the MethodSymbol with the
+                    // underlying Function so the call site refers to the
+                    // concrete function symbol.
+                    SymbolExpression se = (SymbolExpression)left;
+                    MethodSymbol ms = se.Symbol as MethodSymbol;
+                    if(ms != null && ms.Flags & SymbolFlags.Static)
+                    {
+                        // Replace the method symbol with its backing function
+                        Function fn = ms.GetFunction();
+                        se.Symbol = fn;
+                    }
+                }
+
+                // Parse call arguments and apply conversions by parameter
+                // (including by-ref/address-of and variadic promotions).
+                while(scanner.Token != Token.RPar && scanner.Token != Token.EOF)
+                {
+                    Expression e = ParseExpression();
+                    if(e == null)
+                        return null;
+
+                    if (index < fn.Parameters.count)
+                    {
+                        LocalVariable param = fn.Parameters[index];
+                        if ((param.Flags & SymbolFlags.ByRef) != 0)
+                            e = new AddressOfExpression(e);
+                        TypeSymbol parDt = param.DataType;
+                        e = ForceCast(e, parDt);
+                    }
+                    else if((fn.Flags & SymbolFlags.Variadic) != 0)
+                    {
+                        // Apply default promotions for variadic arguments
+                        if(e.DataType == TypeSymbol.Float)
+                            e = ForceCast(e, TypeSymbol.Double);
+                        else if(e.DataType == TypeSymbol.Bool)
+                            e = ForceCast(e, TypeSymbol.Int);
+                        else if(e.DataType.IsInteger() && e.DataType.Size < 4)
+                        {
+                            if(e.DataType.IsUnsigned())
+                                e = ForceCast(e, TypeSymbol.UInt);
+                            else
+                                e = ForceCast(e, TypeSymbol.Int);
+                        }
+                        else if (e.DataType.Name == "string*")
+                        {
+                            // Convert language string* to C string for varargs
+                            Function c_strFn = FindOrImport("string__c_str");
+                            FunctionCallExpression c_strCall = new FunctionCallExpression(new SymbolExpression(c_strFn));
+                            c_strCall.Arguments.add(e);
+                            c_strCall.line = e.line;
+                            c_strCall.file = e.file;
+                            e = c_strCall;
+                        }
+                    }
+
+                    args.add(e);
+                    if(scanner.Token != Token.RPar)
+                    {
+                        if(!Expect(Token.Comma))
+                            return null;
+                    }
+                    index++;
+                }
+                if(!Expect(Token.RPar))
+                {
+                    return null;
+                }
+                // Construct the function call expression from the callee 'left'
+                FunctionCallExpression fcall = new FunctionCallExpression(left);
+                for(int i = 0; i < args.count; ++i)
+                    fcall.Arguments.add(args[i]);
+                SetContext(fcall, line);
+                left = fcall;                    
+            }
+            else if(scanner.Token == Token.Period)
+            {
+                // Member access: <left>.identifier
+                scanner.NextToken();
+                if (scanner.Token != Token.Ident)
+                {
+                    Error("Identifier expected");
+                    return null;
+                }
+                string name = scanner.TokenString;
+                scanner.NextToken();
+                TypeSymbol stype = left.DataType;
+                SymbolExpression se = left as SymbolExpression;
+                if (se != null)
+                {
+                    ClassType ct = se.Symbol as ClassType;
+                    if(ct != null)
+                        stype = ct;
+                }
+                if(stype.IsPointer())
+                    stype = stype.ElementType;
+                Symbol field = stype.FindChild(name);
+                if(field == null)
+                {
+                    // Try extension classes (ext_TypeName) for external members
+                    string extName = string.format("ext_%s", TypeToFName(stype));
+                    ClassType extCls = FindType(extName) as ClassType;
+                    if(extCls != null)
+                        field = extCls.FindChild(name);
+                    if(field == null)
+                    {
+                        Error(string.format("Invalid field '%s'", name));
+                        return null;
+                    }
+                }
+                string file = left.file;
+                int line = left.line;
+                // If the member is static or we accessed it on a ClassType symbol
+                // treat it as a static access and rewrite appropriately.
+                if((field.Flags & SymbolFlags.Static) != 0 || (se != null && se.Symbol is ClassType))
+                {
+                    if (field is MethodSymbol)
+                    {
+                        // Static method: reference the method's function type
+                        MethodSymbol ms = (MethodSymbol)field;
+                        FindOrImport(ms.DataType.Name);
+                        left = new SymbolExpression(ms.DataType);
+                        left.file = file;
+                        left.line = line;
+                    }
+                    else if(field is FieldSymbol)
+                    {
+                        // Static field: ensure a module-global variable exists
+                        string gname = string.format("%s__%s", field.Parent.Name, field.Name);
+                        GlobalVariable gv = module.Find(gname) as GlobalVariable;
+                        if(gv == null) {
+                            gv = new GlobalVariable(module, gname, field.DataType, null);
+                            gv.Unit = field.Unit;
+                            if((field.Flags & SymbolFlags.External) != 0)
+                                gv.Flags += SymbolFlags.External;
+                            if(field.Unit != null) // imported symbols will not have a unit reference
+                                field.Unit.AddSymbol(gv);                            
+                        }
+                        if(gv.Unit != unit)
+                            unit.AddSymbolRef(gv);
+                        left = new SymbolExpression(gv);
+                        left.file = file;
+                        left.line = line;
+                    }
+                    else if(field is PropertySymbol)
+                    {
+                        // Static property: treat as FieldExpression so getter/setter
+                        // dispatch will be generated during later passes
+                        PropertySymbol ps = (PropertySymbol)field;
+                        if(ps.Getter != null)
+                            FindOrImport(ps.Getter.DataType.Name);
+                        if(ps.Setter != null)
+                            FindOrImport(ps.Setter.DataType.Name);
+
+                        left = new FieldExpression(left, field);
+                        left.file = file;
+                        left.line = line;
+                    }
+                    else if(field is ConstantValue)
+                    {
+                        ConstantValue cv = (ConstantValue)field;
+                        left = cv.Value;
+                    }
+                }
+                else
+                {
+                    // Instance member: convert implicit member references into
+                    // explicit accesses on 'this' when needed and record deps
+                    AutoThis(left);
+
+                    if((stype.IsStruct() || stype.IsClass()) && stype.Unit != unit)
+                        unit.AddSymbolRef(stype);
+
+                    left = new FieldExpression(left, field);
+                    SetContext(left, line);
+                }
+            }
+            else if(scanner.Token == Token.LBracket)
+            {
+                // Indexing: left[index]
+                scanner.NextToken();
+                Expression index = ParseExpression();
+                if(index == null)
+                    return null;
+                if(!Expect(Token.RBracket))
+                    return null;
+                SetContext(index, -1);
+                AutoThis(left);
+                AutoThis(index);
+                left = new IndexExpression(left, index);
+                SetContext(left, -1);
+            }
+        }
+
+        // Post-selector type tests: `is` and `as` operators for class
+        // hierarchy checks and dynamic casts.
+        if(IsKeyword("is"))
+        {
+            TypeSymbol ldt = left.DataType;
+            if(!ldt.IsClassRef())
+            {
+                Error("Invalid use of 'is'");
+                return null;
+            }
+            ClassType cls = ParseClassType();
+            if (cls == null)
+            {
+                Error("Class expected");
+                return null;
+            }
+            Function fn = FindOrImport("_isClassOf");
+            FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(fn));
+            fc.Arguments.add(left);
+            string cname = module.AddString(cls.Name);
+            unit.Strings.add(cname);
+            fc.Arguments.add(ConstantExpression.FromString(cname));
+            left = fc;
+            SetContext(left, -1);
+        }
+        else if(IsKeyword("as"))
+        {
+            TypeSymbol ldt = left.DataType;
+            if(!ldt.IsClassRef())
+            {
+                Error("Invalid use of 'as'");
+                return null;
+            }
+            ClassType cls = ParseClassType();
+            if (cls == null)
+            {
+                Error("Class expected");
+                return null;
+            }
+            Function fn = FindOrImport("_dynamicCast");
+            FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(fn));
+            fc.Arguments.add(left);
+            string cname = module.AddString(cls.Name);
+            unit.Strings.add(cname);
+            fc.Arguments.add(ConstantExpression.FromString(cname));
+            // The dynamic cast returns an object pointer which we then cast to
+            // the requested class pointer type.
+            left = new CastExpression(fc, cls.GetPointerType());
+            SetContext(left, -1);
+        }
+
+        return left;
+    }
+
+    // ParseIncDec - handle prefix and postfix ++/-- operators. These are
+    // expressed using binary arithmetic and assignment under the hood, and
+    // operator overrides are consulted if present.
+    Expression ParseIncDec()
+    {
+        if (scanner.Token == Token.Inc || scanner.Token == Token.Dec)
+        {
+            // Prefix form: ++x or --x
+            Token tkn = scanner.Token;
+            Token tkn2 = tkn == Token.Inc ? Token.Add : Token.Sub;
+            BinOp op = tkn == Token.Inc ? BinOp.Add : BinOp.Sub;
+            scanner.NextToken();
+            Expression e = ParseSelector();
+            if (e == null)
+                return null;
+            AutoThis(e);
+            Expression one = ConstantExpression.FromInt(1);
+            TypeSymbol dt = e.DataType;
+            if (!dt.IsPointer() && !dt.IsStruct())
+                one = new CastExpression(one, dt);
+            Expression binExp = e;
+            if(!CheckBinaryOperatorOverride(tkn2, binExp, one))
+                binExp = new BinaryExpression(op, e, one);
+            Expression asgn = new AssignmentExpression(e, binExp);
+            SetContext(asgn, -1);
+            return asgn;
+        }
+        else
+        {
+            // Parse the base expression and then check for postfix ++/--
+            Expression e = ParseSelector();
+            if (e == null)
+                return null;
+            AutoThis(e);
+            if (scanner.Token == Token.Inc || scanner.Token == Token.Dec)
+            {
+                Token tkn = scanner.Token;
+                Token tkn2 = tkn == Token.Inc ? Token.Add : Token.Sub;
+                BinOp op = tkn == Token.Inc ? BinOp.Add : BinOp.Sub;
+                scanner.NextToken();
+                Expression one = ConstantExpression.FromInt(1);
+                TypeSymbol dt = e.DataType;
+                if (!dt.IsPointer() && !dt.IsStruct())
+                    one = new CastExpression(one, dt);
+                Expression binExp = e;
+                if(!CheckBinaryOperatorOverride(tkn2, binExp, one))
+                    binExp = new BinaryExpression(op, e, one);
+                Expression asgn = new AssignmentExpression(e, binExp);
+                SetContext(asgn, -1);
+                // Postfix expression yields the original value but performs the
+                // assignment as a side-effect; represent this with a PostFixExpression
+                Expression pf = new PostFixExpression(e, asgn);
+                SetContext(pf, -1);
+                return pf;
+            }
+            else
+            {
+                return e;
+            }
+        }
+    }
+
+    // ParsePointerOp - handle pointer/dereference '*' and address-of '&'
+    // operators which have higher precedence than most binary operators.
+    Expression ParsePointerOp()
+    {
+        if(scanner.Token == Token.Mul)
+        {
+            // Pointer dereference: *expr
+            scanner.NextToken();
+            Expression e = ParsePointerOp();
+            if (e == null)
+                return null;
+            AutoThis(e);
+            return new DerefExpression(e);
+        }
+        else if(scanner.Token == Token.And)
+        {
+            // Address-of: &expr
+            scanner.NextToken();
+            Expression e2 = ParseSelector();
+            if (e2 == null)
+                return null;
+            if(!(e2 is SymbolExpression || e2 is FieldExpression || e2 is IndexExpression))
+            {
+                Error("Cannot get address of expression");
+                return null;
+            }
+            AutoThis(e2);
+            return new AddressOfExpression(e2);
+        }
+        else
+        {
+            return ParseIncDec();
+        }
+    }
+
+    // ParseUnary - unary operators with appropriate operator-overload hooks.
+    Expression ParseUnary()
+    {
+        if(scanner.Token == Token.Sub)
+        {
+            scanner.NextToken();
+            Expression e = ParsePointerOp();
+            if(e == null)
+                return null;
+            SetContext(e, -1);
+            if(CheckUnaryOperatorOverride(Token.Sub, e))
+                return e;
+            else 
+                return new UnaryExpression(UnaryOp.Neg, e);
+        }
+        else if (scanner.Token == Token.Add)
+        {
+            scanner.NextToken();
+            return ParseUnary();
+        }
+        else if(scanner.Token == Token.Not)
+        {
+            scanner.NextToken();
+            Expression e = ParseUnary();
+            if(e == null)
+                return null;
+            SetContext(e, -1);
+            if(CheckUnaryOperatorOverride(Token.Not, e))
+                return e;
+            else 
+                return new UnaryExpression(UnaryOp.Not, e);
+        }
+        else if(scanner.Token == Token.LNot)
+        {
+            scanner.NextToken();
+            Expression e = ParseUnary();
+            if(e == null)
+                return null;
+            SetContext(e, -1);
+            // Logical-not requires a boolean operand
+            e = ForceCast(e, TypeSymbol.Bool);
+            if(CheckUnaryOperatorOverride(Token.LNot, e))
+                return e;
+            else                 
+                return new UnaryExpression(UnaryOp.LNot, e);
+        }
+        else
+        {
+            return ParsePointerOp();
+        }
+    }
+
+	// Multiplicative operators: *, /, %
+	Expression ParseMulDiv()
+	{
+		Expression left = ParseUnary();
+		if(left == null)
+			return null;
+        SetContext(left, -1);
+		while(scanner.Token == Token.Mul || scanner.Token == Token.Div || scanner.Token == Token.Mod)
+		{
+            Token tkn = scanner.Token;
+			BinOp op = tkn == Token.Mul ? BinOp.Mul : (tkn == Token.Div ? BinOp.Div : BinOp.Mod);
+			scanner.NextToken();
+			Expression right = ParseUnary();
+			if(right == null)
+				return null;
+            // Attempt to coerce types to a common type
+            AutoCast(left, right);
+            SetContext(right, -1);
+            if(!CheckBinaryOperatorOverride(tkn, left, right))
+				left = new BinaryExpression(op, left, right);
+            SetContext(left, -1);
+            SetContext(right, -1);
+		}
+		return left;
+	}
+
+	// Additive operators: +, - with pointer arithmetic and operator-overload
+	Expression ParseAddSub()
+	{
+		Expression left = ParseMulDiv();
+		if(left == null)
+			return null;
+        SetContext(left, -1);
+		while(scanner.Token == Token.Add || scanner.Token == Token.Sub)
+		{
+            Token tkn = scanner.Token;
+			BinOp op = tkn == Token.Add ? BinOp.Add : BinOp.Sub;
+			scanner.NextToken();
+			Expression right = ParseMulDiv();
+			if(right == null)
+				return null;
+
+            bool skip = false;
+            if(!CheckBinaryOperatorOverride(tkn, left, right))
+            {
+                TypeSymbol ldt = left.DataType;
+                TypeSymbol rdt = right.DataType;
+                if (ldt.IsPointer() && !CanConstructFrom(ldt, rdt) && !CanConstructFrom(rdt, ldt))
+                {
+                    // Pointer arithmetic: allow pointer +/- integer or pointer - pointer
+                    if (!(rdt.IsInteger() && (op == BinOp.Add || op == BinOp.Sub))
+                        && !(rdt.IsPointer() && ldt.ElementType == rdt.ElementType && op == BinOp.Sub))
+                    {
+                        Error("Invalid Operation");
+                        return null;
+                    }
+                }
+                else
+                {
+                    // Non-pointer operations: coerce types and re-check operator overloads
+                    AutoCast(left, right);
+                    if(CanConstructFrom(ldt, rdt) || CanConstructFrom(rdt, ldt))
+                    {
+                        if(CheckBinaryOperatorOverride(tkn, left, right)) // check again
+                            skip = true;
+                    }
+                }
+                SetContext(right, -1);
+                if(!skip)
+                    left = new BinaryExpression(op, left, right);
+                SetContext(left, -1);
+            }
+		}
+		return left;
+	}
+
+    // Shift operators << and >>
+    Expression ParseShift()
+    {
+        Expression left = ParseAddSub();
+		if(left == null)
+			return null;
+        SetContext(left, -1);
+		if(scanner.Token == Token.Shl || scanner.Token == Token.Shr)
+		{
+            Token tkn = scanner.Token;
+            BinOp op = tkn == Token.Shl ? BinOp.Shl : BinOp.Shr;
+			scanner.NextToken();
+			Expression right = ParseAddSub();
+			if(right == null)
+				return null;
+            AutoCast(left, right);
+            if(!CheckBinaryOperatorOverride(tkn, left, right))
+				left = new BinaryExpression(op, left, right);
+            SetContext(left, -1);
+            SetContext(right, -1);
+		}
+		return left;
+    }
+
+    // Logic operators &, |, ^ (And, Or, Xor)
+	Expression ParseAnd()
+	{
+		Expression left = ParseShift();
+		if(left == null)
+			return null;
+        SetContext(left, -1);
+		while(scanner.Token == Token.And)
+		{
+			scanner.NextToken();
+			Expression right = ParseShift();
+			if(right == null)
+				return null;
+            AutoCast(left, right);
+            if(!CheckBinaryOperatorOverride(Token.And, left, right))
+				left = new BinaryExpression(BinOp.And, left, right);
+            SetContext(left, -1);
+            SetContext(right, -1);
+		}
+		return left;
+	}
+
+	Expression ParseXor()
+	{
+		Expression left = ParseAnd();
+		if(left == null)
+			return null;
+        SetContext(left, -1);
+		while(scanner.Token == Token.Xor)
+		{
+			scanner.NextToken();
+			Expression right = ParseAnd();
+			if(right == null)
+				return null;
+            AutoCast(left, right);
+            if(!CheckBinaryOperatorOverride(Token.Xor, left, right))
+				left = new BinaryExpression(BinOp.Xor, left, right);
+            SetContext(left, -1);
+            SetContext(right, -1);
+		}
+		return left;
+	}
+
+	Expression ParseOr()
+	{
+		Expression left = ParseXor();
+		if(left == null)
+			return null;
+        SetContext(left, -1);
+		while(scanner.Token == Token.Or)
+		{
+			scanner.NextToken();
+			Expression right = ParseXor();
+			if(right == null)
+				return null;
+            AutoCast(left, right);
+            if(!CheckBinaryOperatorOverride(Token.Or, left, right))
+				left = new BinaryExpression(BinOp.Or, left, right);
+            SetContext(left, -1);
+            SetContext(right, -1);
+		}
+		return left;
+	}
+
+    // min/max operators are lowered to ternary expressions using < or >
+    Expression ParseMinMax()
+    {
+        Expression left = ParseOr();
+		if(left == null)
+			return null;
+        SetContext(left, -1);
+		while(scanner.Token == Token.Min || scanner.Token == Token.Max)
+		{
+            Token tkn = scanner.Token;            
+            BinOp op = tkn == Token.Min ? BinOp.Less : BinOp.Greater;
+			scanner.NextToken();
+			Expression right = ParseOr();
+			if(right == null)
+				return null;
+            AutoCast(left, right);
+            if(!CheckBinaryOperatorOverride(tkn, left, right))
+            {
+				Expression cond = new BinaryExpression(op, left, right);
+                left = new TernaryExpression(cond, left, right);
+            }
+            SetContext(left, -1);
+            SetContext(right, -1);
+		}
+		return left;
+    }
+
+    // relational operators: ==, !=, <, >, <=, >= (keep tokens and binops in-sync)
+	Expression ParseRelation()
+	{
+		Expression left = ParseMinMax();
+		if(left == null)
+			return null;
+        SetContext(left, -1);
+		if(scanner.Token >= Token.Equal && scanner.Token <= Token.GEqual)
+		{
+            Token tkn = scanner.Token;
+			BinOp op = BinOp.Equal + (tkn - Token.Equal);
+			scanner.NextToken();
+			Expression right = ParseMinMax();
+			if(right == null)
+				return null;
+            AutoCast(left, right);
+            if(!CheckBinaryOperatorOverride(tkn, left, right))
+				left = new BinaryExpression(op, left, right);
+            SetContext(left, -1);
+            SetContext(right, -1);
+		}
+		return left;
+	}
+
+    // Logic And and Or (&& and ||) with boolean coercion
+	Expression ParseLogicAnd()
+	{
+		Expression left = ParseRelation();
+		if(left == null)
+			return null;
+        SetContext(left, -1);
+		while(scanner.Token == Token.LAnd)
+		{
+			scanner.NextToken();
+			Expression right = ParseRelation();
+			if(right == null)
+				return null;
+            left = ForceCast(left, TypeSymbol.Bool);
+            right = ForceCast(right, TypeSymbol.Bool);
+			left = new BinaryExpression(BinOp.LAnd, left, right);
+            SetContext(left, -1);
+            SetContext(right, -1);
+		}
+		return left;
+	}	
+
+	Expression ParseLogicOr()
+	{
+		Expression left = ParseLogicAnd();
+		if(left == null)
+			return null;
+        SetContext(left, -1);
+		while(scanner.Token == Token.LOr)
+		{
+			scanner.NextToken();
+			Expression right = ParseLogicAnd();
+			if(right == null)
+				return null;
+            left = ForceCast(left, TypeSymbol.Bool);
+            right = ForceCast(right, TypeSymbol.Bool);
+			left = new BinaryExpression(BinOp.LOr, left, right);
+            SetContext(left, -1);
+            SetContext(right, -1);
+		}
+		return left;
+	}
+
+    // Ternary ?: operator with proper casting/coercion of branches
+    Expression ParseTernary()
+    {
+        Expression left = ParseLogicOr();
+        if (left == null)
+            return null;
+        SetContext(left, -1);
+        if (scanner.Token == Token.Question)
+        {
+            scanner.NextToken();
+            Expression positive = ParseLogicOr();
+            if (!Expect(Token.Colon))
+                return null;
+            Expression negative = ParseLogicOr();
+            left = ForceCast(left, TypeSymbol.Bool);
+            AutoCast(positive, negative);
+            SetContext(left, -1);
+            SetContext(positive, -1);
+            SetContext(negative, -1);
+            left = new TernaryExpression(left, positive, negative);
+            SetContext(left, -1);
+        }
+        return left;
+    }
+
+    //TODO: Move to Expression
+    bool IsFunctionCall(Expression e)
+    {
+        Expression f = e;
+        while (f is CastExpression)
+		{
+			CastExpression ce = (CastExpression)f;
+            f = ce.Expression;
+		}
+        return f is FunctionCallExpression;
+    }
+
+    // Assignment expressions (including compound assignment) - assignment
+    // is right-associative so ParseAssignment calls itself to properly parse
+    // chains like a = b = c.
+    Expression ParseAssignment()
+    {
+        Expression left = ParseTernary();
+        if(left == null)
+            return null;
+        SetContext(left, -1);
+        if(scanner.Token == Token.Assign)
+        {
+            scanner.NextToken();
+
+            SymbolExpression cs = left as SymbolExpression;
+            if(cs != null && cs.Symbol is ConstantValue)
+            {
+                Error("Invalid assignment. Not an l-value");
+                return null;
+            }
+
+            Expression right = ParseAssignment();
+            if(right == null)
+                return null;
+
+            SymbolExpression se = left as SymbolExpression;
+            if(se != null)
+            {
+                LocalVariable lv = se.Symbol as LocalVariable;
+                if(lv != null && lv.Offset >= 0 && lv.DataType.IsClassRef() && (lv.Flags & SymbolFlags.ByRef) == 0 /*&& IsFunctionCall(right)*/)
+                {
+                    // Assigning to a classref parameter would cause a leak.
+                    Error("Invalid assignment. By-val parameters cannot take ownership.");
+                    return null;
+                }
+            }
+
+            right = ForceCast(right, left.DataType);
+            SetContext(right, -1);
+            left = new AssignmentExpression(left, right);
+            SetContext(left, -1);
+        }
+        else if (scanner.Token >= Token.AssignAdd && scanner.Token <= Token.AssignShr)
+        {
+            // Handle compound assignments like +=, -=, *=, etc.
+            Token tkn = scanner.Token;
+            BinOp op = BinOp.Add + (tkn - Token.AssignAdd);
+            Token tkn2 = Token.Add + (tkn - Token.AssignAdd);
+            scanner.NextToken();
+
+            SymbolExpression cs = left as SymbolExpression;
+            if(cs != null && cs.Symbol is ConstantValue)
+            {
+                Error("Invalid assignment. Not an l-value");
+                return null;
+            }
+
+            Expression right = ParseTernary();
+            if (right == null)
+                return null;
+            TypeSymbol lt = left.DataType;
+            TypeSymbol rt = right.DataType;
+            if (!(lt.IsPointer() && rt.IsInteger()))
+                right = ForceCast(right, lt);
+            SetContext(left, -1);
+            SetContext(right, -1);
+            Expression binExp = null;
+            Expression origLeft = left;
+            if(CheckBinaryOperatorOverride(tkn2, left, right))
+                binExp = left;
+            else
+                binExp = new BinaryExpression(op, left, right);
+            left = new AssignmentExpression(origLeft, binExp);
+            SetContext(left, -1);
+        }
+        return left;
+    }
+
+	Expression ParseExpression()
+	{
+		return ParseAssignment();
+	}
+}

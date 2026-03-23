@@ -1,0 +1,765 @@
+using jargon;
+
+// Symbol.cm
+// Contains core symbol and type model used by the compiler: Symbols, TypeSymbols,
+// primitive types, arrays/pointers, functions, classes, fields, properties, and
+// associated helper types. The symbol tree represents program declarations and
+// is used throughout parsing, semantic analysis, and codegen.
+
+// SymbolType: identifies the kind of a symbol node in the symbol tree.
+// Used by serialization, type checks and visitor dispatch.
+enum SymbolType
+{
+    None = 0,
+    Primitive = 1,
+    LocalVar,
+    GlobalVar,
+    Function,
+    Module,
+    Root,
+    Array,
+    Pointer,
+    Field,
+    Struct,
+    BlockScope,
+    Class,
+    Method,
+    Property,
+    Enum,
+    EnumValue,
+    Template,
+    Constant,
+}
+
+// TypeCode: low-level type classification and ordering used by type system.
+// Includes primitive codes and compound kinds (Function/Array/Pointer/Struct).
+enum TypeCode
+{
+    None = 0,
+    Void = 1,
+    Bool,
+    Byte,
+    UByte,
+    Short,
+    UShort,
+    Int,
+    UInt,
+    Long,
+    ULong,
+    Float,
+    Double,
+    Function,
+    Array,
+    Pointer,
+    Struct,
+    CStr,
+}
+
+// SymbolFlags: bitflags that modify symbol semantics (visibility, behavior).
+// Consumers should treat these as attributes on symbols (e.g. Variadic, Static).
+enum SymbolFlags
+{
+    Variadic = 0x01,
+    External = 0x02,
+    Internal = 0x04,
+    Virtual = 0x08,
+    NoDebug = 0x10,
+    Static = 0x20,
+    ByRef = 0x40,
+    Weak = 0x80,
+    Verbatim = 0x100,
+    Union = 0x200,
+}
+
+// Base Symbol class
+// Represents a named entity in the program (type, function, variable, etc).
+// Each symbol may have children (forming a tree), a parent, a name and flags.
+class Symbol
+{
+    string Name;
+    int Flags;
+    weak Symbol Parent;
+    array<Symbol> Children;
+    SymbolType SymbolType;
+    int line;                  // source line where symbol was declared (optional)
+    weak CompileUnit Unit;     // owning compilation unit (optional)
+
+    dictionary<string, Symbol> lookup = new dictionary<string, Symbol>(); // for fast child lookup by name
+
+    // By default, symbols are not types; TypeSymbol overrides IsType().
+    virtual bool IsType() => false;
+
+    // Constructor: attach to parent if provided and initialize children list.
+    Symbol constructor(Symbol parent, string name, SymbolType stype)
+    {
+        base();
+        this.Name = name;
+        this.SymbolType = stype;
+        this.Children = new array<Symbol>();
+        if(parent != null)
+        {
+            parent.AddChild(this);
+        }
+        return this;
+    }
+
+    // AddChild: add a child symbol and set its parent pointer.
+    void AddChild(Symbol child)
+    {
+        Children.add(child);
+        child.Parent = this;
+
+        if (!(child is ArrayType)) // May produce duplicates, but we wont look up array types by type name
+        {
+            //System.Diagnostics.Debug.Assert(!lookup.ContainsKey(child.Name), $"Duplicate symbol name '{child.Name}' in '{Name}'");
+            lookup[child.Name] = child;
+        }
+    }
+
+    // RemoveChild: detach child from this node (and clear its parent).
+    /*void RemoveChild(Symbol child)
+    {
+        Children.remove(child);
+        child.Parent = null;
+    }
+
+    // InsertChild: insert at specific index and set parent.
+    void InsertChild(int index, Symbol child)
+    {
+        Children.insert(index, child);
+        child.Parent = this;
+    }*/
+
+    // Find: searches this node's children for a matching name. If not found,
+    // recursively searches parent chain. This implements simple lexical lookup.
+    Symbol Find(string name)
+    {
+        /*for(int i = 0; i < Children.count; ++i)
+        {
+            Symbol ch = Children[i];
+            if(ch.Name == name)
+                return ch;
+        }*/
+        Symbol sym = lookup[name];
+        if (sym != null)
+            return sym;
+
+        // Not found locally: ask parent (enclosing scope). Returns null at root.
+        if(Parent != null)
+        {
+            return Parent.Find(name);
+        }
+        else
+        {
+            return null;
+        }
+    }
+
+    // FindChild: non-recursive search among immediate children only.
+    virtual Symbol FindChild(string name)
+    {
+        /*for(int i = 0; i < Children.count; ++i)
+        {
+            Symbol ch = Children[i];
+            if(ch.Name == name)
+                return ch;
+        }*/
+        Symbol sym = lookup[name];
+        if (sym != null)
+            return sym;
+
+        return null;
+    }
+
+    // Default DataType: symbols that are not types return Void by default.
+    // TypeSymbol overrides this to return the actual type object.
+    virtual TypeSymbol get DataType() => TypeSymbol.Void;
+
+    // Visitor entrypoint for code generation / transforms. Subclasses override.
+    virtual void Visit(CodeVisitor visitor) {}
+}
+
+// RootSymbol: singleton root of the global symbol tree. Useful for canonical
+// parent for top-level modules and types.
+class RootSymbol : Symbol
+{
+    static RootSymbol _instance;
+    static RootSymbol get Instance() {
+        if(RootSymbol._instance == null) {
+            RootSymbol._instance = new RootSymbol();
+        }
+        return RootSymbol._instance;
+    }
+
+    RootSymbol constructor() 
+    {
+        base(null, "root", SymbolType.Root);
+        return this;
+    }
+}
+
+// TypeSymbol: base class for types in the language. Inherits from Symbol so
+// types can be named and placed in the symbol tree. Contains size, element
+// type (for pointers/arrays) and convenience predicates.
+class TypeSymbol : Symbol
+{
+    TypeCode TypeCode;
+    int Size;
+    weak TypeSymbol ElementType;   // element type for arrays/pointers
+    PointerType pointerType;       // cached pointer type for T*
+
+    bool IsType() => true;
+
+    virtual bool IsPrimitive() => false;
+
+    bool IsBool() => this.TypeCode == TypeCode.Bool;
+    bool IsInteger() {
+        return this.TypeCode >= TypeCode.Byte && this.TypeCode <= TypeCode.ULong;
+    }
+    bool IsUnsigned() {
+        return this.TypeCode == TypeCode.UByte || this.TypeCode == TypeCode.UShort
+              || this.TypeCode == TypeCode.UInt || this.TypeCode == TypeCode.ULong;
+    }
+    bool IsFloatingPoint() {
+        return this.TypeCode == TypeCode.Float || this.TypeCode == TypeCode.Double;
+    }
+
+    virtual bool IsArray() => false;
+    virtual bool IsPointer() => false;
+    virtual bool IsStruct() => false;
+    virtual bool IsFunction() => false;
+    virtual bool IsClass() => false;
+    virtual bool IsEnum() => false;
+    virtual bool IsClassRef() => false;
+
+    // Default equality compares object identity. Subclasses can override
+    // structural equality semantics (e.g. arrays, pointers, functions).
+    virtual bool IsEqualTo(TypeSymbol other)
+    {
+        return this == other;
+    }
+
+    // Constructor: types are symbols with a TypeCode attached.
+    TypeSymbol constructor(Symbol parent, string name, SymbolType stype, TypeCode tcode)            
+    {
+        base(parent, name, stype);
+        this.TypeCode = tcode;
+        return this;
+    }
+
+    // Convenience factories: create array/pointer types derived from this type.
+    ArrayType GetArrayType(int asize)
+    {
+        return new ArrayType(Parent, this, asize);
+    }
+
+    PointerType GetPointerType()
+    {
+        if (pointerType == null)
+            pointerType = new PointerType(Parent, this);
+        return pointerType;
+    }
+
+    // Predefined primitive instances (singletons). These are shared and live
+    // under the RootSymbol so they can be referenced anywhere.
+    static PrimitiveType _void = new PrimitiveType(RootSymbol.Instance, "void", TypeCode.Void, 0);
+    static PrimitiveType _bool = new PrimitiveType(RootSymbol.Instance, "bool", TypeCode.Bool, 1);
+    static PrimitiveType _byte = new PrimitiveType(RootSymbol.Instance, "byte", TypeCode.Byte, 1);
+    static PrimitiveType _ubyte = new PrimitiveType(RootSymbol.Instance, "ubyte", TypeCode.UByte, 1);
+    static PrimitiveType _short = new PrimitiveType(RootSymbol.Instance, "short", TypeCode.Short, 2);
+    static PrimitiveType _ushort = new PrimitiveType(RootSymbol.Instance, "ushort", TypeCode.UShort, 2);
+    static PrimitiveType _int = new PrimitiveType(RootSymbol.Instance, "int", TypeCode.Int, 4);
+    static PrimitiveType _uint = new PrimitiveType(RootSymbol.Instance, "uint", TypeCode.UInt, 4);
+    static PrimitiveType _long = new PrimitiveType(RootSymbol.Instance, "long", TypeCode.Long, 8);
+    static PrimitiveType _ulong = new PrimitiveType(RootSymbol.Instance, "ulong", TypeCode.ULong, 8);
+    static PrimitiveType _float = new PrimitiveType(RootSymbol.Instance, "float", TypeCode.Float, 4);
+    static PrimitiveType _double = new PrimitiveType(RootSymbol.Instance, "double", TypeCode.Double, 8);
+
+    // Public getters for primitives
+    static TypeSymbol get Void() => _void;
+    static TypeSymbol get Bool() => _bool;
+    static TypeSymbol get Byte() => _byte;
+    static TypeSymbol get UByte() => _ubyte;
+    static TypeSymbol get Short() => _short;
+    static TypeSymbol get UShort() => _ushort;
+    static TypeSymbol get Int() => _int;
+    static TypeSymbol get UInt() => _uint;
+    static TypeSymbol get Long() => _long;
+    static TypeSymbol get ULong() => _ulong;
+    static TypeSymbol get Float() => _float;
+    static TypeSymbol get Double() => _double;
+
+    // Cleanup singletons at program shutdown to break circular refs.
+    static void Finalize()
+    {
+	    TypeSymbol._void.pointerType = null;
+	    TypeSymbol._void = null;
+	    TypeSymbol._bool.pointerType = null;
+	    TypeSymbol._bool = null;
+	    TypeSymbol._byte.pointerType = null;
+	    TypeSymbol._byte = null;
+	    TypeSymbol._ubyte.pointerType = null;
+	    TypeSymbol._ubyte = null;
+	    TypeSymbol._short.pointerType = null;
+	    TypeSymbol._short = null;
+	    TypeSymbol._ushort.pointerType = null;
+	    TypeSymbol._ushort = null;
+	    TypeSymbol._int.pointerType = null;
+	    TypeSymbol._int = null;
+	    TypeSymbol._uint.pointerType = null;
+	    TypeSymbol._uint = null;
+	    TypeSymbol._long.pointerType = null;
+	    TypeSymbol._long = null;
+	    TypeSymbol._ulong.pointerType = null;
+	    TypeSymbol._ulong = null;
+	    TypeSymbol._float.pointerType = null;
+	    TypeSymbol._float = null;
+	    TypeSymbol._double.pointerType = null;
+	    TypeSymbol._double = null;
+	    RootSymbol._instance = null;
+    }
+}
+
+// PrimitiveType: concrete leaf type representing built-in primitive types
+class PrimitiveType : TypeSymbol
+{
+    bool IsPrimitive() => true;
+
+    PrimitiveType constructor(Symbol parent, string name, TypeCode tcode, int size)
+    {
+        base(parent, name, SymbolType.Primitive, tcode);
+        Size = size;
+        return this;
+    }
+}
+
+// ArrayType: represents a fixed-size array type. ElementType and array size are stored.
+// Equality compares element type and size.
+class ArrayType : TypeSymbol
+{
+    int ArraySize;
+
+    bool IsArray() => true;
+
+    bool IsEqualTo(TypeSymbol other)
+    {
+        if(other is ArrayType)
+        {
+            ArrayType at = (ArrayType)other;
+            return at.ElementType.IsEqualTo(this.ElementType) && at.ArraySize == ArraySize;
+        }
+        return false;
+    }
+
+    ArrayType constructor(Symbol parent, TypeSymbol elementType, int asize)
+    {
+        base(parent, elementType.Name + '[' + string.format("%d", asize) + ']', SymbolType.Array, TypeCode.Array);
+        this.ElementType = elementType;
+        this.ArraySize = asize;
+        this.Size = asize * elementType.Size;
+        return this;
+    }
+}
+
+// PointerType: represents a pointer to another TypeSymbol. Size is target-address width.
+class PointerType : TypeSymbol
+{
+    bool IsPointer() => true;
+
+    bool IsClassRef() => this.ElementType.IsClass();
+
+    bool IsEqualTo(TypeSymbol other)
+    {
+        if(other is PointerType)
+        {
+            PointerType pt = (PointerType)other;
+            return pt.ElementType.IsEqualTo(this.ElementType);
+        }
+        return false;
+    }
+
+    PointerType constructor(Symbol parent, TypeSymbol elementType)
+    {
+        base(parent, elementType.Name + '*', SymbolType.Pointer, TypeCode.Pointer);
+        this.ElementType = elementType;
+        this.Size = 8; // pointer size (target platform assumption)
+        return this;
+    }
+}
+
+// FieldSymbol: a field inside a struct or class. Stores type, index and offset for
+// layout, and optional initializer expression used for static/instance initialization.
+class FieldSymbol : Symbol
+{
+    TypeSymbol type;
+    int Index;
+    int Offset;
+    Expression InitialValue;
+
+    TypeSymbol get DataType() => this.type;
+
+    FieldSymbol constructor(Symbol parent, string name, TypeSymbol type)
+    {
+        base(parent, name, SymbolType.Field);
+        this.type = type;
+        return this;
+    }
+}
+
+// StructType: represents a C-style struct. Holds size information and exposes
+// Visit so codegen can emit struct metadata.
+class StructType : TypeSymbol
+{
+    bool IsStruct() => true;
+
+    StructType constructor(Symbol parent, string name)
+    {
+        base(parent, name, SymbolType.Struct, TypeCode.Struct);
+        this.Size = 0;
+        return this;
+    }
+
+    void SetSize(int size)
+    {
+        this.Size = size;
+    }
+
+    void Visit(CodeVisitor visitor)
+    {
+        visitor.VisitStruct(this);
+    }
+}
+
+// Module: top-level container for symbols and string literals. Each source
+// file or compiled module becomes a Module symbol containing its declarations.
+class Module : Symbol
+{
+    dictionary<string, string> Strings = new dictionary<string, string>();
+    dictionary<string, string> StringsRev = new dictionary<string, string>();
+    array<ModuleUsing> Usings = new array<ModuleUsing>();
+
+    Module constructor(string name)
+    {
+        base(RootSymbol.Instance, name, SymbolType.Module);
+        return this;
+    }
+        
+    // AddString: store string literals used by the module and return a unique key.
+    // The key is later used by codegen to emit string constants.
+    string AddString(string str)
+    {
+        /*string key = StringsRev[str];
+        if (key != null)
+            return key;*/
+
+        string key = string.format("$cstr_%d", Strings.count);
+        Strings[key] = str;
+        //StringsRev[str] = key;
+        return key;
+    }
+}
+
+// Variable base class: common fields for LocalVariable and GlobalVariable.
+class Variable : Symbol
+{
+    TypeSymbol type;
+    Expression Init;
+    int Offset;
+    string TagName; // codegen tag name for IR global/local representation
+
+    TypeSymbol get DataType() => this.type;
+
+    Variable constructor(Symbol parent, string name, SymbolType stype, TypeSymbol type, Expression init)
+    {
+        base(parent, name, stype);
+        this.type = type;
+        this.Init = init;
+        return this;
+    }
+}
+
+class LocalVariable : Variable
+{
+    LocalVariable constructor(Symbol parent, string name, TypeSymbol type, Expression init)
+    {
+        base(parent, name, SymbolType.LocalVar, type, init);
+        return this;
+    }
+}
+
+class GlobalVariable : Variable
+{
+    GlobalVariable constructor(Symbol parent, string name, TypeSymbol type, Expression init)
+    {
+        base(parent, name, SymbolType.GlobalVar, type, init);
+        return this;
+    }
+
+    // Allow codegen/visitors to process globals (emit IR, extern declarations etc.).
+    void Visit(CodeVisitor visitor)
+    {
+        visitor.VisitGlobalVariable(this);
+    }
+}
+
+// Function type: function signature represented as a TypeSymbol. Holds
+// return type, parameter list, local declarations and optionally a body.
+class Function : TypeSymbol
+{
+    TypeSymbol ReturnType;
+    StatementBlock Body;
+    int LocalsCount;
+    array<LocalVariable> Parameters;
+    array<LocalVariable> Locals;
+    string Verbatim;               // optional verbatim code (external binding)
+    string fileName;
+    weak ClassType declaringClass;  // when function is a method, its declaring class
+
+    TypeSymbol get DataType() => this;
+    bool IsFunction() => true;
+
+    // Structural equality: compare return type and parameter types for signature equality.
+    bool IsEqualTo(TypeSymbol other)
+    {
+        if(this == other)
+            return true;
+
+        if(other is Function)
+        {
+            Function fn = (Function)other;
+            TypeSymbol rt = fn.ReturnType;
+            if(rt.IsEqualTo(ReturnType) && fn.Parameters.count == Parameters.count)
+            {
+                for(int i = 0; i < Parameters.count; i++) 
+                {
+                    LocalVariable p1 = fn.Parameters[i];
+                    LocalVariable p2 = Parameters[i];
+                    TypeSymbol t1 = p1.DataType;
+                    TypeSymbol t2 = p2.DataType;
+                    if(!t1.IsEqualTo(t2))
+                        return false;
+                }
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    Function constructor(Symbol parent, string name, TypeSymbol returnType)
+    {
+        base(parent, name, SymbolType.Function, TypeCode.Function);
+        ReturnType = returnType;
+        LocalsCount = 0;
+        Parameters = new array<LocalVariable>();
+        Locals = new array<LocalVariable>();
+        return this;
+    }
+
+    void Visit(CodeVisitor visitor)
+    {
+        visitor.VisitFunction(this);
+    }
+
+    string toString()
+    {
+        return string.format("function %s", Name);
+    }
+}
+
+// BlockScope: unnamed symbol used to represent a local scope. It holds
+// children symbols (locals) and can be reparented when entering/exiting scopes.
+class BlockScope : Symbol
+{
+    BlockScope constructor()        
+    {
+        base(null, "", SymbolType.BlockScope);
+        return this;
+    }
+
+    void Reparent(Symbol parent)
+    {
+        this.Parent = parent;
+    }
+}
+
+// EnumType: represents an enum with an underlying integral TypeSymbol.
+class EnumType : TypeSymbol
+{
+    EnumType constructor(Symbol parent, string name, TypeSymbol type)
+    {
+        base(parent, name, SymbolType.Enum, type.TypeCode);
+        this.ElementType = type;
+        this.Size = type.Size;
+        return this;
+    }
+
+    TypeSymbol get DataType() => this;
+
+    bool IsEnum() => true;    
+}
+
+// EnumValue: a named constant in an enum. Provides DataType access for consumers.
+class EnumValue : Symbol
+{
+    long Value;
+
+    EnumValue constructor(Symbol parent, string name, long value)        
+    {
+        base(parent, name, SymbolType.EnumValue);
+        Value = value;
+        return this;
+    }
+
+    // DataType returns the underlying integral type of the parent enum.
+    TypeSymbol get DataType() => Parent.DataType.ElementType;
+}
+
+// MethodSymbol: wrapper for methods declared inside classes. Holds a function
+// type and virtual slot index (for virtual dispatch table layout).
+class MethodSymbol : Symbol
+{
+    Function type;
+    int VSlot;
+
+    TypeSymbol get DataType() => type;
+
+    Function GetFunction() => type;
+
+    MethodSymbol constructor(Symbol parent, string name, Function type)        
+    {
+        base(parent, name, SymbolType.Method);
+        this.type = type;
+        this.VSlot = -1; // -1 indicates non-virtual by default
+        return this;
+    }
+
+    void SetFunction(Function fn)
+    {
+        this.type = fn;
+    }
+}
+
+// PropertySymbol: represents a property with optional getter/setter method symbols.
+class PropertySymbol : Symbol
+{
+    TypeSymbol type;
+    MethodSymbol Setter;
+    MethodSymbol Getter;
+
+    PropertySymbol constructor(Symbol parent, string name, TypeSymbol type) 
+    {
+        base(parent, name, SymbolType.Property);
+        this.type = type;
+        return this;
+    }
+
+    TypeSymbol get DataType() => type;    
+}
+
+// ClassType: represents a class with fields, methods and virtual dispatch table
+// information. It supports lookup that traverses base classes for inherited members.
+class ClassType : TypeSymbol
+{
+    ClassType BaseClass;
+    bool IsClass() => true;
+    int FieldCount;                    // number of instance fields
+    array<MethodSymbol> VirtualMethods; // vtable layout
+    weak Function Factory;             // factory function (e.g. for 'new')
+    
+    ClassType constructor(Symbol parent, string name)
+        
+    {
+        base(parent, name, SymbolType.Class, TypeCode.Struct);
+        this.FieldCount = 0;
+        this.VirtualMethods = new array<MethodSymbol>();
+        this.Factory = null;
+        return this;
+    }
+
+    // FindChild: looks for a member by name in this class; if not found,
+    // searches the base class chain so inherited members are visible.
+    Symbol FindChild(string name)
+    {
+        /*for(int i = 0; i < Children.count; ++i)
+        {
+            Symbol ch = Children[i];
+            if(ch.Name == name)
+                return ch;
+        }*/
+        Symbol sym = lookup[name];
+        if (sym != null)
+            return sym;
+
+        if (BaseClass != null)
+            return BaseClass.FindChild(name);
+        else
+            return null;
+    }
+
+    void SetSize(int size)
+    {
+        Size = size;
+    }
+
+    void Visit(CodeVisitor visitor)
+    {
+        visitor.VisitClass(this);
+    }
+
+    // IsClassOf: checks if `other` is in this class's inheritance chain.
+    bool IsClassOf(ClassType other)
+    {
+        ClassType cls = this;
+        while(cls != null)
+        {
+            if (cls == other) 
+                return true;
+            cls = cls.BaseClass;
+        }
+        return false;
+    }
+}
+
+// Template: represents a class template declaration. Template.Source holds the
+// textual source of the template body used for instantiation.
+class Template : TypeSymbol
+{
+    array<string> TemplateParams;
+    string Source;
+
+    Template constructor(Symbol parent, string name)
+    {
+        base(parent, name, SymbolType.Template, TypeCode.Struct);
+        TemplateParams = new array<string>();
+        return this;
+    }
+}
+
+// ModuleUsing: tracks a 'using' directive linking to another module by name.
+class ModuleUsing
+{
+    string Name;
+    weak Module Module;
+
+    ModuleUsing constructor(string name)
+    {
+        base();
+        this.Name = name;
+        return this;
+    }
+}
+
+class ConstantValue : Symbol
+{
+    Expression Value;
+
+    ConstantValue constructor(Symbol parent, string name, Expression value)
+    {
+        base(parent, name, SymbolType.Constant);
+        Value = value;
+        return this;
+    }
+
+    TypeSymbol get DataType() => Value.DataType;
+}

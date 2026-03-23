@@ -1,0 +1,158 @@
+class dictionary_pFunction_pDISubprogram
+{
+	hash_pair<Function*,DISubprogram*>** buckets;
+	int size;
+	int count;
+	
+	dictionary<Function*,DISubprogram*>* constructor() {
+        base();        
+        size = 64;
+		count = 0;
+        buckets = memory.alloc(size * sizeof(hash_pair<Function*,DISubprogram*>));  
+		memory.put(buckets, 0, size * sizeof(hash_pair<Function*,DISubprogram*>));
+        return this;
+    }
+	
+	void destructor() { 
+        clear();
+        memory.free(buckets);
+        base();
+    }
+	
+	void clear() {
+        for (int i = 0; i < size; ++i) {
+            hash_pair<Function*,DISubprogram*>* current = buckets[i];
+            hash_pair<Function*,DISubprogram*>* prev = null;
+            while (current != null) {
+				hash_pair<Function*,DISubprogram*>* temp = current;
+                current = current.next;
+                temp.key = 0;
+                temp.data = (DISubprogram*)0;
+                if(prev != null)
+                    prev.next = null;
+                prev = temp;
+            }
+            buckets[i] = null;
+        }
+		count = 0;
+    }
+	
+	void set_item(Function* key, DISubprogram* value) {
+        long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+		//println("Adding key: %s, hash: %lld, index: %d", key.toString().c_str(), h, index);
+
+        hash_pair<Function*,DISubprogram*>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                current.data = value;
+				//println("Already present");
+                return;
+            }
+            current = current.next;
+        }
+
+        hash_pair<Function*,DISubprogram*>* newItem = new hash_pair<Function*,DISubprogram*>();        
+        newItem.key = key;    
+        newItem.data = value;
+        newItem.next = buckets[index];
+        buckets[index] = newItem;
+		++count;
+		//println("Added");
+    }
+	
+	DISubprogram* get_item(Function* key) {
+
+        long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_pair<Function*,DISubprogram*>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                return current.data;
+            }
+            current = current.next;
+        }
+		
+        return (DISubprogram*)0;
+    }
+
+	void remove(Function* key)
+	{
+		long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_pair<Function*,DISubprogram*>* current = buckets[index];
+		hash_pair<Function*,DISubprogram*>* prev = null;
+
+        while (current != null) {
+            if (current.key == key) {
+                
+				if(prev) {
+					prev.next = current.next;
+				}
+				else {
+					buckets[index] = current.next;
+				}
+				--count;
+                return;
+            }
+			prev = current;
+            current = current.next;
+        }
+	}
+
+	array<Function*>* get keys()
+	{
+		array<Function*>* result = new array<Function*>();
+		for(int i = 0; i < size; ++i)
+		{
+			hash_pair<Function*,DISubprogram*>* pair = buckets[i];
+			while(pair != null)
+			{
+				result.add(pair.key);
+				pair = pair.next;
+			}
+		}
+		return result;
+	}
+
+	array<DISubprogram*>* get values()
+	{
+		array<DISubprogram*>* result = new array<DISubprogram*>();
+		for(int i = 0; i < size; ++i)
+		{
+			hash_pair<Function*,DISubprogram*>* pair = buckets[i];
+			while(pair != null)
+			{
+				result.add(pair.data);
+				pair = pair.next;
+			}
+		}
+		return result;
+	}
+
+	bool contains(Function* key)
+	{
+		long h = key.getHash();
+        //int index = (int)(h % size);
+		int index = (int)(h & 0x3f);
+
+        hash_pair<Function*,DISubprogram*>* current = buckets[index];
+
+        while (current != null) {
+            if (current.key == key) {
+                return true;
+            }
+            current = current.next;
+        }
+		
+        return false;
+	}
+}
