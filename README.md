@@ -1,1 +1,56 @@
 # Jargon
+
+**Jargon** is a self-hosting compiled programming language that targets **LLVM IR** and produces native executables on Windows. The compiler (`jlc1`) is written in Jargon itself, making it a bootstrapping compiler.
+
+## Features
+
+- **Self-hosting** — the compiler is written in Jargon and can compile itself
+- **LLVM backend** — emits LLVM IR (`.ll` files) and uses `clang-cl` for final linking
+- **C-like syntax** — familiar syntax with classes, templates, enums, and more
+- **Automatic Reference Counting** — automatic memory management via reference-counted objects
+- **Debug support** — generates debug information compatible with standard debuggers (`-g` flag)
+- **Interop with C** — direct declaration of external C functions
+
+## Project Structure
+
+- **JargonLib** - Jargon Compileer library implemented in C#
+- **jlc0** - Jargon Compiler implemented in C#
+- **Jargon** - Jargon Runtime implemented in Jargon
+- **jlc1** - Jargon Compiler implemented in Jargon, compiled with jlc0
+- **jlc2** - Jargon Compiler implemented in Jargon, compiled eith jlc1, to check for no degradation
+- **Test** - Test project
+
+## Usage
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `-g` | Generate debug information |
+| `-k` | Keep intermediate files |
+| `-o <file>` | Specify output file name |
+| `-O<level>` | Optimization level (`O0`, `O1`, `O2`, `Os`, `Ofast`, `Od`, `Ot`, `Ox`) |
+| `-I<dir>` | Add directory to library search path |
+| `-l<library>` | Link with specified library |
+| `-V` | Verbose output |
+| `-h`, `--help` | Show help |
+
+### Example
+
+jlc1 -g Main.jr -o Test.exe
+
+## Prerequisites
+
+- **Windows** with Visual Studio 2022
+- **LLVM / Clang** toolchain (`clang-cl` must be available)
+- A pre-built `jlc1` binary for initial bootstrapping
+
+## Building
+
+1. Open the solution in **Visual Studio 2022**.
+2. Build the `Test` project to perform a self-compilation of the compiler.
+3. The resulting `meta.exe` is a freshly compiled copy of the compiler, built by itself.
+
+## License
+
+This project is available under the [MIT License](LICENSE).
