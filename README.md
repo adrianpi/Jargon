@@ -51,7 +51,7 @@ jlc1 -g Main.jr -o Test.exe
 2. Open the solution in **Visual Studio 2022**.
 3. Build the `Test` project to perform a build of all projects in the solution in the correct order.
 
-You will need to adjust building paths in the different project if the instalation folder is other than C:\Jargon
+You will need to adjust building paths in the different projects if the instalation folder is other than C:\Jargon
 
 ## License
 
