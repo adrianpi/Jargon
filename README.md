@@ -47,9 +47,12 @@ jlc1 -g Main.jr -o Test.exe
 
 ## Building
 
-1. Open the solution in **Visual Studio 2022**.
-2. Build the `Test` project to perform a self-compilation of the compiler.
-3. The resulting `meta.exe` is a freshly compiled copy of the compiler, built by itself.
+1. Create a JARGON_LIB system variable pointer to your binary folder. i.e JARGON_LIB=C:\Jargon\x64\Debug
+2. Open the solution in **Visual Studio 2022**.
+3. Build the `Test` project to perform a self-compilation of the compiler.
+4. The resulting `meta.exe` is a freshly compiled copy of the compiler, built by itself.
+
+You will need to adjust building paths in the different project if the instalation folder is other than C:\Jargon
 
 ## License
 
