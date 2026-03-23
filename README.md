@@ -49,7 +49,7 @@ jlc1 -g Main.jr -o Test.exe
 
 1. Create a JARGON_LIB system variable pointing to your binary folder. i.e JARGON_LIB=C:\Jargon\x64\Debug
 2. Open the solution in **Visual Studio 2022**.
-3. Build the `Test` project to perform a build of all projects in the solution in the correct ordder.
+3. Build the `Test` project to perform a build of all projects in the solution in the correct order.
 
 You will need to adjust building paths in the different project if the instalation folder is other than C:\Jargon
 
