@@ -364,5 +364,7 @@ FodyWeavers.xsd
 
 # Jargon template files
 *.jrt
+
+# Test-generated files
 /Test/meta.exe
 /Test/meta2.exe
