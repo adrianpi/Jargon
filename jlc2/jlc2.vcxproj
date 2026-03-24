@@ -108,7 +108,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PreBuildEvent>
-      <Command>C:\Jargon\x64\Debug\jlc1.exe -g ..\jlc1\Expression.jr ..\jlc1\LLVMCodeGen.jr ..\jlc1\BaseParser.jr ..\jlc1\ExpressionParser.jr ..\jlc1\StageParser.jr ..\jlc1\Parser1.jr ..\jlc1\Parser2.jr ..\jlc1\Parser3.jr ..\jlc1\Parser4.jr ..\jlc1\CodeTransform.jr ..\jlc1\StringBuffer.jr ..\jlc1\DebugInfo.jr ..\jlc1\Compiler.jr ..\jlc1\Main.jr ..\jlc1\Scanner.jr ..\jlc1\Statement.jr ..\jlc1\Symbol.jr ..\jlc1\TypeInfo.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib</Command>
+      <Command>..\x64\Debug\jlc1.exe -g ..\jlc1\Expression.jr ..\jlc1\LLVMCodeGen.jr ..\jlc1\BaseParser.jr ..\jlc1\ExpressionParser.jr ..\jlc1\StageParser.jr ..\jlc1\Parser1.jr ..\jlc1\Parser2.jr ..\jlc1\Parser3.jr ..\jlc1\Parser4.jr ..\jlc1\CodeTransform.jr ..\jlc1\StringBuffer.jr ..\jlc1\DebugInfo.jr ..\jlc1\Compiler.jr ..\jlc1\Main.jr ..\jlc1\Scanner.jr ..\jlc1\Statement.jr ..\jlc1\Symbol.jr ..\jlc1\TypeInfo.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">

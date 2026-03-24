@@ -108,10 +108,10 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PreBuildEvent>
-      <Command> C:\Jargon\jlc0\bin\Debug\jlc0.exe -g jargon.jr -o $(OutDir)$(TargetName)$(TargetExt)</Command>
+      <Command>..\jlc0\bin\Debug\jlc0.exe -g jargon.jr -o $(OutDir)$(TargetName)$(TargetExt)</Command>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>copy C:\Jargon\x64\Debug\jargon.dll C:\Jargon\Test</Command>
+      <Command>copy ..\x64\Debug\jargon.dll ..\Test</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
