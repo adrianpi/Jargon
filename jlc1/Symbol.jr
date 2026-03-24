@@ -116,20 +116,6 @@ class Symbol
         }
     }
 
-    // RemoveChild: detach child from this node (and clear its parent).
-    /*void RemoveChild(Symbol child)
-    {
-        Children.remove(child);
-        child.Parent = null;
-    }
-
-    // InsertChild: insert at specific index and set parent.
-    void InsertChild(int index, Symbol child)
-    {
-        Children.insert(index, child);
-        child.Parent = this;
-    }*/
-
     // Find: searches this node's children for a matching name. If not found,
     // recursively searches parent chain. This implements simple lexical lookup.
     Symbol Find(string name)

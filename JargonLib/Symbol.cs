@@ -137,24 +137,7 @@ namespace Jargon
                 System.Diagnostics.Debug.Assert(!lookup.ContainsKey(child.Name), $"Duplicate symbol name '{child.Name}' in '{Name}'");
                 lookup[child.Name] = child;
             }
-        }
-
-        public void RemoveChild(Symbol child)
-        {
-            children.Remove(child);
-            child.parent = null;
-            //var obj = lookup[child.Name];
-            //System.Diagnostics.Debug.Assert(obj == child, $"Symbol '{child.Name}' in '{Name}' does not match the child being removed");
-            //lookup.Remove(child.Name);
-        }
-
-        public void InsertChild(int index, Symbol child)
-        {
-            children.Insert(index, child);
-            child.parent = this;
-            //System.Diagnostics.Debug.Assert(!lookup.ContainsKey(child.Name), $"Duplicate symbol name '{child.Name}' in '{Name}'");
-            //lookup[child.Name] = child;
-        }
+        }        
 
         public Symbol Find(string name)
         {
