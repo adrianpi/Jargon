@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+    <key>fileTypes</key>
+    <array>
+        <string>jr</string> <!-- Matches file extension, e.g., .jr -->
+    </array>
+    <key>name</key>
+    <string>Jargon Language</string>
+    <key>scopeName</key>
+    <string>source.jr</string>
+    <key>patterns</key>
+    <array>
+		<!-- Single-line comments -->
+        <dict>
+            <key>match</key>
+            <string>//.*$</string>
+            <key>name</key>
+            <string>comment.line.double-slash.jr</string>
+        </dict>
+		<!-- Multi-line comments -->
+        <dict>
+            <key>begin</key>
+            <string>/\*</string>
+            <key>end</key>
+            <string>\*/</string>
+            <key>name</key>
+            <string>comment.block.jr</string>
+        </dict>
+		<!-- Strings -->
+        <dict>
+            <key>match</key>
+            <string>"(?:[^"\\]|\\.)*"</string>
+            <key>name</key>
+            <string>string.quoted.double.jr</string>
+        </dict>
+		<!-- Characters -->
+        <dict>
+            <key>match</key>
+            <string>'(?:[^'\\]|\\.)*'</string>
+            <key>name</key>
+            <string>string.quoted.single.jr</string>
+        </dict>
+        <!-- C Keywords -->
+        <dict>
+            <key>match</key>
+            <string>\b(as|base|break|class|const|continue|delete|do|else|enum|external|for|get|if|is|new|null|operator|return|set|sizeof|static|struct|template|union|using|verbatim|virtual|weak|while)\b</string>
+            <key>name</key>
+            <string>keyword.control.jr</string>
+        </dict>
+		<dict>
+			<key>match</key>
+			<string>\b(bool|byte|double|float|int|long|short|ubye|uint|ulong|ushort|void|this|constructor|destructor)\b</string>
+			<key>name</key>
+			<string>keyword.other.jr</string>
+		</dict>
+		
+    </array>
+</dict>
+</plist>
