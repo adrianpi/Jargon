@@ -217,31 +217,48 @@ class Parser3 : StageParser
                 // create a GlobalVariable symbol. If an initializer was
                 // provided, register static initialization statements in the
                 // unit's static_init function so the value is set at startup.
-                Expression init = null;
-                if (scanner.Token == Token.Assign)
+                do
                 {
-                    scanner.NextToken();
-                    if (scanner.Token == Token.LBrace)
-                        init = ParseInitList(decl.type);
-                    else
-                        init = ParseExpression();
-                }
-
-                GlobalVariable gv = new GlobalVariable(module, decl.name, decl.type, init);
-                gv.Unit = unit;
-                gv.line = line;
-                unit.AddSymbol(gv);
-
-                if (init != null)
-                {
-                    Function static_init = unit.staticInit;
-                    if (static_init != null)
+                    Expression init = null;
+                    if (scanner.Token == Token.Assign)
                     {
-                        StatementBlock sb = static_init.Body;
-                        SymbolExpression se = new SymbolExpression(gv);
-                        StaticAssign(sb, se, init, scanner.Line, null);
+                        scanner.NextToken();
+                        if (scanner.Token == Token.LBrace)
+                            init = ParseInitList(decl.type);
+                        else
+                            init = ParseExpression();
                     }
-                }
+
+                    GlobalVariable gv = new GlobalVariable(module, decl.name, decl.type, init);
+                    gv.Unit = unit;
+                    gv.line = line;
+                    unit.AddSymbol(gv);
+
+                    if (init != null)
+                    {
+                        Function static_init = unit.staticInit;
+                        if (static_init != null)
+                        {
+                            StatementBlock sb = static_init.Body;
+                            SymbolExpression se = new SymbolExpression(gv);
+                            StaticAssign(sb, se, init, scanner.Line, null);
+                        }
+                    }
+
+                    if(scanner.Token == Token.Comma)
+                    {
+                        scanner.NextToken();
+                        if (!ParseDeclaration(decl, true, decl.type, false, false))
+                        {
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        break;
+                    }
+
+                } while(scanner.Token != Token.EOF);
 
                 return Expect(Token.Semicolon);
             }
