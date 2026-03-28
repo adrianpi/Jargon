@@ -838,6 +838,7 @@ template class array<T>
 		}
 	}
 
+	// From Kernighan & Ritchie's "The C Programming Language" book
 	void _qsort(int left, int right) 
 	{
 		int i = 0;
