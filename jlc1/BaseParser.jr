@@ -844,7 +844,6 @@ class BaseParser
 
                     file.writeAllText(fname, text);
                     CompileUnit cu = new CompileUnit(fname);
-                    //File.Delete(tname + ".cm");
 
                     // Run the parser pipeline on the generated compile unit so
                     // the instantiated template becomes available in "module".

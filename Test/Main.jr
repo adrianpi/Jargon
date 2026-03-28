@@ -11,8 +11,7 @@ int start()
 	CompilerOptions options = new CompilerOptions();
 	options.OutputFileName = "meta.exe";
 	options.OutputDirectory = ".";
-	//options.InputFiles.add("test0lib.cmf");
-	//options.InputFiles.add("test0.cmf");
+
 	options.InputFiles.add("..\\jlc1\\Scanner.jr");
 	options.InputFiles.add("..\\jlc1\\Expression.jr");
 	options.InputFiles.add("..\\jlc1\\Symbol.jr");

@@ -1,7 +1,7 @@
 using jargon;
 
 /*
- Expression.cm
+ Expression.jr
 
  This file defines the Abstract Syntax Tree (AST) nodes used to represent
  expressions and some statements in the Jargon compiler. It also defines the

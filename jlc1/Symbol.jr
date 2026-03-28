@@ -1,6 +1,7 @@
 using jargon;
 
-// Symbol.cm
+// Symbol.jr
+
 // Contains core symbol and type model used by the compiler: Symbols, TypeSymbols,
 // primitive types, arrays/pointers, functions, classes, fields, properties, and
 // associated helper types. The symbol tree represents program declarations and

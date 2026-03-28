@@ -1,5 +1,5 @@
 
-// Compiler.cm
+// Compiler.jr
 // -----------
 // Main driver for the Jargon compiler. Implements a multi-pass compilation
 // pipeline that reads source files, parses them, performs semantic analysis,

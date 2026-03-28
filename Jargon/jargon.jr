@@ -154,7 +154,7 @@ object* newObj(int sz, void **vtab)
 void _checkLeaks()
 {
 	if(objectInstances == 0)
-		printf("HURRAY, No leaks!\n");
+		printf("No leaks detected!\n");
 	else {
 		printf("Detected %d object leaks\n", objectInstances);
 		if(collectInstances)

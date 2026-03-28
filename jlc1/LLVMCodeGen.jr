@@ -1,7 +1,7 @@
 using jargon;
 
-// LLVMCodeGen.cm
-// ----------------
+// LLVMCodeGen.jr
+// --------------
 // Code generation visitor that lowers the AST into a textual LLVM
 // intermediate representation. The visitor focuses on translating
 // expressions, statements, types and top-level symbols into an IR that

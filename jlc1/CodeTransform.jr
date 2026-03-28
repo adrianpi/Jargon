@@ -1,4 +1,4 @@
-// CodeTransform.cm
+// CodeTransform.jr
 // ------------------
 // This file defines a CodeTransform visitor that walks the parsed AST and
 // performs several transformations needed before code generation. It is

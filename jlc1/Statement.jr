@@ -1,7 +1,7 @@
 using jargon;
 
 /*
- Statement.cm
+ Statement.jr
 
  This file defines statement-level AST nodes used by the compiler. Statements
  are visited by CodeVisitor implementations (see Expression.cm) and represent
