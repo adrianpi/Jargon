@@ -472,47 +472,65 @@ class Parser4 : StageParser
                             return null;
                         }
 
-                        if(decl.isByRef)
+                        do
                         {
-                            Error("Reference not allowed here");
-                            return null;
-                        }
+                            if(decl.isByRef)
+                            {
+                                Error("Reference not allowed here");
+                                return null;
+                            }
                 
-                        string name = decl.name;
-                        TypeSymbol type = decl.type;
+                            string name = decl.name;
+                            TypeSymbol type = decl.type;
 
-                        Expression init = null;
+                            Expression init = null;
 
-                        if(scanner.Token == Token.Assign)
-                        {
-                            scanner.NextToken();
-                            if(scanner.Token == Token.LBrace)
-                                init = ParseInitList(type);
+                            if(scanner.Token == Token.Assign)
+                            {
+                                scanner.NextToken();
+                                if(scanner.Token == Token.LBrace)
+                                    init = ParseInitList(type);
+                                else
+                                    init = ParseExpression();
+                                if(init == null)
+                                    return null;
+                            }
+
+                            // Create a LocalVariable entry for the declaration and add
+                            // it to the current function's locals list. The offset is
+                            // negative as locals are typically addressed relative to the
+                            // frame pointer (assembly/codegen detail).
+                            LocalVariable lv = new LocalVariable(scope, name, type, init);
+                            lv.Offset = -(++function.LocalsCount);
+                            lv.line = scanner.Line;
+
+                            function.Locals.add(lv);
+                            if(init != null)
+                            {
+                                // For local initializers, use StaticAssign which handles
+                                // nested initializer lists and aggregate initialization
+                                // strategy; it will emit appropriate assignment
+                                // statements into the current block.
+                                SymbolExpression se = new SymbolExpression(lv);
+                                if(!StaticAssign(block, se, init, scanner.Line, lv))
+                                    return null;
+                            }
+
+                            if(scanner.Token == Token.Comma)
+                            {
+                                scanner.NextToken();
+                                if (!ParseDeclaration(decl, true, decl.type, false, false))
+                                {
+                                    return null;
+                                }
+                            }
                             else
-                                init = ParseExpression();
-                            if(init == null)
-                                return null;
-                        }
+                            {
+                                break;
+                            }
 
-                        // Create a LocalVariable entry for the declaration and add
-                        // it to the current function's locals list. The offset is
-                        // negative as locals are typically addressed relative to the
-                        // frame pointer (assembly/codegen detail).
-                        LocalVariable lv = new LocalVariable(scope, name, type, init);
-                        lv.Offset = -(++function.LocalsCount);
-                        lv.line = scanner.Line;
+                        } while(scanner.Token != Token.EOF);
 
-                        function.Locals.add(lv);
-                        if(init != null)
-                        {
-                            // For local initializers, use StaticAssign which handles
-                            // nested initializer lists and aggregate initialization
-                            // strategy; it will emit appropriate assignment
-                            // statements into the current block.
-                            SymbolExpression se = new SymbolExpression(lv);
-                            if(!StaticAssign(block, se, init, scanner.Line, lv))
-                                return null;
-                        }
                         if(!Expect(Token.Semicolon))
                             return null;
                     }
