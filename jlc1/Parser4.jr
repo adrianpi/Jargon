@@ -519,7 +519,12 @@ class Parser4 : StageParser
                             if(scanner.Token == Token.Comma)
                             {
                                 scanner.NextToken();
-                                if (!ParseDeclaration(decl, true, decl.type, false, false))
+
+                                TypeSymbol declType = decl.type;
+                                while(declType.ElementType != null)
+                                    declType = declType.ElementType;
+
+                                if (!ParseDeclaration(decl, true, declType, false, false))
                                 {
                                     return null;
                                 }
