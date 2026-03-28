@@ -1,4 +1,10 @@
 
+// Jargon.jr
+
+// This file contains the core library for the Jargon language,
+// including object base class, string manipulation, collections, 
+// and file handling.
+
 void* malloc(int size) external;
 void free(void *ptr) external;
 void memset(void* ptr, int val, int size) external;
@@ -164,9 +170,6 @@ void _checkLeaks()
 				print(((object*)inst.obj).getClassName());
 				print(" %p", inst.obj);
 				print(" [%d], ", ((object*)inst.obj).refCount);
-				/*if(((object*)inst.obj) is string) {
-					print(" %s", (string*)inst.obj);
-				}*/
 				print(" %s", ((object*)inst.obj).toString());
 				println("");
 				inst = inst.next;
@@ -973,15 +976,12 @@ template class dictionary<K,T>
         //int index = (int)(h % size);
 		int index = (int)(h & 0x3f);
 
-		//println("Adding key: %s, hash: %lld, index: %d", key.toString().c_str(), h, index);
-
-        hash_pair<K,T>* current = buckets[index];
+		hash_pair<K,T>* current = buckets[index];
 
         while (current != null) {
             if (current.key == key) {
                 current.data = value;
-				//println("Already present");
-                return;
+				return;
             }
             current = current.next;
         }
@@ -992,7 +992,6 @@ template class dictionary<K,T>
         newItem.next = buckets[index];
         buckets[index] = newItem;
 		++count;
-		//println("Added");
     }
 	
 	T get_item(K key) {
@@ -1544,50 +1543,6 @@ double __readDouble()
 	return value;
 }
 
-/*class BinaryReader : object
-{
-	byte *p;
-	
-	BinaryReader* constructor(byte *ptr)
-	{
-		base();
-		this.p = ptr;
-		return this;
-	}
-
-	byte ReadByte()
-	{
-		byte value = *this.p;
-		this.p++;
-		return value;
-	}
-	
-	int ReadInt()
-	{
-		int value = *(int*)this.p;
-		this.p += 4;
-		return value;
-	}
-
-	long ReadLong()
-	{
-		long value = *(long*)this.p;
-		this.p += 8;
-		return value;
-	}
-	
-	void ReadString(byte *buffer)
-	{
-		byte *dst = buffer;
-		while(*this.p)
-		{
-			*dst++ = *this.p++;
-		}
-		*dst = 0;
-		this.p++;
-	}
-}*/
-
 int ReadType()
 {
 	int tc = __readByte();
@@ -1724,8 +1679,6 @@ bool _readTypeInfo(byte *address)
 		ptr += 4;
 		
 		ptr += 16;
-
-		//printf(&secName[0]);
 	
 		if(!strcmp(secName, ".module")) {
 			if(_readTypeLog) printf("Module data:\n");
@@ -1898,11 +1851,6 @@ bool _readTypeInfo(byte *address)
 							int pt = ReadType();
 							__readString(name);
 							__readByte();
-							/*byte getter[256];
-							byte setter[256];
-							__readString(getter);
-							__readString(setter);
-							if(_readTypeLog) printf("\tproperty %s get %s set %s\n", (byte*)name, (byte*)getter, (byte*)setter);*/
 						}
 						st2 = __readByte();
 					}
