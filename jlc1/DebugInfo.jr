@@ -544,8 +544,11 @@ class DIFile : DINode
         sb.append("(");
         SerializeStringProperty(sb, "filename", filename);
         SerializeStringProperty(sb, "directory", directory);
-        SerializeEnumProperty(sb, "checksumkind", DIChecksumKindToString(checksumkind));
-        SerializeStringProperty(sb, "checksum", checksum);
+        if(checksum != null)
+        {
+            SerializeEnumProperty(sb, "checksumkind", DIChecksumKindToString(checksumkind));
+            SerializeStringProperty(sb, "checksum", checksum);
+        }
         sb.appendLine(")");
     }
 }

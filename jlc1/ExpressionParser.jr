@@ -293,6 +293,11 @@ class ExpressionParser : BaseParser
                 return null;
             // Look up constructor/factory function by naming convention
             Function ctor = FindOrImport(string.format("%s__new", cls.Name));
+            if(ctor == null)
+            {
+                Error(string.format("No constructor found for class '%s'", cls.Name));
+                return null;
+            }
             int idx = 0;
             while (scanner.Token != Token.RPar)
             {
@@ -442,6 +447,11 @@ class ExpressionParser : BaseParser
                         {
                             // Convert language string* to C string for varargs
                             Function c_strFn = FindOrImport("string__c_str");
+                            if(c_strFn == null)
+                            {
+                                Error("Internal error: function 'string__c_str' not found");
+                                return null;
+                            }
                             FunctionCallExpression c_strCall = new FunctionCallExpression(new SymbolExpression(c_strFn));
                             c_strCall.Arguments.add(e);
                             c_strCall.line = e.line;
@@ -605,6 +615,11 @@ class ExpressionParser : BaseParser
                 return null;
             }
             Function fn = FindOrImport("_isClassOf");
+            if(fn == null)
+            {
+                Error("Internal error: Function '_isClassOf' not found");
+                return null;
+            }
             FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(fn));
             fc.Arguments.add(left);
             string cname = module.AddString(cls.Name);
@@ -628,6 +643,11 @@ class ExpressionParser : BaseParser
                 return null;
             }
             Function fn = FindOrImport("_dynamicCast");
+            if(fn == null)
+            {
+                Error("Internal error: Function '_dynamicCast' not found");
+                return null;
+            }
             FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(fn));
             fc.Arguments.add(left);
             string cname = module.AddString(cls.Name);

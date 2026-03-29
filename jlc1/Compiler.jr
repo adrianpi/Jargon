@@ -178,8 +178,12 @@ class Compiler : CompilerErrorListener
         DIFile file = new DIFile();
         file.filename = cu.FileName;				
         file.directory = SanitizePath(path.getDirectoryName(cu.Path));
-        file.checksumkind = DIChecksumKind.CSK_MD5;
-        file.checksum = ComputeMD5FromFile(cu.Path);
+		string checkSum = ComputeMD5FromFile(cu.Path);
+		if(checkSum != null)
+		{
+			file.checksumkind = DIChecksumKind.CSK_MD5;
+			file.checksum = checkSum;
+		}
         diFiles[cu.Path] = file;
 
 		// Create DIFile entries for included/child compilation units
