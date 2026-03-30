@@ -900,6 +900,12 @@ class CodeGenVisitor : CodeVisitor
                 string t2 = NewTag();
                 sb.appendLine(string.format("\t%s = load %s, ptr %s%s", t2, IRType(ldt, false), e.Left.Tag, sdbg));
                 e.Tag = t2;
+
+				if (e.decl != null && options.DebugInfo)
+                {
+                    DILocation loc = DINode.FunctionMap[function].GetLocation(e.line);
+                    sb.appendLine(string.format("\t#dbg_declare(ptr %s, !%d, !DIExpression(), !%d)", e.Left.Tag, DINode.LocalMap[e.decl].ID, loc.ID));
+                }
 			}
 			else
 			{
@@ -1643,7 +1649,9 @@ class CodeGenVisitor : CodeVisitor
 		// Target datalayout and triple optimized for x86_64 Windows / MSVC toolchain
 		sb.appendLine("target datalayout = \"e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128\"");
 		//sb.appendLine("target triple=\"x86_64-pc-windows-msvc19.44.35215\"");
-		sb.appendLine("target triple=\"x86_64-pc-windows-msvc19.44.35224\"");
+		//sb.appendLine("target triple=\"x86_64-pc-windows-msvc19.44.35224\"");
+		//sb.appendLine("target triple=\"x86_64-pc-windows-msvc19.44.35225\"");
+
 
 		// Emit string constants used by this compilation unit
 		sb.appendLine(";==============================================================================");
