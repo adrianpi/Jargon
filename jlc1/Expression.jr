@@ -87,7 +87,7 @@ class ConstantExpression : Expression
 {
 	TypeSymbol type;
 	int value;
-	int value64;
+	long value64;
 	float fValue;
 	double dValue;
 	string CStr;
