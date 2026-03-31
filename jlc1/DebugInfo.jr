@@ -124,7 +124,8 @@ enum DITypeTag
     DW_TAG_array_type,
     DW_TAG_structure_type,
     DW_TAG_member,
-    DW_TAG_enumeration_type
+    DW_TAG_enumeration_type,
+    DW_TAG_union_type,
 }
 
 string DITypeTagToString(DITypeTag tt)
@@ -141,6 +142,8 @@ string DITypeTagToString(DITypeTag tt)
         return "DW_TAG_member";
     else if(tt == DITypeTag.DW_TAG_enumeration_type)
         return "DW_TAG_enumeration_type";
+    else if(tt == DITypeTag.DW_TAG_union_type)
+        return "DW_TAG_union_type";
     else
         return "Unknown";
 }
@@ -412,7 +415,9 @@ class DINode
         {
             StructType st = t as StructType;
             DICompositeType ct = new DICompositeType();
-            ct.tag = DITypeTag.DW_TAG_structure_type;
+            ct.tag = (st.Flags & SymbolFlags.Union) != 0 ? 
+                DITypeTag.DW_TAG_union_type :
+                DITypeTag.DW_TAG_structure_type;
             ct.name = st.Name;
             ct.size = st.Size * 8;
             ct.elements = new DINodeList();
