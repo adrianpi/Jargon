@@ -377,6 +377,7 @@ class Parser4 : StageParser
             if (!Expect(Token.Semicolon))
                 return null;
             StatementBlock blk = new StatementBlock();
+            blk.startLine = blk.endLine = scanner.Line;
             Statement rs = null;
             if(function.ReturnType != TypeSymbol.Void)
                 rs = new ReturnStatement(expression);
@@ -393,8 +394,10 @@ class Parser4 : StageParser
         }
 
         // Full block: consume '{' and create a StatementBlock
+        int sline = scanner.Line;
         scanner.NextToken();
         StatementBlock block = new StatementBlock();
+        block.startLine = sline;
 
         // Reparent and switch to the new block's scope so local declarations
         // are added into block.Scope which is the active scope for parsing.

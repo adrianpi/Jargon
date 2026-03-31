@@ -66,6 +66,7 @@ class StatementBlock : Statement
 {
 	BlockScope Scope;
 	array<Statement> Statements;
+	int startLine;
 	int endLine;
 
 	StatementBlock constructor()

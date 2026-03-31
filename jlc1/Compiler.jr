@@ -242,7 +242,7 @@ class Compiler : CompilerErrorListener
 					sp.scope = (fn.fileName == null ? file : diFiles[fn.fileName]);
 				sp.file = fn.fileName == null ? file : diFiles[fn.fileName];
 				sp.line = fn.line;
-				sp.scopeLine = fn.line + 1;
+				sp.scopeLine = fn.Body.startLine;
 				sp.unit = unit;
 				sp.type = st;
 				DINode.FunctionMap[fn] = sp;
