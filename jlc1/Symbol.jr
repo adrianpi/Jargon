@@ -397,12 +397,14 @@ class FieldSymbol : Symbol
 // Visit so codegen can emit struct metadata.
 class StructType : TypeSymbol
 {
+    int Alignment; // struct alignment (max field alignment)
     bool IsStruct() => true;
 
     StructType constructor(Symbol parent, string name)
     {
         base(parent, name, SymbolType.Struct, TypeCode.Struct);
         this.Size = 0;
+        this.Alignment = 0;
         return this;
     }
 

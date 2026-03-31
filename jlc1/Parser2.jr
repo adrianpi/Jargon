@@ -45,6 +45,20 @@ class Parser2 : StageParser
         static_deinit.Unit = unit;
     }
 
+    // GetAlignment - compute the alignment requirement for a type. For structs,
+    // the alignment is specified in the StructType symbol; for arrays, the
+    // alignment is the same as the element type; for other types, the alignment
+    // is the same as the type size (e.g. 4 for int32).
+    static int GetAlignment(TypeSymbol type)
+    {
+        if (type.IsStruct())
+            return (type as StructType).Alignment;
+        else if(type.IsArray())
+            return GetAlignment(type.ElementType);
+        else
+            return type.Size;   // otherwise align to the type size
+    }
+
     // ParseStructure - complete struct/union layout by adding fields to the
     // previously-created StructType symbol. This routine reads member
     // declarations, validates disallowed constructs (like by-ref fields),
@@ -86,6 +100,12 @@ class Parser2 : StageParser
                 if(dt.IsClassRef())
                     fs.Flags += SymbolFlags.Weak;   // references in a struct are always weak
                                                     // as structs have no finalizers
+
+                // Compute alignment and offsets: the alignment of a struct is the max
+                // of its field alignments
+                int alignment = GetAlignment(decl.type);
+                st.Alignment = st.Alignment >? alignment;
+
                 if (isUnion)
                 {
                     // Union: all fields overlap at offset 0 and the struct size
@@ -96,11 +116,8 @@ class Parser2 : StageParser
                 }
                 else
                 {
-                    // Standard struct layout: align sizes and place the field
-                    // after the previous fields. The alignment policy here is
-                    // simplified: round-up current size to a multiple of the
-                    // field size, then place the field.
-                    int offs = ((st.Size + decl.type.Size - 1) / decl.type.Size) * decl.type.Size;
+                    // Struct: fields are laid out sequentially with padding as needed
+                    int offs = ((st.Size + alignment - 1) / alignment) * alignment;
                     fs.Offset = offs;
                     st.SetSize(offs + decl.type.Size);
                 }
@@ -111,6 +128,11 @@ class Parser2 : StageParser
 
             if (!Expect(Token.RBrace))
                     return false;
+
+            // Final struct size is rounded up to the alignment
+            int size = st.Size;
+            size = ((size + st.Alignment - 1) / st.Alignment) * st.Alignment;
+            st.SetSize(size);
 
             return true;
         }
