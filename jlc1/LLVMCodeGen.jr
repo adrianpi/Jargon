@@ -1574,13 +1574,50 @@ class CodeGenVisitor : CodeVisitor
 		function = null;
 	}
 
-	// VisitStruct - emit IR type definition for struct; unions are emitted
-	// as arrays of i8 to match their size in bytes.
+	// VisitStruct - emit IR type definition for struct and unions.
 	void VisitStruct(StructType s)
 	{
 		if (s.Flags & SymbolFlags.Union != 0)
         {
-            sb.appendLine(string.format("%%struct.%s = type { [%d x i8] }", s.Name, s.Size));
+			// For unions, emit a struct with a field of the max alignment size
+			// followed by an array of i8 to pad to the total size of the union.
+			// This ensures the correct alignment (and size) for the union type
+			// when used inside other structs or unions.
+
+			if(s.Children.count == 0)
+			{
+				// For empty unions, emit an empty struct.
+				sb.appendLine(string.format("%%struct.%s = type {}", s.Name));
+				return;
+			}
+
+			// Find the field with the maximum alignment requirement.
+			int maxAlignment = 0;
+			FieldSymbol maxAlignField = null;
+			for(int i = 0; i < s.Children.count; ++i)
+			{
+				FieldSymbol fs = s.Children[i] as FieldSymbol;
+				int align = Parser2.GetAlignment(fs.DataType);
+				if(align > maxAlignment)
+				{
+					maxAlignment = align;
+					maxAlignField = fs;
+				}
+			}
+
+			// Emit a struct with the max alignment field followed by padding 
+			// to match the total size of the union.
+			TypeSymbol alignType = maxAlignField.DataType;
+			if(alignType.IsArray())
+				alignType = alignType.ElementType;
+			
+			sb.append(string.format("%%struct.%s = type {", s.Name));
+			sb.append(IRType(alignType, false));
+			if(s.Size > alignType.Size)
+			{
+				sb.append(string.format(", [%d x i8]", s.Size - alignType.Size));
+			}
+            sb.appendLine("}");
         }
         else
         {
