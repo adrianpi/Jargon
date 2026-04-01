@@ -62,7 +62,7 @@ namespace Jargon
             {
                 if (_long && type.ElementType is Function fn)
                 {
-                    return IRType(fn.ElementType);
+                    return IRType(fn, _long);
                 }
                 else
                 {
@@ -148,7 +148,7 @@ namespace Jargon
             {
                 if (_long && type.ElementType is Function fn)
                 {
-                    return IRType(fn.ElementType);
+                    return IRType2(fn, _long);
                 }
                 else
                 {
