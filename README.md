@@ -28,6 +28,8 @@
 - **jlc1** - Jargon Compiler implemented in Jargon, compiled with jlc0
 - **jlc2** - Jargon Compiler implemented in Jargon, compiled with jlc1, to check for no degradation
 - **Test** - Test project
+- **ComTest** - Exampe of using COM
+- **WinApp** - Example of minimal Windows application
 
 ## Usage
 
