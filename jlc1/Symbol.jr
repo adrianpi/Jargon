@@ -351,6 +351,8 @@ class ArrayType : TypeSymbol
 // PointerType: represents a pointer to another TypeSymbol. Size is target-address width.
 class PointerType : TypeSymbol
 {
+    TypeSymbol StrongElementType;  
+
     bool IsPointer() => true;
 
     bool IsClassRef() => this.ElementType.IsClass();

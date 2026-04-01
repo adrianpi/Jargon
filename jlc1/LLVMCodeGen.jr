@@ -462,7 +462,7 @@ class CodeGenVisitor : CodeVisitor
             if (_long && type.ElementType is Function)
             {
 				Function fn = type.ElementType as Function;
-                return IRType(fn, false);                    
+                return IRType(fn, _long);
             }
             else
             {
@@ -481,7 +481,7 @@ class CodeGenVisitor : CodeVisitor
                 LocalVariable p = fn.Parameters[i];
                 n = n + IRType(p.DataType, false);
             }
-            if (fn.Flags & SymbolFlags.Variadic != 0)
+            if ((fn.Flags & SymbolFlags.Variadic) != 0)
             {
                 if (fn.Parameters.count > 0)
                     n += ", ...";
@@ -1675,7 +1675,6 @@ class CodeGenVisitor : CodeVisitor
 		for(int i = 0; i < cu.SymbolRefs.count; ++i)
 		{
 			Symbol s = cu.SymbolRefs[i];
-			GlobalVariable gv = s as GlobalVariable;
 			s.Visit(this);
 		}
 

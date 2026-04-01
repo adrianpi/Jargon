@@ -91,6 +91,9 @@ class CompileUnit
     // Prevents duplicate entries either by reference equality or by name.
     void AddSymbolRef(Symbol s)
     {
+        if(s.Name == "")
+            return; // anonymous objects cannot be referenced
+
         for(int i = 0; i < SymbolRefs.count; ++i)
         {
             Symbol sr = SymbolRefs[i];
@@ -924,9 +927,14 @@ class BaseParser
 
             if(td.type == DeclaratorType.Pointer)
             {
-                if (item.type.IsFunction())
+                TypeSymbol fn = item.type as Function;
+                // For function pointers keep it anonymous
+                if (fn != null)
                     item.type.Name = "";
                 item.type = item.type.GetPointerType();
+                // Keep a strong reference. Pointer 'owns' the anonymouse function
+                if(fn != null)
+                    (item.type as PointerType).StrongElementType = fn;
             }
             else if(td.type == DeclaratorType.Reference)
             {
