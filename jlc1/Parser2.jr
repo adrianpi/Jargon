@@ -384,7 +384,6 @@ class Parser2 : StageParser
                     // Mangle function name to include class scope and register
                     // the function symbol with the compile unit for later use.
                     fn.Name = string.format("%s__%s", cls.Name, fn.Name);
-                    //!
                     module.AddChild(fn);
                     unit.AddSymbol(fn);
 
@@ -648,18 +647,14 @@ class Parser2 : StageParser
         }
 
         MethodSymbol baseFinalizeMethod = cls.BaseClass.FindChild("finalize") as MethodSymbol;
-        //Debug.Assert(baseFinalizeMethod != null);
         Function baseFinalize = baseFinalizeMethod.DataType as Function;
-        //Debug.Assert(baseFinalize != null);
         FindOrImport(baseFinalize.Name);
         FunctionCallExpression baseCall = new FunctionCallExpression(new SymbolExpression(baseFinalize));
         baseCall.Arguments.add(new SymbolExpression(finalizeThis));
         finalize.Body.Statements.add(new ExpressionStatement(baseCall));
 
         MethodSymbol finBase = cls.FindChild("finalize") as MethodSymbol;
-        //Debug.Assert(finBase != null);
         int vslot = finBase.VSlot;
-        //Debug.Assert(vslot != -1);
         MethodSymbol finalizeMethod = new MethodSymbol(cls, "finalize", finalize.DataType as Function);
         finalizeMethod.VSlot = vslot;
         finalizeMethod.Flags += SymbolFlags.Virtual;
@@ -691,11 +686,8 @@ class Parser2 : StageParser
             {
                 Function fn = v.GetFunction();
                 // Ensure we add a reference to the function symbol so it is
-                // available during later stages. Some runtime module loading
-                // code requires using the return value to avoid temporary
-                // optimizations; the important part is that the symbol is
-                // resolved and present in the compile unit/module.
-                Symbol tmp = FindOrImport(fn.Name); // <=== CRASHES IF NOT ASSIGNED TO SOMETHING.
+                // available during later stages.
+                FindOrImport(fn.Name);
                 vini.Expressions.add(new AddressOfExpression(new SymbolExpression(fn)));
             }
         }
@@ -758,7 +750,6 @@ class Parser2 : StageParser
 
             if(decl.type.IsFunction())
             {
-                //!
                 module.AddChild(decl.type);
                 // Register the function signature (type) with the unit so
                 // later passes can resolve method bodies and generate code.

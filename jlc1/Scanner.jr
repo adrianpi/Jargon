@@ -1,5 +1,20 @@
 using jargon;
 
+/*
+Scanner.jr
+
+This file implements the Scanner class, which performs lexical analysis for
+the Jargon compiler. The scanner reads the input source code and produces a
+stream of tokens for the parser. It also captures semantic values (e.g. string
+literals, numeric literals) and position information (line/column) for error
+reporting. The scanner supports lookahead by allowing the parser to save and
+restore its internal state, enabling speculative parsing without consuming tokens.
+The scanner recognizes keywords, identifiers, literals, operators, and
+punctuation according to the language specification. It also handles comments and
+whitespace. Lexical errors are reported via a callback mechanism to the compiler's
+error listener.
+*/
+
 // External C runtime helpers used for numeric conversions. These are provided
 // by the runtime and declared as externals so the scanner can reuse them.
 int atoi(byte *str) external;
@@ -835,19 +850,8 @@ class Scanner
                 }
                 else
                 {
-                    /*int cnt = sizeof(keywords) / sizeof(keywords[0]); // countof
-                    bool found = false;
-                    for(int i = 0; i < cnt; ++i) {
-                        if(tokenString == keywords[i]) {
-                            found = true;
-                            break;
-                        }
-                    }*/
                     bool found = keywordsSet.contains(tokenString);
-                    if(found)
-                        token = Token.Keyword;
-                    else
-                        token = Token.Ident;
+                    token = found ? Token.Keyword : Token.Ident;
                 }
             }
             else

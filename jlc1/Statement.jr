@@ -200,6 +200,7 @@ class ForStatement : LoopStatement
 	}
 }
 
+// EmptyStatement: represents an empty statement (a lone semicolon).
 class EmptyStatement : Statement
 {
 

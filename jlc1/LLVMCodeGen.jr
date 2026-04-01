@@ -354,8 +354,7 @@ class CodeGenVisitor : CodeVisitor
             else if (e.op == BinOp.Greater) op = "fcmp ogt";
             else if (e.op == BinOp.LEqual) op = "fcmp ole";
             else if (e.op == BinOp.GEqual) op = "fcmp oge";
-            //else Error("Invalid operation", e.file, e.line);
-            else op = "***ERROR***";
+            else Error("Invalid operation", e.file, e.line);
 
             e.Tag = NewTag();
             sb.appendLine(string.format("\t%s = %s %s %s, %s%s", e.Tag, op, IRType(lt, false), e.Left.Tag, e.Right.Tag, sdbg));
@@ -932,8 +931,6 @@ class CodeGenVisitor : CodeVisitor
 
 				string tag = e.Left.Tag;
 				sb.appendLine(string.format("\tstore %s %s, ptr %s%s", IRType(ldt, false), e.Right.Tag, e.Left.Tag, sdbg));
-				//e.Tag = NewTag();
-				//sb.appendLine(string.format("\t%s = load %s, ptr %s%s", e.Tag, IRType(ldt, false), e.Left.Tag, sdbg));
 				e.Tag = e.Right.Tag;
 
 				if (e.decl != null && options.DebugInfo)
@@ -1410,13 +1407,7 @@ class CodeGenVisitor : CodeVisitor
             sdbg = string.format(", !dbg !%d", gve.ID);
         }
 
-        /*todo:if(s.Init != null && s.DataType.IsPointer() && s.DataType.ElementType == TypeSymbol.Byte
-            && s.Init.DataType.IsPointer() && s.Init.DataType.ElementType == TypeSymbol.Byte
-            && s.Init is ConstantExpression cstr)
-        {
-            sb.AppendLine($"@{s.Name} = global ptr @{cstr.CString}{dbg}");
-        }
-        else*/ if (sdt.IsStruct() || sdt.IsArray() || sdt.IsPointer())
+        if (sdt.IsStruct() || sdt.IsArray() || sdt.IsPointer())
         {
             sb.appendLine(string.format("@%s = global %s zeroinitializer%s", s.Name, IRType(s.DataType, false), sdbg));
         }
@@ -1481,8 +1472,6 @@ class CodeGenVisitor : CodeVisitor
 		
 		sb.appendLine("{");
 
-		//sb.appendLine(string.format("$%s_entry:", s.Name));
-
 		// Emit allocas and store incoming parameter values to their stack slots.
 		for(int i = 0; i < s.Parameters.count; ++i)
 		{
@@ -1520,11 +1509,7 @@ class CodeGenVisitor : CodeVisitor
 							DILocation loc = DINode.FunctionMap[function].GetLocation(lv.line);
 							sb.appendLine(string.format("\t#dbg_declare(ptr %%%s_%d, !%d, !DIExpression(), !%d)", lv.Name, -lv.Offset, DINode.LocalMap[lv].ID, loc.ID));
 						}
-
-						/*if(lv.DataType.IsClassRef())
-							sb.appendLine(string.format("\tstore ptr null, ptr %%%s_%d", lv.Name, -lv.Offset));*/
                     }
-                    //lv.TagName = $"%{lv.Name + "_" + (-lv.Offset).ToString("X")}";
 				}
 			}
 		}

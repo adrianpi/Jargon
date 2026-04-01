@@ -129,7 +129,6 @@ class Parser4 : StageParser
                     fn.Name = string.format("%s__%s", cls.Name, fn.Name);
 
                     Function existingFn = module.Find(fn.Name) as Function;
-                    //!fn.Parent.RemoveChild(fn);
                     fn = existingFn;
                     fn.fileName = fileName;
                     for(int i = 0; i < fn.Parameters.count; ++i)

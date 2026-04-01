@@ -1,5 +1,12 @@
 using jargon;
 
+// Main.jr
+// This file contains the entry point for the Jargon compiler. It processes
+// command-line arguments, sets up compiler options, and invokes the compilation 
+// process. The main function also initializes type information and performs
+// cleanup after compilation.
+// The implicit finalizers are for checking leaks and not really necessary.
+
 long GetModuleHandleA(byte *name) external;
 
 int start(array<string> args)

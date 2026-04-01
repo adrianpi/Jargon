@@ -112,7 +112,6 @@ class Symbol
 
         if (!(child is ArrayType)) // May produce duplicates, but we wont look up array types by type name
         {
-            //System.Diagnostics.Debug.Assert(!lookup.ContainsKey(child.Name), $"Duplicate symbol name '{child.Name}' in '{Name}'");
             lookup[child.Name] = child;
         }
     }
@@ -121,12 +120,6 @@ class Symbol
     // recursively searches parent chain. This implements simple lexical lookup.
     Symbol Find(string name)
     {
-        /*for(int i = 0; i < Children.count; ++i)
-        {
-            Symbol ch = Children[i];
-            if(ch.Name == name)
-                return ch;
-        }*/
         Symbol sym = lookup[name];
         if (sym != null)
             return sym;
@@ -145,12 +138,6 @@ class Symbol
     // FindChild: non-recursive search among immediate children only.
     virtual Symbol FindChild(string name)
     {
-        /*for(int i = 0; i < Children.count; ++i)
-        {
-            Symbol ch = Children[i];
-            if(ch.Name == name)
-                return ch;
-        }*/
         Symbol sym = lookup[name];
         if (sym != null)
             return sym;
@@ -672,12 +659,6 @@ class ClassType : TypeSymbol
     // searches the base class chain so inherited members are visible.
     Symbol FindChild(string name)
     {
-        /*for(int i = 0; i < Children.count; ++i)
-        {
-            Symbol ch = Children[i];
-            if(ch.Name == name)
-                return ch;
-        }*/
         Symbol sym = lookup[name];
         if (sym != null)
             return sym;
@@ -741,6 +722,7 @@ class ModuleUsing
     }
 }
 
+// ConstantValue: represents a named constant with an associated expression value.
 class ConstantValue : Symbol
 {
     Expression Value;
