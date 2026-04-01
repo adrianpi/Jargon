@@ -1,0 +1,126 @@
+using jargon;
+
+// Minimal Win32 application in Jargon
+// This code creates a simple window and runs a message loop 
+// until the window is closed.
+
+// Constants for window styles and messages
+const int WS_OVERLAPPEDWINDOW = 0x00CF0000;
+const int CW_USEDEFAULT = 0x80000000;
+const int SW_SHOW = 5;
+const int WM_DESTROY = 0x0002;
+
+// Structures for window class and messages
+struct WNDCLASSA {
+    uint    style;
+    void*   lpfnWndProc;
+    int     cbClsExtra;
+    int     cbWndExtra;
+    long    hInstance;
+    long    hIcon;
+    long    hCursor;
+    long    hbrBackground;
+    byte*   lpszMenuName;
+    byte*   lpszClassName;
+}
+
+struct POINT {
+    int x;
+    int y;
+}
+
+struct MSG {
+    long    hwnd;
+    uint    message;
+    ulong   wParam;
+    ulong   lParam;
+    uint    time;
+    POINT   pt;
+}
+
+// External functions from the Windows API
+void PostQuitMessage(int nExitCode) external;
+long DefWindowProcA(long hwnd, uint uMsg, ulong wParam, ulong lParam) external;
+short RegisterClassA(WNDCLASSA* lpWndClass) external;
+long CreateWindowExA(
+    uint dwExStyle,
+    byte* lpClassName,
+    byte* lpWindowName,
+    uint dwStyle,
+    int X,
+    int Y,
+    int nWidth,
+    int nHeight,
+    long hWndParent,
+    long hMenu,
+    long hInstance,
+    void* lpParam
+) external;
+short GetMessageA(MSG* lpMsg, long hWnd, uint wMsgFilterMin, uint wMsgFilterMax) external;
+void TranslateMessage(MSG* lpMsg) external;
+void DispatchMessageA(MSG* lpMsg) external;
+void ShowWindow(long hWnd, int nCmdShow) external;
+long GetModuleHandleA(byte* lpModuleName) external;
+
+// Class name for the window
+string CLASS_NAME = "MinimalWin32Window";
+
+// Window procedure callback function
+long WindowProc(long hwnd, uint uMsg, uint wParam, ulong lParam)
+{
+    if (uMsg == WM_DESTROY)
+    {
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+}
+
+// Entry point for Windows applications
+int WinMain(long hInstance, long hPrevInstance, byte *pstrCommandLine, int nCmdShow)
+{  
+    // Register window class
+    WNDCLASSA wc = {};
+    wc.lpfnWndProc   = WindowProc;
+    wc.hInstance     = hInstance;
+    wc.lpszClassName = CLASS_NAME.c_str();
+
+    RegisterClassA(&wc);
+
+    // Create window
+    long hwnd = CreateWindowExA(
+        0,                          // Optional styles
+        CLASS_NAME.c_str(),         // Window class
+        "Minimal Win32 App",        // Window title
+        WS_OVERLAPPEDWINDOW,        // Window style
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+        0,                          // Parent window
+        0,                          // Menu
+        hInstance,                  // Instance handle
+        null                        // Additional data
+    );
+
+    // Check if window creation succeeded
+    if (hwnd == null)
+        return 0;
+
+    // Show window
+    ShowWindow(hwnd, nCmdShow);
+
+    // Message loop
+    MSG msg = {};
+    while (GetMessageA(&msg, null, 0, 0))
+    {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+
+    return 0;
+}
+
+// TODO: Remove this when we can directly specify WinMain as the entry point
+// (/SUBSYSTEM:WINDOWS and /ENTRY:WinMain) in the linker options
+int main(int argc, byte **argv)
+{
+    return WinMain(GetModuleHandleA(null), 0, null, SW_SHOW);
+}
