@@ -296,14 +296,8 @@ class TypeInfo
                             byte getset = 0;
                             if (ps.Getter != null)
                                 getset |= 1;
-                                /*WriteString(buffer, ps.Getter.Name);
-                            else
-                                WriteString(buffer, "");*/
                             if (ps.Setter != null)
                                 getset |= 2;
-                                /*WriteString(buffer, ps.Setter.Name);
-                            else
-                                WriteString(buffer, "");*/
                             WriteByte(buffer, getset);
                         }
                     }
@@ -446,7 +440,6 @@ class TypeInfo
         else if(tc == TypeCode.Struct)
         {
             string name = br.readString();
-            //println("type is struct %s", name);
             TypeSymbol t = module.Find(name) as TypeSymbol;
             if(t == null)
             {
@@ -463,7 +456,6 @@ class TypeInfo
         }
         else
         {
-            //System.Diagnostics.Debug.Assert(false);
             return null;
         }
     }
@@ -610,9 +602,6 @@ class TypeInfo
                 int fcnt = br.readShort();
                 ClassType cls = new ClassType(module, name);
                 cls.Flags = (SymbolFlags)flags;
-                // flag static fields as External when importing a class for static fields to work
-                //if((cls.Flags & SymbolFlags.Static) != 0)
-                //    cls.Flags += SymbolFlags.External;
                 cls.BaseClass = baseType;
                 cls.SetSize(csz);
                 cls.FieldCount = fcnt;
@@ -652,13 +641,7 @@ class TypeInfo
                         flags = br.readShort();
                         TypeSymbol pt = ReadType(br, module);
                         name = br.readString();
-                        /*string getter = br.readString();
-                        string setter = br.readString();*/
                         PropertySymbol prop = new PropertySymbol(cls, name, pt);
-                        /*if (getter != strEmpty)
-                            getterMap[prop] = getter;
-                        if (setter != strEmpty)
-                            setterMap[prop] = setter;*/
                         byte getset = br.readByte();
                         if((getset & 1) != 0)
                             getterMap[prop] = string.format("get_%s", name);
@@ -672,7 +655,6 @@ class TypeInfo
                 while(name != strEmpty)
                 {
                     MethodSymbol m = cls.FindChild(name) as MethodSymbol;
-                    //System.Diagnostics.Debug.Assert(m != null);
                     cls.VirtualMethods.add(m);
                     name = br.readString();
                 }
@@ -701,7 +683,6 @@ class TypeInfo
         {
             MethodSymbol m = methodKeys[i];
             Function fn = module.Find(methodMap[m]) as Function;
-            //System.Diagnostics.Debug.Assert(fn != null);
             m.SetFunction(fn);
 
             /*todo:if ((m.Flags & SymbolFlags.Static) != 0
@@ -721,7 +702,6 @@ class TypeInfo
         {
             PropertySymbol p = getterKeys[i];
             MethodSymbol msym = p.Parent.Find(getterMap[p]) as MethodSymbol;
-            //System.Diagnostics.Debug.Assert(msym != null);
             p.Getter = msym;
         }
 
@@ -730,7 +710,6 @@ class TypeInfo
         {
             PropertySymbol p = setterKeys[i];
             MethodSymbol msym = p.Parent.Find(setterMap[p]) as MethodSymbol;
-            //System.Diagnostics.Debug.Assert(msym != null);
             p.Setter = msym;
         }
 
