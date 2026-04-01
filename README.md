@@ -43,7 +43,6 @@ jlc1 -g Main.jr -o Test.exe
 
 - **Windows** with Visual Studio 2022
 - **LLVM / Clang** toolchain (`clang-cl` must be available)
-- A pre-built `jlc1` binary for initial bootstrapping
 
 ## Building
 
