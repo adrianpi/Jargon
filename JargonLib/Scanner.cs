@@ -661,7 +661,7 @@ namespace Jargon
                     NextChar();
                 }
 
-                if (isReal && c == 'f')
+                if (isReal && (c == 'f' || c == 'F'))
                 {
                     isFloat = true;
                     NextChar();
