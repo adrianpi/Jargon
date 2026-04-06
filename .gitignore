@@ -368,6 +368,9 @@ FodyWeavers.xsd
 # Generated DLL files
 *.dll
 
+# LLVM IR files
+*.ll
+
 # Test-generated files
 /Test/meta.exe
 /Test/meta2.exe

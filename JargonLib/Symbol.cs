@@ -132,7 +132,7 @@ namespace Jargon
         {
             children.Add(child);
             child.parent = this;
-            if (!(child is ArrayType))
+            if (!(child is ArrayType) && !(child is PointerType))
             {
                 System.Diagnostics.Debug.Assert(!lookup.ContainsKey(child.Name), $"Duplicate symbol name '{child.Name}' in '{Name}'");
                 lookup[child.Name] = child;
@@ -305,7 +305,7 @@ namespace Jargon
 
         public override bool IsEqualTo(object obj)
         {
-            return (obj is PointerType pt) && pt.ElementType == this.ElementType;
+            return (obj is PointerType pt) && pt.ElementType.IsEqualTo(this.ElementType);
         }
 
         public PointerType(Symbol parent, TypeSymbol elementType)

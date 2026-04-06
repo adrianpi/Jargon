@@ -131,9 +131,11 @@ class Parser2 : StageParser
 
             // Final struct size is rounded up to the alignment
             int size = st.Size;
-            size = ((size + st.Alignment - 1) / st.Alignment) * st.Alignment;
-            st.SetSize(size);
-
+            if(size != 0 && st.Alignment != 0)
+            {
+                size = ((size + st.Alignment - 1) / st.Alignment) * st.Alignment;
+                st.SetSize(size);
+            }
             return true;
         }
         else
