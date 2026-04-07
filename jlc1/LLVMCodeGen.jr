@@ -1413,8 +1413,15 @@ class CodeGenVisitor : CodeVisitor
         }
         else
         {
-            long value = 0;
-            sb.appendLine(string.format("@%s = global %s %d%s", s.Name, IRType(s.DataType, false), value, sdbg));
+			if(s.DataType.IsFloatingPoint())
+			{
+				sb.appendLine(string.format("@%s = global %s 0.0 %s", s.Name, IRType(s.DataType, false), sdbg));
+			}
+			else
+			{
+				long value = 0;
+				sb.appendLine(string.format("@%s = global %s %d%s", s.Name, IRType(s.DataType, false), value, sdbg));
+			}
         }
     }
 
