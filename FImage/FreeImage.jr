@@ -1,0 +1,885 @@
+/////////////////////////////////////////////////////////
+// FreeImage.jr - FreeImage 3.19.0 API bindings for Jargon
+//
+// Design and implementation by
+// - Floris van den Berg
+// - Hervé Drolon
+//
+// Licensed under the FreeImage Public License (FIPL)
+// See https://freeimage.sourceforge.io/license.html
+//
+// FreeImage is Copyright (c) 2003-2023 by the FreeImage Project
+// All rights reserved.
+//////////////////////////////////////////////////////////
+
+// =======================================================
+// Version
+// =======================================================
+const int FREEIMAGE_MAJOR_VERSION = 0x03;
+const int FREEIMAGE_MINOR_VERSION = 0x13;
+const int FREEIMAGE_RELEASE_SERIAL = 0x00;
+
+// =======================================================
+// RGBA channel indices (little-endian BGR order)
+// =======================================================
+const int FI_RGBA_RED   = 0x02;
+const int FI_RGBA_GREEN = 0x01;
+const int FI_RGBA_BLUE  = 0x00;
+const int FI_RGBA_ALPHA = 0x03;
+
+// RGBA channel masks
+const uint FI_RGBA_RED_MASK   = 0x00FF0000U;
+const uint FI_RGBA_GREEN_MASK = 0x0000FF00U;
+const uint FI_RGBA_BLUE_MASK  = 0x000000FFU;
+const uint FI_RGBA_ALPHA_MASK = 0xFF000000U;
+
+// RGBA channel shifts
+const int FI_RGBA_RED_SHIFT   = 0x10;
+const int FI_RGBA_GREEN_SHIFT = 0x08;
+const int FI_RGBA_BLUE_SHIFT  = 0x00;
+const int FI_RGBA_ALPHA_SHIFT = 0x18;
+
+// 16-bit 555 masks and shifts
+const int FI16_555_RED_MASK    = 0x7C00;
+const int FI16_555_GREEN_MASK  = 0x03E0;
+const int FI16_555_BLUE_MASK   = 0x001F;
+const int FI16_555_RED_SHIFT   = 0x0A;
+const int FI16_555_GREEN_SHIFT = 0x05;
+const int FI16_555_BLUE_SHIFT  = 0x00;
+
+// 16-bit 565 masks and shifts
+const int FI16_565_RED_MASK    = 0xF800;
+const int FI16_565_GREEN_MASK  = 0x07E0;
+const int FI16_565_BLUE_MASK   = 0x001F;
+const int FI16_565_RED_SHIFT   = 0x0B;
+const int FI16_565_GREEN_SHIFT = 0x05;
+const int FI16_565_BLUE_SHIFT  = 0x00;
+
+// =======================================================
+// ICC profile flags
+// =======================================================
+const int FIICC_DEFAULT       = 0x00;
+const int FIICC_COLOR_IS_CMYK = 0x01;
+
+// =======================================================
+// Load / Save flag constants
+// =======================================================
+const int FIF_LOAD_NOPIXELS = 0x8000;
+
+// BMP
+const int BMP_DEFAULT  = 0x00;
+const int BMP_SAVE_RLE = 0x01;
+
+// CUT
+const int CUT_DEFAULT = 0x00;
+
+// DDS
+const int DDS_DEFAULT = 0x00;
+
+// EXR
+const int EXR_DEFAULT = 0x00;
+const int EXR_FLOAT   = 0x0001;
+const int EXR_NONE    = 0x0002;
+const int EXR_ZIP     = 0x0004;
+const int EXR_PIZ     = 0x0008;
+const int EXR_PXR24   = 0x0010;
+const int EXR_B44     = 0x0020;
+const int EXR_LC      = 0x0040;
+
+// FAXG3
+const int FAXG3_DEFAULT = 0x00;
+
+// GIF
+const int GIF_DEFAULT  = 0x00;
+const int GIF_LOAD256  = 0x01;
+const int GIF_PLAYBACK = 0x02;
+
+// HDR
+const int HDR_DEFAULT = 0x00;
+
+// ICO
+const int ICO_DEFAULT   = 0x00;
+const int ICO_MAKEALPHA = 0x01;
+
+// IFF
+const int IFF_DEFAULT = 0x00;
+
+// J2K / JP2
+const int J2K_DEFAULT = 0x00;
+const int JP2_DEFAULT = 0x00;
+
+// JPEG
+const int JPEG_DEFAULT         = 0x00;
+const int JPEG_FAST            = 0x0001;
+const int JPEG_ACCURATE        = 0x0002;
+const int JPEG_CMYK            = 0x0004;
+const int JPEG_EXIFROTATE      = 0x0008;
+const int JPEG_GREYSCALE       = 0x0010;
+const int JPEG_QUALITYSUPERB   = 0x0080;
+const int JPEG_QUALITYGOOD     = 0x0100;
+const int JPEG_QUALITYNORMAL   = 0x0200;
+const int JPEG_QUALITYAVERAGE  = 0x0400;
+const int JPEG_QUALITYBAD      = 0x0800;
+const int JPEG_PROGRESSIVE     = 0x2000;
+const int JPEG_SUBSAMPLING_411 = 0x1000;
+const int JPEG_SUBSAMPLING_420 = 0x4000;
+const int JPEG_SUBSAMPLING_422 = 0x8000;
+const int JPEG_SUBSAMPLING_444 = 0x10000;
+const int JPEG_OPTIMIZE        = 0x20000;
+const int JPEG_BASELINE        = 0x40000;
+
+// KOALA
+const int KOALA_DEFAULT = 0x00;
+
+// LBM
+const int LBM_DEFAULT = 0x00;
+
+// MNG
+const int MNG_DEFAULT = 0x00;
+
+// PCD
+const int PCD_DEFAULT   = 0x00;
+const int PCD_BASE      = 0x01;
+const int PCD_BASEDIV4  = 0x02;
+const int PCD_BASEDIV16 = 0x03;
+
+// PCX
+const int PCX_DEFAULT = 0x00;
+
+// PFM
+const int PFM_DEFAULT = 0x00;
+
+// PICT
+const int PICT_DEFAULT = 0x00;
+
+// PNG
+const int PNG_DEFAULT               = 0x00;
+const int PNG_IGNOREGAMMA           = 0x01;
+const int PNG_Z_BEST_SPEED          = 0x0001;
+const int PNG_Z_DEFAULT_COMPRESSION = 0x0006;
+const int PNG_Z_BEST_COMPRESSION    = 0x0009;
+const int PNG_Z_NO_COMPRESSION      = 0x0100;
+const int PNG_INTERLACED            = 0x0200;
+
+// PNM
+const int PNM_DEFAULT    = 0x00;
+const int PNM_SAVE_RAW   = 0x00;
+const int PNM_SAVE_ASCII = 0x01;
+
+// PSD
+const int PSD_DEFAULT = 0x00;
+const int PSD_CMYK    = 0x01;
+const int PSD_LAB     = 0x02;
+const int PSD_NONE    = 0x0100;
+const int PSD_RLE     = 0x0200;
+const int PSD_PSB     = 0x2000;
+
+// RAS
+const int RAS_DEFAULT = 0x00;
+
+// RAW
+const int RAW_DEFAULT     = 0x00;
+const int RAW_PREVIEW     = 0x01;
+const int RAW_DISPLAY     = 0x02;
+const int RAW_HALFSIZE    = 0x04;
+const int RAW_UNPROCESSED = 0x08;
+
+// SGI
+const int SGI_DEFAULT = 0x00;
+
+// TARGA
+const int TARGA_DEFAULT     = 0x00;
+const int TARGA_LOAD_RGB888 = 0x01;
+const int TARGA_SAVE_RLE    = 0x02;
+
+// TIFF
+const int TIFF_DEFAULT       = 0x00;
+const int TIFF_CMYK          = 0x0001;
+const int TIFF_PACKBITS      = 0x0100;
+const int TIFF_DEFLATE       = 0x0200;
+const int TIFF_ADOBE_DEFLATE = 0x0400;
+const int TIFF_NONE          = 0x0800;
+const int TIFF_CCITTFAX3     = 0x1000;
+const int TIFF_CCITTFAX4     = 0x2000;
+const int TIFF_LZW           = 0x4000;
+const int TIFF_JPEG          = 0x8000;
+const int TIFF_LOGLUV        = 0x10000;
+
+// WBMP
+const int WBMP_DEFAULT = 0x00;
+
+// XBM / XPM
+const int XBM_DEFAULT = 0x00;
+const int XPM_DEFAULT = 0x00;
+
+// WEBP
+const int WEBP_DEFAULT  = 0x00;
+const int WEBP_LOSSLESS = 0x0100;
+
+// JXR
+const int JXR_DEFAULT     = 0x00;
+const int JXR_LOSSLESS    = 0x0064;
+const int JXR_PROGRESSIVE = 0x2000;
+
+// Background filling options
+const int FI_COLOR_IS_RGB_COLOR     = 0x00;
+const int FI_COLOR_IS_RGBA_COLOR    = 0x01;
+const int FI_COLOR_FIND_EQUAL_COLOR = 0x02;
+const int FI_COLOR_ALPHA_IS_INDEX   = 0x04;
+
+// RescaleEx options
+const int FI_RESCALE_DEFAULT       = 0x00;
+const int FI_RESCALE_TRUE_COLOR    = 0x01;
+const int FI_RESCALE_OMIT_METADATA = 0x02;
+
+// =======================================================
+// Enums
+// =======================================================
+
+// I/O image format identifiers
+enum ImageFormat
+{
+    Unknown     = 0xFFFFFFFF,
+    Bmp         = 0x00,
+    Ico         = 0x01,
+    Jpeg        = 0x02,
+    Jng         = 0x03,
+    Koala       = 0x04,
+    Lbm         = 0x05,
+    Mng         = 0x06,
+    Pbm         = 0x07,
+    PbmRaw      = 0x08,
+    Pcd         = 0x09,
+    Pcx         = 0x0A,
+    Pgm         = 0x0B,
+    PgmRaw      = 0x0C,
+    Png         = 0x0D,
+    Ppm         = 0x0E,
+    PpmRaw      = 0x0F,
+    Ras         = 0x10,
+    Targa       = 0x11,
+    Tiff        = 0x12,
+    Wbmp        = 0x13,
+    Psd         = 0x14,
+    Cut         = 0x15,
+    Xbm         = 0x16,
+    Xpm         = 0x17,
+    Dds         = 0x18,
+    Gif         = 0x19,
+    Hdr         = 0x1A,
+    FaxG3       = 0x1B,
+    Sgi         = 0x1C,
+    Exr         = 0x1D,
+    J2k         = 0x1E,
+    Jp2         = 0x1F,
+    Pfm         = 0x20,
+    Pict        = 0x21,
+    Raw         = 0x22,
+    Webp        = 0x23,
+    Jxr         = 0x24,
+}
+
+// Image type
+enum ImageType
+{
+    Unknown     = 0x00,
+    Bitmap      = 0x01,
+    UInt16      = 0x02,
+    Int16       = 0x03,
+    UInt32      = 0x04,
+    Int32       = 0x05,
+    Float       = 0x06,
+    Double      = 0x07,
+    Complex     = 0x08,
+    Rgb16       = 0x09,
+    Rgba16      = 0x0A,
+    RgbF        = 0x0B,
+    RgbaF       = 0x0C,
+}
+
+// Image color type
+enum ColorType
+{
+    MinIsWhite  = 0x00,
+    MinIsBlack  = 0x01,
+    Rgb         = 0x02,
+    Palette     = 0x03,
+    RgbAlpha    = 0x04,
+    Cmyk        = 0x05,
+}
+
+// Color quantization algorithms
+enum Quantize
+{
+    WuQuant     = 0x00,
+    NnQuant     = 0x01,
+    LfpQuant    = 0x02,
+}
+
+// Dithering algorithms
+enum Dither
+{
+    FloydSteinberg = 0x00,
+    Bayer4x4       = 0x01,
+    Bayer8x8       = 0x02,
+    Cluster6x6     = 0x03,
+    Cluster8x8     = 0x04,
+    Cluster16x16   = 0x05,
+    Bayer16x16     = 0x06,
+}
+
+// Lossless JPEG transformations
+enum JpegOperation
+{
+    None        = 0x00,
+    FlipH       = 0x01,
+    FlipV       = 0x02,
+    Transpose   = 0x03,
+    Transverse  = 0x04,
+    Rotate90    = 0x05,
+    Rotate180   = 0x06,
+    Rotate270   = 0x07,
+}
+
+// Tone mapping operators
+enum ToneMappingOperator
+{
+    Drago03     = 0x00,
+    Reinhard05  = 0x01,
+    Fattal02    = 0x02,
+}
+
+// Upsampling / downsampling filters
+enum Filter
+{
+    Box         = 0x00,
+    Bicubic     = 0x01,
+    Bilinear    = 0x02,
+    BSpline     = 0x03,
+    CatmullRom  = 0x04,
+    Lanczos3    = 0x05,
+}
+
+// Color channels
+enum ColorChannel
+{
+    Rgb         = 0x00,
+    Red         = 0x01,
+    Green       = 0x02,
+    Blue        = 0x03,
+    Alpha       = 0x04,
+    Black       = 0x05,
+    Real        = 0x06,
+    Imag        = 0x07,
+    Mag         = 0x08,
+    Phase       = 0x09,
+}
+
+// Metadata data type (based on TIFF specifications)
+enum MetadataType
+{
+    NoType      = 0x00,
+    Byte        = 0x01,
+    Ascii       = 0x02,
+    Short       = 0x03,
+    Long        = 0x04,
+    Rational    = 0x05,
+    SByte       = 0x06,
+    Undefined   = 0x07,
+    SShort      = 0x08,
+    SLong       = 0x09,
+    SRational   = 0x0A,
+    Float       = 0x0B,
+    Double      = 0x0C,
+    Ifd         = 0x0D,
+    Palette     = 0x0E,
+    Long8       = 0x10,
+    SLong8      = 0x11,
+    Ifd8        = 0x12,
+}
+
+// Metadata models
+enum MetadataModel
+{
+    NoData         = 0xFFFFFFFF,
+    Comments       = 0x00,
+    ExifMain       = 0x01,
+    ExifExif       = 0x02,
+    ExifGps        = 0x03,
+    ExifMakerNote  = 0x04,
+    ExifInterop    = 0x05,
+    Iptc           = 0x06,
+    Xmp            = 0x07,
+    GeoTiff        = 0x08,
+    Animation      = 0x09,
+    Custom         = 0x0A,
+    ExifRaw        = 0x0B,
+}
+
+// =======================================================
+// Structs
+// =======================================================
+
+// 32-bit RGBA (BGR order on little-endian)
+struct RGBQUAD {
+    byte blue;
+    byte green;
+    byte red;
+    byte reserved;
+}
+
+// 24-bit RGB (BGR order on little-endian)
+struct RGBTRIPLE {
+    byte blue;
+    byte green;
+    byte red;
+}
+
+// Bitmap info header (Windows BITMAPINFOHEADER)
+struct BITMAPINFOHEADER {
+    uint  biSize;
+    int   biWidth;
+    int   biHeight;
+    short biPlanes;
+    short biBitCount;
+    uint  biCompression;
+    uint  biSizeImage;
+    int   biXPelsPerMeter;
+    int   biYPelsPerMeter;
+    uint  biClrUsed;
+    uint  biClrImportant;
+}
+
+// 48-bit RGB (16-bit per channel)
+struct FIRGB16 {
+    short red;
+    short green;
+    short blue;
+}
+
+// 64-bit RGBA (16-bit per channel)
+struct FIRGBA16 {
+    short red;
+    short green;
+    short blue;
+    short alpha;
+}
+
+// 96-bit RGB Float
+struct FIRGBF {
+    float red;
+    float green;
+    float blue;
+}
+
+// 128-bit RGBA Float
+struct FIRGBAF {
+    float red;
+    float green;
+    float blue;
+    float alpha;
+}
+
+// Complex number
+struct FICOMPLEX {
+    double r;
+    double i;
+}
+
+// ICC profile
+struct FIICCPROFILE {
+    short flags;
+    uint  size;
+    void* data;
+}
+
+// I/O structure (function pointers)
+struct FreeImageIO {
+    void* readProc;
+    void* writeProc;
+    void* seekProc;
+    void* tellProc;
+}
+
+// =======================================================
+// Init / DeInit
+// =======================================================
+void FreeImage_Initialise(int loadLocalPluginsOnly) external;
+void FreeImage_DeInitialise() external;
+
+// =======================================================
+// Version
+// =======================================================
+byte* FreeImage_GetVersion() external;
+byte* FreeImage_GetCopyrightMessage() external;
+
+// =======================================================
+// Message output
+// =======================================================
+void FreeImage_SetOutputMessageStdCall(void* omf) external;
+void FreeImage_SetOutputMessage(void* omf) external;
+
+// =======================================================
+// Allocate / Clone / Unload
+// =======================================================
+void* FreeImage_Allocate(int width, int height, int bpp, uint redMask, uint greenMask, uint blueMask) external;
+void* FreeImage_AllocateT(int type, int width, int height, int bpp, uint redMask, uint greenMask, uint blueMask) external;
+void* FreeImage_Clone(void* dib) external;
+void  FreeImage_Unload(void* dib) external;
+
+// Header loading
+int FreeImage_HasPixels(void* dib) external;
+
+// =======================================================
+// Load / Save
+// =======================================================
+void* FreeImage_Load(int fif, byte* filename, int flags) external;
+void* FreeImage_LoadFromHandle(int fif, FreeImageIO* io, void* handle, int flags) external;
+int   FreeImage_Save(int fif, void* dib, byte* filename, int flags) external;
+int   FreeImage_SaveToHandle(int fif, void* dib, FreeImageIO* io, void* handle, int flags) external;
+
+// =======================================================
+// Memory I/O stream
+// =======================================================
+void* FreeImage_OpenMemory(byte* data, uint sizeInBytes) external;
+void  FreeImage_CloseMemory(void* stream) external;
+void* FreeImage_LoadFromMemory(int fif, void* stream, int flags) external;
+int   FreeImage_SaveToMemory(int fif, void* dib, void* stream, int flags) external;
+int   FreeImage_TellMemory(void* stream) external;
+int   FreeImage_SeekMemory(void* stream, int offset, int origin) external;
+int   FreeImage_AcquireMemory(void* stream, byte** data, uint* sizeInBytes) external;
+uint  FreeImage_ReadMemory(void* buffer, uint size, uint count, void* stream) external;
+uint  FreeImage_WriteMemory(void* buffer, uint size, uint count, void* stream) external;
+void* FreeImage_LoadMultiBitmapFromMemory(int fif, void* stream, int flags) external;
+int   FreeImage_SaveMultiBitmapToMemory(int fif, void* bitmap, void* stream, int flags) external;
+
+// =======================================================
+// Plugin Interface
+// =======================================================
+int   FreeImage_GetFIFCount() external;
+int   FreeImage_SetPluginEnabled(int fif, int enable) external;
+int   FreeImage_IsPluginEnabled(int fif) external;
+int   FreeImage_GetFIFFromFormat(byte* format) external;
+int   FreeImage_GetFIFFromMime(byte* mime) external;
+byte* FreeImage_GetFormatFromFIF(int fif) external;
+byte* FreeImage_GetFIFExtensionList(int fif) external;
+byte* FreeImage_GetFIFDescription(int fif) external;
+byte* FreeImage_GetFIFRegExpr(int fif) external;
+byte* FreeImage_GetFIFMimeType(int fif) external;
+int   FreeImage_GetFIFFromFilename(byte* filename) external;
+int   FreeImage_FIFSupportsReading(int fif) external;
+int   FreeImage_FIFSupportsWriting(int fif) external;
+int   FreeImage_FIFSupportsExportBPP(int fif, int bpp) external;
+int   FreeImage_FIFSupportsExportType(int fif, int type) external;
+int   FreeImage_FIFSupportsICCProfiles(int fif) external;
+int   FreeImage_FIFSupportsNoPixels(int fif) external;
+
+// =======================================================
+// Multipage
+// =======================================================
+void* FreeImage_OpenMultiBitmap(int fif, byte* filename, int createNew, int readOnly, int keepCacheInMemory, int flags) external;
+void* FreeImage_OpenMultiBitmapFromHandle(int fif, FreeImageIO* io, void* handle, int flags) external;
+int   FreeImage_SaveMultiBitmapToHandle(int fif, void* bitmap, FreeImageIO* io, void* handle, int flags) external;
+int   FreeImage_CloseMultiBitmap(void* bitmap, int flags) external;
+int   FreeImage_GetPageCount(void* bitmap) external;
+void  FreeImage_AppendPage(void* bitmap, void* data) external;
+void  FreeImage_InsertPage(void* bitmap, int page, void* data) external;
+void  FreeImage_DeletePage(void* bitmap, int page) external;
+void* FreeImage_LockPage(void* bitmap, int page) external;
+void  FreeImage_UnlockPage(void* bitmap, void* data, int changed) external;
+int   FreeImage_MovePage(void* bitmap, int target, int source) external;
+int   FreeImage_GetLockedPageNumbers(void* bitmap, int* pages, int* count) external;
+
+// =======================================================
+// File type request
+// =======================================================
+int FreeImage_GetFileType(byte* filename, int size) external;
+int FreeImage_GetFileTypeFromHandle(FreeImageIO* io, void* handle, int size) external;
+int FreeImage_GetFileTypeFromMemory(void* stream, int size) external;
+int FreeImage_Validate(int fif, byte* filename) external;
+int FreeImage_ValidateFromHandle(int fif, FreeImageIO* io, void* handle) external;
+int FreeImage_ValidateFromMemory(int fif, void* stream) external;
+
+// =======================================================
+// Image type request
+// =======================================================
+int FreeImage_GetImageType(void* dib) external;
+
+// =======================================================
+// Helper routines
+// =======================================================
+int FreeImage_IsLittleEndian() external;
+int FreeImage_LookupX11Color(byte* szColor, byte* nRed, byte* nGreen, byte* nBlue) external;
+int FreeImage_LookupSVGColor(byte* szColor, byte* nRed, byte* nGreen, byte* nBlue) external;
+
+// =======================================================
+// Pixel access
+// =======================================================
+byte* FreeImage_GetBits(void* dib) external;
+byte* FreeImage_GetScanLine(void* dib, int scanline) external;
+int   FreeImage_GetPixelIndex(void* dib, uint x, uint y, byte* value) external;
+int   FreeImage_GetPixelColor(void* dib, uint x, uint y, RGBQUAD* value) external;
+int   FreeImage_SetPixelIndex(void* dib, uint x, uint y, byte* value) external;
+int   FreeImage_SetPixelColor(void* dib, uint x, uint y, RGBQUAD* value) external;
+
+// =======================================================
+// DIB info
+// =======================================================
+uint FreeImage_GetColorsUsed(void* dib) external;
+uint FreeImage_GetBPP(void* dib) external;
+uint FreeImage_GetWidth(void* dib) external;
+uint FreeImage_GetHeight(void* dib) external;
+uint FreeImage_GetLine(void* dib) external;
+uint FreeImage_GetPitch(void* dib) external;
+uint FreeImage_GetDIBSize(void* dib) external;
+uint FreeImage_GetMemorySize(void* dib) external;
+RGBQUAD* FreeImage_GetPalette(void* dib) external;
+
+uint FreeImage_GetDotsPerMeterX(void* dib) external;
+uint FreeImage_GetDotsPerMeterY(void* dib) external;
+void FreeImage_SetDotsPerMeterX(void* dib, uint res) external;
+void FreeImage_SetDotsPerMeterY(void* dib, uint res) external;
+
+BITMAPINFOHEADER* FreeImage_GetInfoHeader(void* dib) external;
+void* FreeImage_GetInfo(void* dib) external;
+int  FreeImage_GetColorType(void* dib) external;
+
+uint FreeImage_GetRedMask(void* dib) external;
+uint FreeImage_GetGreenMask(void* dib) external;
+uint FreeImage_GetBlueMask(void* dib) external;
+
+uint  FreeImage_GetTransparencyCount(void* dib) external;
+byte* FreeImage_GetTransparencyTable(void* dib) external;
+void  FreeImage_SetTransparent(void* dib, int enabled) external;
+void  FreeImage_SetTransparencyTable(void* dib, byte* table, int count) external;
+int   FreeImage_IsTransparent(void* dib) external;
+void  FreeImage_SetTransparentIndex(void* dib, int index) external;
+int   FreeImage_GetTransparentIndex(void* dib) external;
+
+int  FreeImage_HasBackgroundColor(void* dib) external;
+int  FreeImage_GetBackgroundColor(void* dib, RGBQUAD* bkcolor) external;
+int  FreeImage_SetBackgroundColor(void* dib, RGBQUAD* bkcolor) external;
+
+void* FreeImage_GetThumbnail(void* dib) external;
+int   FreeImage_SetThumbnail(void* dib, void* thumbnail) external;
+
+// =======================================================
+// ICC profile
+// =======================================================
+FIICCPROFILE* FreeImage_GetICCProfile(void* dib) external;
+FIICCPROFILE* FreeImage_CreateICCProfile(void* dib, void* data, int size) external;
+void FreeImage_DestroyICCProfile(void* dib) external;
+
+// =======================================================
+// Line conversion routines
+// =======================================================
+
+// To 4-bit
+void FreeImage_ConvertLine1To4(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine8To4(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine16To4_555(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine16To4_565(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine24To4(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine32To4(byte* target, byte* source, int widthInPixels) external;
+
+// To 8-bit
+void FreeImage_ConvertLine1To8(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine4To8(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine16To8_555(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine16To8_565(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine24To8(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine32To8(byte* target, byte* source, int widthInPixels) external;
+
+// To 16-bit 555
+void FreeImage_ConvertLine1To16_555(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine4To16_555(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine8To16_555(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine16_565_To16_555(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine24To16_555(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine32To16_555(byte* target, byte* source, int widthInPixels) external;
+
+// To 16-bit 565
+void FreeImage_ConvertLine1To16_565(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine4To16_565(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine8To16_565(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine16_555_To16_565(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine24To16_565(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine32To16_565(byte* target, byte* source, int widthInPixels) external;
+
+// To 24-bit
+void FreeImage_ConvertLine1To24(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine4To24(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine8To24(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine16To24_555(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine16To24_565(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine32To24(byte* target, byte* source, int widthInPixels) external;
+
+// To 32-bit
+void FreeImage_ConvertLine1To32(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine1To32MapTransparency(byte* target, byte* source, int widthInPixels, RGBQUAD* palette, byte* table, int transparentPixels) external;
+void FreeImage_ConvertLine4To32(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine4To32MapTransparency(byte* target, byte* source, int widthInPixels, RGBQUAD* palette, byte* table, int transparentPixels) external;
+void FreeImage_ConvertLine8To32(byte* target, byte* source, int widthInPixels, RGBQUAD* palette) external;
+void FreeImage_ConvertLine8To32MapTransparency(byte* target, byte* source, int widthInPixels, RGBQUAD* palette, byte* table, int transparentPixels) external;
+void FreeImage_ConvertLine16To32_555(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine16To32_565(byte* target, byte* source, int widthInPixels) external;
+void FreeImage_ConvertLine24To32(byte* target, byte* source, int widthInPixels) external;
+
+// =======================================================
+// Smart conversion
+// =======================================================
+void* FreeImage_ConvertTo4Bits(void* dib) external;
+void* FreeImage_ConvertTo8Bits(void* dib) external;
+void* FreeImage_ConvertToGreyscale(void* dib) external;
+void* FreeImage_ConvertTo16Bits555(void* dib) external;
+void* FreeImage_ConvertTo16Bits565(void* dib) external;
+void* FreeImage_ConvertTo24Bits(void* dib) external;
+void* FreeImage_ConvertTo32Bits(void* dib) external;
+void* FreeImage_ColorQuantize(void* dib, int quantize) external;
+void* FreeImage_ColorQuantizeEx(void* dib, int quantize, int paletteSize, int reserveSize, RGBQUAD* reservePalette) external;
+void* FreeImage_Threshold(void* dib, byte t) external;
+void* FreeImage_Dither(void* dib, int algorithm) external;
+
+void* FreeImage_ConvertFromRawBits(byte* bits, int width, int height, int pitch, uint bpp, uint redMask, uint greenMask, uint blueMask, int topdown) external;
+void* FreeImage_ConvertFromRawBitsEx(int copySource, byte* bits, int type, int width, int height, int pitch, uint bpp, uint redMask, uint greenMask, uint blueMask, int topdown) external;
+void  FreeImage_ConvertToRawBits(byte* bits, void* dib, int pitch, uint bpp, uint redMask, uint greenMask, uint blueMask, int topdown) external;
+
+void* FreeImage_ConvertToFloat(void* dib) external;
+void* FreeImage_ConvertToRGBF(void* dib) external;
+void* FreeImage_ConvertToRGBAF(void* dib) external;
+void* FreeImage_ConvertToUINT16(void* dib) external;
+void* FreeImage_ConvertToRGB16(void* dib) external;
+void* FreeImage_ConvertToRGBA16(void* dib) external;
+
+void* FreeImage_ConvertToStandardType(void* src, int scaleLinear) external;
+void* FreeImage_ConvertToType(void* src, int dstType, int scaleLinear) external;
+
+// =======================================================
+// Tone mapping
+// =======================================================
+void* FreeImage_ToneMapping(void* dib, int tmo, double firstParam, double secondParam) external;
+void* FreeImage_TmoDrago03(void* src, double gamma, double exposure) external;
+void* FreeImage_TmoReinhard05(void* src, double intensity, double contrast) external;
+void* FreeImage_TmoReinhard05Ex(void* src, double intensity, double contrast, double adaptation, double colorCorrection) external;
+void* FreeImage_TmoFattal02(void* src, double colorSaturation, double attenuation) external;
+
+// =======================================================
+// ZLib interface
+// =======================================================
+uint FreeImage_ZLibCompress(byte* target, uint targetSize, byte* source, uint sourceSize) external;
+uint FreeImage_ZLibUncompress(byte* target, uint targetSize, byte* source, uint sourceSize) external;
+uint FreeImage_ZLibGZip(byte* target, uint targetSize, byte* source, uint sourceSize) external;
+uint FreeImage_ZLibGUnzip(byte* target, uint targetSize, byte* source, uint sourceSize) external;
+uint FreeImage_ZLibCRC32(uint crc, byte* source, uint sourceSize) external;
+
+// =======================================================
+// Metadata - tag creation / destruction
+// =======================================================
+void* FreeImage_CreateTag() external;
+void  FreeImage_DeleteTag(void* tag) external;
+void* FreeImage_CloneTag(void* tag) external;
+
+// Tag getters
+byte* FreeImage_GetTagKey(void* tag) external;
+byte* FreeImage_GetTagDescription(void* tag) external;
+short FreeImage_GetTagID(void* tag) external;
+int   FreeImage_GetTagType(void* tag) external;
+uint  FreeImage_GetTagCount(void* tag) external;
+uint  FreeImage_GetTagLength(void* tag) external;
+void* FreeImage_GetTagValue(void* tag) external;
+
+// Tag setters
+int FreeImage_SetTagKey(void* tag, byte* key) external;
+int FreeImage_SetTagDescription(void* tag, byte* description) external;
+int FreeImage_SetTagID(void* tag, short id) external;
+int FreeImage_SetTagType(void* tag, int type) external;
+int FreeImage_SetTagCount(void* tag, uint count) external;
+int FreeImage_SetTagLength(void* tag, uint length) external;
+int FreeImage_SetTagValue(void* tag, void* value) external;
+
+// Metadata iterator
+void* FreeImage_FindFirstMetadata(int model, void* dib, void** tag) external;
+int   FreeImage_FindNextMetadata(void* mdhandle, void** tag) external;
+void  FreeImage_FindCloseMetadata(void* mdhandle) external;
+
+// Metadata setter and getter
+int FreeImage_SetMetadata(int model, void* dib, byte* key, void* tag) external;
+int FreeImage_GetMetadata(int model, void* dib, byte* key, void** tag) external;
+int FreeImage_SetMetadataKeyValue(int model, void* dib, byte* key, byte* value) external;
+
+// Metadata helpers
+uint FreeImage_GetMetadataCount(int model, void* dib) external;
+int  FreeImage_CloneMetadata(void* dst, void* src) external;
+
+// Tag to string
+byte* FreeImage_TagToString(int model, void* tag, byte* make) external;
+
+// =======================================================
+// JPEG lossless transformations
+// =======================================================
+int FreeImage_JPEGTransform(byte* srcFile, byte* dstFile, int operation, int perfect) external;
+int FreeImage_JPEGCrop(byte* srcFile, byte* dstFile, int left, int top, int right, int bottom) external;
+int FreeImage_JPEGTransformFromHandle(FreeImageIO* srcIo, void* srcHandle, FreeImageIO* dstIo, void* dstHandle, int operation, int* left, int* top, int* right, int* bottom, int perfect) external;
+int FreeImage_JPEGTransformCombined(byte* srcFile, byte* dstFile, int operation, int* left, int* top, int* right, int* bottom, int perfect) external;
+int FreeImage_JPEGTransformCombinedFromMemory(void* srcStream, void* dstStream, int operation, int* left, int* top, int* right, int* bottom, int perfect) external;
+
+// =======================================================
+// Rotation and flipping
+// =======================================================
+void* FreeImage_Rotate(void* dib, double angle, void* bkcolor) external;
+void* FreeImage_RotateEx(void* dib, double angle, double xShift, double yShift, double xOrigin, double yOrigin, int useMask) external;
+int   FreeImage_FlipHorizontal(void* dib) external;
+int   FreeImage_FlipVertical(void* dib) external;
+
+// =======================================================
+// Upsampling / downsampling
+// =======================================================
+void* FreeImage_Rescale(void* dib, int dstWidth, int dstHeight, int filter) external;
+void* FreeImage_MakeThumbnail(void* dib, int maxPixelSize, int convert) external;
+void* FreeImage_RescaleRect(void* dib, int dstWidth, int dstHeight, int left, int top, int right, int bottom, int filter, uint flags) external;
+
+// =======================================================
+// Color manipulation (point operations)
+// =======================================================
+int  FreeImage_AdjustCurve(void* dib, byte* lut, int channel) external;
+int  FreeImage_AdjustGamma(void* dib, double gamma) external;
+int  FreeImage_AdjustBrightness(void* dib, double percentage) external;
+int  FreeImage_AdjustContrast(void* dib, double percentage) external;
+int  FreeImage_Invert(void* dib) external;
+int  FreeImage_GetHistogram(void* dib, uint* histo, int channel) external;
+int  FreeImage_GetAdjustColorsLookupTable(byte* lut, double brightness, double contrast, double gamma, int invert) external;
+int  FreeImage_AdjustColors(void* dib, double brightness, double contrast, double gamma, int invert) external;
+uint FreeImage_ApplyColorMapping(void* dib, RGBQUAD* srccolors, RGBQUAD* dstcolors, uint count, int ignoreAlpha, int swap) external;
+uint FreeImage_SwapColors(void* dib, RGBQUAD* colorA, RGBQUAD* colorB, int ignoreAlpha) external;
+uint FreeImage_ApplyPaletteIndexMapping(void* dib, byte* srcindices, byte* dstindices, uint count, int swap) external;
+uint FreeImage_SwapPaletteIndices(void* dib, byte* indexA, byte* indexB) external;
+
+// =======================================================
+// Channel processing
+// =======================================================
+void* FreeImage_GetChannel(void* dib, int channel) external;
+int   FreeImage_SetChannel(void* dst, void* src, int channel) external;
+void* FreeImage_GetComplexChannel(void* src, int channel) external;
+int   FreeImage_SetComplexChannel(void* dst, void* src, int channel) external;
+
+// =======================================================
+// Copy / Paste / Composite
+// =======================================================
+void* FreeImage_Copy(void* dib, int left, int top, int right, int bottom) external;
+int   FreeImage_Paste(void* dst, void* src, int left, int top, int alpha) external;
+void* FreeImage_CreateView(void* dib, uint left, uint top, uint right, uint bottom) external;
+void* FreeImage_Composite(void* fg, int useFileBkg, RGBQUAD* appBkColor, void* bg) external;
+int   FreeImage_PreMultiplyWithAlpha(void* dib) external;
+
+// =======================================================
+// Background filling
+// =======================================================
+int   FreeImage_FillBackground(void* dib, void* color, int options) external;
+void* FreeImage_EnlargeCanvas(void* src, int left, int top, int right, int bottom, void* color, int options) external;
+void* FreeImage_AllocateEx(int width, int height, int bpp, RGBQUAD* color, int options, RGBQUAD* palette, uint redMask, uint greenMask, uint blueMask) external;
+void* FreeImage_AllocateExT(int type, int width, int height, int bpp, void* color, int options, RGBQUAD* palette, uint redMask, uint greenMask, uint blueMask) external;
+
+// =======================================================
+// Miscellaneous
+// =======================================================
+void* FreeImage_MultigridPoissonSolver(void* laplacian, int ncycle) external;
