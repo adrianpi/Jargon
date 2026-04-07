@@ -3,8 +3,11 @@ using jargon;
 ///////////////////////////////////////////////////////////////
 // This is a simple test of hosting the JScript engine via COM.
 // It creates an instance of the engine, sets up a minimal 
-// IActiveScriptSite implementation, and evaluates a simple 
-// Javascript expression.
+// IActiveScriptSite implementation, and runs a simple script.
+//
+// It also registers a named item "MyObject" which is a custom
+// IDispatch object with a SayHello(name) method that can be
+// called from JavaScript.
 ///////////////////////////////////////////////////////////////
 
 // ============================================================
@@ -187,7 +190,7 @@ struct IActiveScriptParse
 }
 
 // ============================================================
-// IActiveScriptSite — our minimal host implementation
+// IActiveScriptSite - our minimal host implementation
 //
 // We build a vtable struct and a single instance so the
 // JScript engine has a site to call back into.
@@ -314,6 +317,121 @@ bool GuidsEqual(IID *a, IID *b)
     return true;
 }
 
+bool StrEqualWide(short *a, short *b)
+{
+    int i = 0;
+    while(a[i] != 0 && b[i] != 0)
+    {
+        if(a[i] != b[i]) return false;
+        i++;
+    }
+    return a[i] == b[i];
+}
+
+// ============================================================
+// MyObject - a custom IDispatch object exposed to JavaScript
+//
+// Exposes a single method: SayHello(name)
+// Returns a BSTR greeting string.
+// DISPID for SayHello = 1
+// ============================================================
+
+uint myObjectRefCount = 1;
+
+void* MyObj_QueryInterface(void *self, IID *riid, void **ppvObject)
+{
+    if(GuidsEqual(riid, &IUnknownIID) || GuidsEqual(riid, &IDispatchIID))
+    {
+        *ppvObject = self;
+        myObjectRefCount++;
+        return 0; // S_OK
+    }
+    *ppvObject = null;
+    return 0x80004002; // E_NOINTERFACE
+}
+
+uint MyObj_AddRef(void *self)
+{
+    myObjectRefCount++;
+    return myObjectRefCount;
+}
+
+uint MyObj_Release(void *self)
+{
+    myObjectRefCount--;
+    return myObjectRefCount;
+}
+
+uint MyObj_GetTypeInfoCount(void *self, uint *pctinfo)
+{
+    *pctinfo = 0;
+    return 0;
+}
+
+uint MyObj_GetTypeInfo(void *self, uint iTInfo, uint lcid, void **ppTInfo)
+{
+    return 0x80004001; // E_NOTIMPL
+}
+
+uint MyObj_GetIDsOfNames(void *self, IID *riid, short **rgszNames, uint cNames, uint lcid, int *rgDispId)
+{
+    short *sayHelloWide = AsciiToWide("SayHello");
+    if(StrEqualWide(rgszNames[0], sayHelloWide))
+    {
+        rgDispId[0] = 1;
+        memory.free(sayHelloWide);
+        return 0; // S_OK
+    }
+    memory.free(sayHelloWide);
+    rgDispId[0] = -1;
+    return 0x80020006; // DISP_E_UNKNOWNNAME
+}
+
+uint MyObj_Invoke(void *self, int dispIdMember, IID *riid, uint lcid, ushort wFlags, void *pDispParams, void *pVarResult, void *pExcepInfo, uint *puArgErr)
+{
+    if(dispIdMember == 1) // SayHello
+    {
+        DISPPARAMS *params = (DISPPARAMS*)pDispParams;
+        string greeting;
+
+        if(params.cArgs >= 1 && params.rgvarg[0].vt == VT_BSTR)
+        {
+            byte *nameAscii = WideToAscii(params.rgvarg[0].data.bstrVal);
+            greeting = string.format("Hello %s, greetings from MyObject!", nameAscii);
+            memory.free(nameAscii);
+        }
+        else
+        {
+            greeting = "Hello from MyObject!";
+        }
+
+        if(pVarResult != null)
+        {
+            VARIANT *vr = (VARIANT*)pVarResult;
+            vr.vt = VT_BSTR;
+            short *wideGreeting = AsciiToWide(greeting.c_str());
+            vr.data.bstrVal = SysAllocString(wideGreeting);
+            memory.free(wideGreeting);
+        }
+
+        return 0; // S_OK
+    }
+
+    return 0x80020003; // DISP_E_MEMBERNOTFOUND
+}
+
+IDispatchInterface myObjectVtbl = {
+    MyObj_QueryInterface,
+    MyObj_AddRef,
+    MyObj_Release,
+    MyObj_GetTypeInfoCount,
+    MyObj_GetTypeInfo,
+    MyObj_GetIDsOfNames,
+    MyObj_Invoke
+};
+
+IDispatch myObject = { &myObjectVtbl };
+
 // ============================================================
 // IActiveScriptSite callback implementations
 // ============================================================
@@ -353,8 +471,26 @@ uint Site_GetLcid(void *self, uint *plcid)
 
 uint Site_GetItemInfo(void *self, short *pstrName, uint dwReturnMask, IUnknown **ppunkItem, void **ppti)
 {
-    // TYPE_UNKNOWN = 0x80070057 (E_INVALIDARG) — we don't provide named items
-    return 0x80070057;
+    // SCRIPTINFO_IUNKNOWN = 1
+    if((dwReturnMask & 1) != 0 && ppunkItem != null)
+    {
+        // Check if the engine is asking for "MyObject"
+        short *expectedWide = AsciiToWide("MyObject");
+        bool match = StrEqualWide(pstrName, expectedWide);
+        memory.free(expectedWide);
+
+        if(match)
+        {
+            *ppunkItem = (IUnknown*)&myObject;
+            myObjectRefCount++;
+            if(ppti != null) *ppti = null;
+            return 0; // S_OK
+        }
+    }
+
+    if(ppunkItem != null) *ppunkItem = null;
+    if(ppti != null) *ppti = null;
+    return 0x80070057; // E_INVALIDARG
 }
 
 uint Site_GetDocVersionString(void *self, short **pbstrVersion)
@@ -419,6 +555,8 @@ const uint SCRIPTSTATE_CONNECTED     = 2;
 const uint SCRIPTSTATE_DISCONNECTED  = 3;
 const uint SCRIPTSTATE_CLOSED        = 4;
 
+const uint SCRIPTITEM_ISVISIBLE      = 0x00000002; 
+
 // ============================================================
 // Main
 // ============================================================
@@ -456,11 +594,16 @@ int main(int argc, byte **argv)
     // Set our script site
     hr = scriptEngine.lpVtbl.SetScriptSite(scriptEngine, &site);
 
+    // Register "MyObject" as a named item so JavaScript can access it
+    short *myObjName = AsciiToWide("MyObject");
+    hr = scriptEngine.lpVtbl.AddNamedItem(scriptEngine, myObjName, SCRIPTITEM_ISVISIBLE);
+    memory.free(myObjName);
+
     // Start the engine
     hr = scriptEngine.lpVtbl.SetScriptState(scriptEngine, SCRIPTSTATE_STARTED);
 
-    // Example Javvascript code to evaluate
-    short *scriptCode = AsciiToWide("'Hello Javascript, the number is: ' + ((99+2)*2)");
+    // JavaScript code that calls MyObject.SayHello()
+    short *scriptCode = AsciiToWide("MyObject.SayHello('JavaScript')");
 
     VARIANT result;
     VariantInit(&result);
