@@ -1,0 +1,266 @@
+
+///////////////////////////////////////////////////////////////////////
+// PortAudio API Bindings
+///////////////////////////////////////////////////////////////////////
+
+/*
+ * Copyright (c) 1999-2002 Ross Bencina and Phil Burk
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files
+ * (the "Software"), to deal in the Software without restriction,
+ * including without limitation the rights to use, copy, modify, merge,
+ * publish, distribute, sublicense, and/or sell copies of the Software,
+ * and to permit persons to whom the Software is furnished to do so,
+ * subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+using jargon;
+
+int Pa_GetVersion() external;
+byte* Pa_GetVersionText() external;
+
+enum PaError : int {}
+
+enum PaErrorCode : int
+{
+    NoError = 0x00000000,
+    NotInitialized = 0xFFFFD8F0,
+    UnanticipatedHostError = 0xFFFFD8F1,
+    InvalidChannelCount = 0xFFFFD8F2,
+    InvalidSampleRate = 0xFFFFD8F3,
+    InvalidDevice = 0xFFFFD8F4,
+    InvalidFlag = 0xFFFFD8F5,
+    SampleFormatNotSupported = 0xFFFFD8F6,
+    BadIODeviceCombination = 0xFFFFD8F7,
+    InsufficientMemory = 0xFFFFD8F8,
+    BufferTooBig = 0xFFFFD8F9,
+    BufferTooSmall = 0xFFFFD8FA,
+    NullCallback = 0xFFFFD8FB,
+    BadStreamPtr = 0xFFFFD8FC,
+    TimedOut = 0xFFFFD8FD,
+    InternalError = 0xFFFFD8FE,
+    DeviceUnavailable = 0xFFFFD8FF
+}
+
+byte* Pa_GetErrorText(PaError errorCode) external;
+
+PaError Pa_Initialize() external;
+
+PaError Pa_Terminate() external;
+
+enum PaDeviceIndex : int 
+{
+    NoDevice = 0xFFFFFFFF,
+    UseHostApiSpecificDeviceSpecification = 0xFFFFFFFE,
+}
+
+enum PaHostApiIndex : int {}
+
+PaHostApiIndex Pa_GetHostApiCount() external;
+
+PaHostApiIndex Pa_GetDefaultHostApi() external;
+
+enum PaHostApiTypeId
+{
+    InDevelopment=0,
+    DirectSound=1,
+    MME=2,
+    ASIO=3,
+    SoundManager=4,
+    CoreAudio=5,
+    OSS=7,
+    ALSA=8,
+    AL=9,
+    BeOS=10,
+    WDMKS=11,
+    JACK=12,
+    WASAPI=13,
+    AudioScienceHPI=14
+}
+
+struct PaHostApiInfo
+{
+    int structVersion;
+    PaHostApiTypeId type;
+    byte *name;
+    int deviceCount;
+    PaDeviceIndex defaultInputDevice;
+    PaDeviceIndex defaultOutputDevice;
+}
+
+PaHostApiInfo* Pa_GetHostApiInfo(PaHostApiIndex hostApi) external;
+
+PaHostApiIndex Pa_HostApiTypeIdToHostApiIndex(PaHostApiTypeId type) external;
+
+PaDeviceIndex Pa_HostApiDeviceIndexToDeviceIndex(PaHostApiIndex hostApi, int hostApiDeviceIndex ) external;
+
+struct PaHostErrorInfo{
+    PaHostApiTypeId hostApiType;
+    long errorCode;
+    byte *errorText;
+}
+
+PaHostErrorInfo* Pa_GetLastHostErrorInfo() external;
+
+PaDeviceIndex Pa_GetDeviceCount() external;
+
+PaDeviceIndex Pa_GetDefaultInputDevice() external;
+
+PaDeviceIndex Pa_GetDefaultOutputDevice() external;
+
+enum PaSampleFormat : uint 
+{
+    Float32        = 0x00000001U,
+    Int32          = 0x00000002U,
+    Int24          = 0x00000004U,
+    Int16          = 0x00000008U,
+    Int8           = 0x00000010U,
+    UInt8          = 0x00000020U,
+    CustomFormat   = 0x00010000U,
+    NonInterleaved = 0x80000000U,
+}
+
+struct PaDeviceInfo
+{
+    int structVersion;
+    byte *name;
+    PaHostApiIndex hostApi;
+    int maxInputChannels;
+    int maxOutputChannels;
+    float defaultLowInputLatency;
+    float defaultLowOutputLatency;
+    float defaultHighInputLatency;
+    float defaultHighOutputLatency;
+    double defaultSampleRate;
+}
+
+PaDeviceInfo* Pa_GetDeviceInfo(PaDeviceIndex device) external;
+
+struct PaStreamParameters
+{
+    PaDeviceIndex device;
+    int channelCount;
+    PaSampleFormat sampleFormat;
+    float suggestedLatency;
+    void *hostApiSpecificStreamInfo;
+}
+
+const int paFormatIsSupported = 0;
+
+PaError Pa_IsFormatSupported(PaStreamParameters *inputParameters,
+                             PaStreamParameters *outputParameters,
+                             double sampleRate) external;
+
+enum PaStream : ulong {}
+
+const int paFramesPerBufferUnspecified = 0;
+
+enum PaStreamFlags : ulong
+{
+    NoFlag = 0,
+    ClipOff = 0x00000001,
+    DitherOff = 0x00000002,
+    NeverDropInput = 0x00000004,
+    PrimeOutputBuffersUsingStreamCallback = 0x00000008,
+    PlatformSpecificFlags = 0xFFFF0000
+}
+
+struct PaStreamCallbackTimeInfo{
+    float inputBufferAdcTime;
+    float currentTime;
+    float outputBufferDacTime;
+}
+
+enum PaStreamCallbackFlags : ulong
+{
+    InputUnderflow = 0x00000001,
+    InputOverflow = 0x00000002,
+    OutputUnderflow = 0x00000004,
+    OutputOverflow = 0x00000008,
+    PrimingOutput = 0x00000010
+}
+
+enum PaStreamCallbackResult : int
+{
+    Continue = 0,
+    Complete = 1,
+    Abort = 2
+}
+
+// Here for reference
+// int PaStreamCallback(void *input, void *output, uint frameCount, PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void *userData);
+
+PaError Pa_OpenStream( PaStream* stream,
+                       PaStreamParameters *inputParameters,
+                       PaStreamParameters *outputParameters,
+                       double sampleRate,
+                       uint framesPerBuffer,
+                       PaStreamFlags streamFlags,
+                       int (*streamCallback)(void *input, void *output, uint frameCount, PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void *userData),
+                       void *userData ) external;
+
+PaError Pa_OpenDefaultStream( PaStream* stream,
+                              int numInputChannels,
+                              int numOutputChannels,
+                              PaSampleFormat sampleFormat,
+                              double sampleRate,
+                              uint framesPerBuffer,
+                              int (*streamCallback)(void *input, void *output, uint frameCount, PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void *userData),
+                              void *userData ) external;
+
+PaError Pa_CloseStream(PaStream stream) external;
+
+// Here for reference
+// void PaStreamFinishedCallback( void *userData );
+
+PaError Pa_SetStreamFinishedCallback( PaStream stream, 
+                    void (*streamFinishedCallback)(void *userData )) external;
+
+PaError Pa_StartStream(PaStream stream) external;
+
+PaError Pa_StopStream(PaStream stream) external;
+
+PaError Pa_AbortStream(PaStream stream) external;
+
+PaError Pa_IsStreamStopped(PaStream stream) external;
+
+PaError Pa_IsStreamActive(PaStream stream) external;
+
+struct PaStreamInfo
+{
+    int structVersion;
+    float inputLatency;
+    float outputLatency;
+    double sampleRate;
+}
+
+PaStreamInfo* Pa_GetStreamInfo(PaStream stream) external;
+
+float Pa_GetStreamTime(PaStream stream) external;
+
+double Pa_GetStreamCpuLoad(PaStream stream) external;
+
+PaError Pa_ReadStream(PaStream stream, void *buffer, uint frames) external;
+
+PaError Pa_WriteStream(PaStream stream, void *buffer, uint frames) external;
+
+int Pa_GetStreamReadAvailable(PaStream stream) external;
+
+int Pa_GetStreamWriteAvailable(PaStream stream) external;
+
+PaError Pa_GetSampleSize(PaSampleFormat format) external;
+
+void Pa_Sleep(int msec ) external;
+
