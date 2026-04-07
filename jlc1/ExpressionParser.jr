@@ -1167,18 +1167,30 @@ class ExpressionParser : BaseParser
                 return null;
             TypeSymbol lt = left.DataType;
             TypeSymbol rt = right.DataType;
-            if (!(lt.IsPointer() && rt.IsInteger()))
-                right = ForceCast(right, lt);
-            SetContext(left, -1);
-            SetContext(right, -1);
-            Expression binExp = null;
-            Expression origLeft = left;
+            Expression origLeft0 = left;                
             if(CheckBinaryOperatorOverride(tkn2, left, right))
-                binExp = left;
+            {
+                SetContext(left, -1);
+                SetContext(right, -1);
+                Expression binExp = left;
+                left = new AssignmentExpression(origLeft0, binExp);
+                SetContext(left, -1);
+            }
             else
-                binExp = new BinaryExpression(op, left, right);
-            left = new AssignmentExpression(origLeft, binExp);
-            SetContext(left, -1);
+            {
+                if (!(lt.IsPointer() && rt.IsInteger()))
+                    right = ForceCast(right, lt);
+                SetContext(left, -1);
+                SetContext(right, -1);
+                Expression binExp = null;
+                Expression origLeft = left;
+                if(CheckBinaryOperatorOverride(tkn2, left, right))
+                    binExp = left;
+                else
+                    binExp = new BinaryExpression(op, left, right);
+                left = new AssignmentExpression(origLeft, binExp);
+                SetContext(left, -1);
+            }
         }
         return left;
     }
