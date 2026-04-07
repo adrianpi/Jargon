@@ -96,9 +96,55 @@ namespace Jargon
 
         public void AddSymbolRef(Symbol s)
         {
+            if(s.Name == "")
+                return;
+
             foreach (var sr in SymbolRefs)
                 if (sr == s || sr.Name == s.Name)
                     return;
+
+            // Recursively add references for struct/class fields and base classes
+            StructType st = s as StructType;
+            if (st != null)
+            {
+                for (int i = 0; i < st.Children.Count; ++i)
+                {
+                    Symbol child = st.Children[i];
+                    FieldSymbol fs = child as FieldSymbol;
+                    if (fs != null)
+                    {
+                        if (fs.DataType.IsStruct())
+                        {
+                            TypeSymbol dt = fs.DataType;
+                            if (dt.Unit != this)
+                                AddSymbolRef(dt);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                ClassType ct = s as ClassType;
+                while (ct != null)
+                {
+                    for (int i = 0; i < ct.Children.Count; ++i)
+                    {
+                        Symbol child = ct.Children[i];
+                        FieldSymbol fs = child as FieldSymbol;
+                        if (fs != null)
+                        {
+                            if (fs.DataType.IsStruct())
+                            {
+                                TypeSymbol dt = fs.DataType;
+                                if (dt.Unit != this)
+                                    AddSymbolRef(dt);
+                            }
+                        }
+                    }
+                    ct = ct.BaseClass;
+                }
+            }
+
             SymbolRefs.Add(s);
         }
     }
