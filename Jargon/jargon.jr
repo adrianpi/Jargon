@@ -27,6 +27,7 @@ long fwrite(void *buffer, long size, long count, void *fptr) external;
 int rename(byte *oldFileName, byte *newFileName) external;
 int remove(byte *fileName) external;
 byte* _getcwd(byte *buffer, int maxLen) external;
+void OutputDebugStringA(byte *str) external;
 
 void __stdio_common_vsprintf(void *options, byte *buffer, long bufferCount, byte *fmt, void *locale, void *ap) external;
 int vprintf(byte *fmt, void *ap) external;
@@ -36,6 +37,7 @@ void va_end(void *ap) verbatim "call void @llvm.va_end.p0(ptr #ap)";
 long va_arg_long(void *ap) verbatim "va_arg ptr #ap, i64";
 double va_arg_double(void *ap) verbatim "va_arg ptr #ap, f64";
 void* va_arg_ptr(void *ap) verbatim "va_arg ptr #ap, ptr";
+void debugBreak() verbatim "call void @llvm.debugtrap()";
 
 const int K_NUM = 202;
 const float K_PI = 3.141592f;
@@ -55,6 +57,35 @@ void println(string *fmt, ...)
 	vprintf(fmt.c_str(), ap);
 	va_end(ap);
 	printf("\n");
+}
+
+void log(string fmt, ...)
+{
+	byte buffer[4096];
+	void *ap;
+	va_start(ap);
+	__stdio_common_vsprintf(null, buffer, 4096, fmt.c_str(), null, ap);
+	va_end(ap);
+	OutputDebugStringA(buffer);
+	OutputDebugStringA("\n");
+}
+
+void assert(bool condition)
+{
+	if(!condition)
+	{
+		log("Assertion failed.");
+		debugBreak();
+	}
+}
+
+void assertMsg(bool condition, string msg)
+{
+	if(!condition)
+	{
+		log("Assertion failed: %s", msg);
+		debugBreak();
+	}
 }
 
 int objectInstances = 0;
