@@ -1,0 +1,532 @@
+using jargon;
+
+///////////////////////////////////////////////////////////////
+// Minimal Vulkan application that creates a window and 
+// renders a triangle.
+///////////////////////////////////////////////////////////////
+
+/*
+	Compile shaders with:
+
+		glslc vertex.vert -o vert.spv
+		glslc fragment.frag -o frag.spv
+*/
+
+// ============================================================
+// Win32 constants
+// ============================================================
+
+const int WS_OVERLAPPEDWINDOW = 0x00CF0000;
+const int SW_SHOWNORMAL = 1;
+const uint WM_DESTROY = 0x0002;
+const uint WM_QUIT    = 0x0012;
+const uint PM_REMOVE  = 0x0001;
+
+// ============================================================
+// Win32 structures
+// ============================================================
+
+struct WNDCLASSA {
+	uint    style;
+	void*   lpfnWndProc;
+	int     cbClsExtra;
+	int     cbWndExtra;
+	long    hInstance;
+	long    hIcon;
+	long    hCursor;
+	long    hbrBackground;
+	byte*   lpszMenuName;
+	byte*   lpszClassName;
+}
+
+struct POINT {
+	int x;
+	int y;
+}
+
+struct MSG {
+	long    hwnd;
+	uint    message;
+	ulong   wParam;
+	ulong   lParam;
+	uint    time;
+	POINT   pt;
+}
+
+// ============================================================
+// Win32 external functions
+// ============================================================
+
+void PostQuitMessage(int nExitCode) external;
+long DefWindowProcA(long hwnd, uint uMsg, ulong wParam, ulong lParam) external;
+short RegisterClassA(WNDCLASSA* lpWndClass) external;
+long CreateWindowExA(
+	uint dwExStyle,
+	byte* lpClassName,
+	byte* lpWindowName,
+	uint dwStyle,
+	int X, int Y, int nWidth, int nHeight,
+	long hWndParent,
+	long hMenu,
+	long hInstance,
+	void* lpParam
+) external;
+void ShowWindow(long hWnd, int nCmdShow) external;
+void UpdateWindow(long hWnd) external;
+int PeekMessageA(MSG* lpMsg, long hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg) external;
+void TranslateMessage(MSG* lpMsg) external;
+void DispatchMessageA(MSG* lpMsg) external;
+long GetModuleHandleA(byte* lpModuleName) external;
+
+// ============================================================
+// Helper: read a binary file into a heap-allocated buffer
+// ============================================================
+
+byte* readFile(byte *filename, long @outSize)
+{
+	file f = file.open(filename, "rb");
+	if (f == null)
+	{
+		outSize = 0;
+		return null;
+	}
+	f.seek(0, SeekPos.End);
+	long size = f.position;
+	f.seek(0, SeekPos.Start);
+	byte *buffer = memory.alloc(size);
+	f.read(buffer, size);
+	f.close();
+	outSize = size;
+	return buffer;
+}
+
+// ============================================================
+// Helper: create a shader module from a SPIR-V file
+// ============================================================
+
+VkShaderModule createShaderModule(VkDevice device, byte *path)
+{
+	long codeSize = 0;
+	byte *code = readFile(path, codeSize);
+
+	VkShaderModuleCreateInfo ci = {};
+	ci.sType    = VkStructureType.ShaderModuleCreateInfo;
+	ci.codeSize = codeSize;
+	ci.pCode    = code;
+
+	VkShaderModule shaderModule;
+	vkCreateShaderModule(device, &ci, null, &shaderModule);
+	memory.free(code);
+	return shaderModule;
+}
+
+// ============================================================
+// Window procedure
+// ============================================================
+
+long WindowProc(long hwnd, uint uMsg, ulong wParam, ulong lParam)
+{
+	if (uMsg == WM_DESTROY)
+	{
+		PostQuitMessage(0);
+		return 0;
+	}
+	return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+}
+
+// ============================================================
+// Main
+// ============================================================
+
+int main(int argc, byte **argv)
+{
+	vkInit();
+
+	long hInstance = GetModuleHandleA(null);
+
+	// --- Window ---
+	WNDCLASSA wc = {};
+	wc.lpfnWndProc   = WindowProc;
+	wc.hInstance      = hInstance;
+	wc.lpszClassName  = "MainWindow";
+	RegisterClassA(&wc);
+
+	long hwnd = CreateWindowExA(
+		0, "MainWindow", "Simple Triangle", WS_OVERLAPPEDWINDOW,
+		100, 100, 800, 600,
+		0, 0, hInstance, null);
+
+	ShowWindow(hwnd, SW_SHOWNORMAL);
+	UpdateWindow(hwnd);
+
+	// --- Vulkan instance ---
+	byte *instExts[2] = {"VK_KHR_surface", "VK_KHR_win32_surface"};
+
+	VkInstanceCreateInfo ici = {};
+	ici.sType                   = VkStructureType.InstanceCreateInfo;
+	ici.enabledExtensionCount   = 2;
+	ici.ppEnabledExtensionNames = instExts;
+
+	VkInstance instance;
+	VkResult result = vkCreateInstance(&ici, null, &instance);
+
+	// --- Surface ---
+	VkWin32SurfaceCreateInfoKHR sci = {};
+	sci.sType     = VkStructureType.Win32SurfaceCreateInfoKHR;
+	sci.hinstance = hInstance;
+	sci.hwnd      = hwnd;
+
+	VkSurfaceKHR surface;
+	result = vkCreateWin32SurfaceKHR(instance, &sci, null, &surface);
+
+	// --- Physical device & queue ---
+	uint count = 0;
+	vkEnumeratePhysicalDevices(instance, &count, null);
+	VkPhysicalDevice *pds = memory.alloc(count * sizeof(VkPhysicalDevice));
+	vkEnumeratePhysicalDevices(instance, &count, pds);
+	VkPhysicalDevice pd = pds[0];
+	memory.free(pds);
+
+	uint qCount = 0;
+	vkGetPhysicalDeviceQueueFamilyProperties(pd, &qCount, null);
+	VkQueueFamilyProperties *qf = memory.alloc(qCount * sizeof(VkQueueFamilyProperties));
+	vkGetPhysicalDeviceQueueFamilyProperties(pd, &qCount, qf);
+
+	uint gfx = 0;
+	for (uint i = 0; i < qCount; i++)
+	{
+		if (qf[i].queueFlags & VkQueueFlags.Graphics)
+		{
+			gfx = i;
+			break;
+		}
+	}
+	memory.free(qf);
+
+	float prio = 1.0f;
+	VkDeviceQueueCreateInfo qci = {};
+	qci.sType            = VkStructureType.DeviceQueueCreateInfo;
+	qci.queueFamilyIndex = gfx;
+	qci.queueCount       = 1;
+	qci.pQueuePriorities = &prio;
+
+	byte *devExts[1] = {"VK_KHR_swapchain"};
+
+	VkDeviceCreateInfo dci = {};
+	dci.sType                   = VkStructureType.DeviceCreateInfo;
+	dci.queueCreateInfoCount    = 1;
+	dci.pQueueCreateInfos       = &qci;
+	dci.enabledExtensionCount   = 1;
+	dci.ppEnabledExtensionNames = devExts;
+
+	VkDevice device;
+	result = vkCreateDevice(pd, &dci, null, &device);
+
+	VkQueue queue;
+	vkGetDeviceQueue(device, gfx, 0, &queue);
+
+	// --- Swapchain ---
+	VkSurfaceCapabilitiesKHR caps = {};
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(pd, surface, &caps);
+
+	VkSwapchainCreateInfoKHR sci2 = {};
+	sci2.sType            = VkStructureType.SwapchainCreateInfoKHR;
+	sci2.surface          = surface;
+	sci2.minImageCount    = caps.minImageCount + 1;
+	sci2.imageFormat      = VkFormat.B8G8R8A8UNorm;
+	sci2.imageColorSpace  = VkColorSpaceKHR.SrgbNonlinearKHR;
+	sci2.imageExtent      = caps.currentExtent;
+	sci2.imageArrayLayers = 1;
+	sci2.imageUsage       = VkImageUsageFlags.ColorAttachment;
+	sci2.imageSharingMode = VkSharingMode.Exclusive;
+	sci2.preTransform     = caps.currentTransform;
+	sci2.compositeAlpha   = VkCompositeAlphaFlagsKHR.OpaqueKHR;
+	sci2.presentMode      = VkPresentModeKHR.FifoKHR;
+
+	VkSwapchainKHR swapchain;
+	result = vkCreateSwapchainKHR(device, &sci2, null, &swapchain);
+
+	uint imgCount = 0;
+	vkGetSwapchainImagesKHR(device, swapchain, &imgCount, null);
+	VkImage *swapImages = memory.alloc(imgCount * sizeof(VkImage));
+	vkGetSwapchainImagesKHR(device, swapchain, &imgCount, swapImages);
+
+	VkImageView *views = memory.alloc(imgCount * sizeof(VkImageView));
+	for (uint i = 0; i < imgCount; i++)
+	{
+		VkImageViewCreateInfo ivci = {};
+		ivci.sType    = VkStructureType.ImageViewCreateInfo;
+		ivci.image    = swapImages[i];
+		ivci.viewType = VkImageViewType._2d;
+		ivci.format   = sci2.imageFormat;
+		ivci.components.r = VkComponentSwizzle.Identity;
+		ivci.components.g = VkComponentSwizzle.Identity;
+		ivci.components.b = VkComponentSwizzle.Identity;
+		ivci.components.a = VkComponentSwizzle.Identity;
+		ivci.subresourceRange.aspectMask = VkImageAspectFlags.Color;
+		ivci.subresourceRange.levelCount = 1;
+		ivci.subresourceRange.layerCount = 1;
+		vkCreateImageView(device, &ivci, null, &views[i]);
+	}
+
+	// --- Render pass ---
+	VkAttachmentDescription colorAttach = {};
+	colorAttach.format         = sci2.imageFormat;
+	colorAttach.samples        = VkSampleCountFlags._1;
+	colorAttach.loadOp         = VkAttachmentLoadOp.Clear;
+	colorAttach.storeOp        = VkAttachmentStoreOp.Store;
+	colorAttach.stencilLoadOp  = VkAttachmentLoadOp.DontCare;
+	colorAttach.stencilStoreOp = VkAttachmentStoreOp.DontCare;
+	colorAttach.initialLayout  = VkImageLayout.Undefined;
+	colorAttach.finalLayout    = VkImageLayout.PresentSrcKHR;
+
+	VkAttachmentReference colorRef = {};
+	colorRef.attachment = 0;
+	colorRef.layout     = VkImageLayout.ColorAttachmentOptimal;
+
+	VkSubpassDescription sub = {};
+	sub.pipelineBindPoint    = VkPipelineBindPoint.Graphics;
+	sub.colorAttachmentCount = 1;
+	sub.pColorAttachments    = &colorRef;
+
+	VkRenderPassCreateInfo rpci = {};
+	rpci.sType           = VkStructureType.RenderPassCreateInfo;
+	rpci.attachmentCount = 1;
+	rpci.pAttachments    = &colorAttach;
+	rpci.subpassCount    = 1;
+	rpci.pSubpasses      = &sub;
+
+	VkRenderPass renderPass;
+	vkCreateRenderPass(device, &rpci, null, &renderPass);
+
+	// --- Framebuffers ---
+	VkFramebuffer *framebuffers = memory.alloc(imgCount * sizeof(VkFramebuffer));
+	for (uint i = 0; i < imgCount; i++)
+	{
+		VkFramebufferCreateInfo fci = {};
+		fci.sType           = VkStructureType.FramebufferCreateInfo;
+		fci.renderPass      = renderPass;
+		fci.attachmentCount = 1;
+		fci.pAttachments    = &views[i];
+		fci.width           = caps.currentExtent.width;
+		fci.height          = caps.currentExtent.height;
+		fci.layers          = 1;
+		vkCreateFramebuffer(device, &fci, null, &framebuffers[i]);
+	}
+
+	// --- Shaders ---
+	VkShaderModule vert = createShaderModule(device, "vert.spv");
+	VkShaderModule frag = createShaderModule(device, "frag.spv");
+
+	VkPipelineShaderStageCreateInfo vertStage = {};
+	vertStage.sType  = VkStructureType.PipelineShaderStageCreateInfo;
+	vertStage.stage  = VkShaderStageFlags.Vertex;
+	vertStage.module = vert;
+	vertStage.pName  = "main";
+
+	VkPipelineShaderStageCreateInfo fragStage = {};
+	fragStage.sType  = VkStructureType.PipelineShaderStageCreateInfo;
+	fragStage.stage  = VkShaderStageFlags.Fragment;
+	fragStage.module = frag;
+	fragStage.pName  = "main";
+
+	VkPipelineShaderStageCreateInfo stages[2];
+	stages[0] = vertStage;
+	stages[1] = fragStage;
+
+	// --- Pipeline ---
+	VkPipelineVertexInputStateCreateInfo vi = {};
+	vi.sType = VkStructureType.PipelineVertexInputStateCreateInfo;
+
+	VkPipelineInputAssemblyStateCreateInfo ia = {};
+	ia.sType    = VkStructureType.PipelineInputAssemblyStateCreateInfo;
+	ia.topology = VkPrimitiveTopology.TriangleList;
+
+	VkViewport vp = {};
+	vp.x        = 0.0f;
+	vp.y        = 0.0f;
+	vp.width    = caps.currentExtent.width;
+	vp.height   = caps.currentExtent.height;
+	vp.minDepth = 0.0f;
+	vp.maxDepth = 1.0f;
+
+	VkRect2D sc = {};
+	sc.offset.x      = 0;
+	sc.offset.y      = 0;
+	sc.extent.width   = caps.currentExtent.width;
+	sc.extent.height  = caps.currentExtent.height;
+
+	VkPipelineViewportStateCreateInfo vpci = {};
+	vpci.sType         = VkStructureType.PipelineViewportStateCreateInfo;
+	vpci.viewportCount = 1;
+	vpci.pViewports    = &vp;
+	vpci.scissorCount  = 1;
+	vpci.pScissors     = &sc;
+
+	VkPipelineRasterizationStateCreateInfo rs = {};
+	rs.sType       = VkStructureType.PipelineRasterizationStateCreateInfo;
+	rs.polygonMode = VkPolygonMode.Fill;
+	rs.cullMode    = VkCullModeFlags.Back;
+	rs.frontFace   = VkFrontFace.Clockwise;
+	rs.lineWidth   = 1.0f;
+
+	VkPipelineMultisampleStateCreateInfo ms = {};
+	ms.sType                = VkStructureType.PipelineMultisampleStateCreateInfo;
+	ms.rasterizationSamples = VkSampleCountFlags._1;
+
+	VkPipelineColorBlendAttachmentState cb = {};
+	cb.colorWriteMask = 0xf;
+
+	VkPipelineColorBlendStateCreateInfo cbsi = {};
+	cbsi.sType           = VkStructureType.PipelineColorBlendStateCreateInfo;
+	cbsi.attachmentCount = 1;
+	cbsi.pAttachments    = &cb;
+
+	VkPipelineLayoutCreateInfo plci = {};
+	plci.sType = VkStructureType.PipelineLayoutCreateInfo;
+
+	VkPipelineLayout layout;
+	vkCreatePipelineLayout(device, &plci, null, &layout);
+
+	VkGraphicsPipelineCreateInfo gpci = {};
+	gpci.sType               = VkStructureType.GraphicsPipelineCreateInfo;
+	gpci.stageCount          = 2;
+	gpci.pStages             = stages;
+	gpci.pVertexInputState   = &vi;
+	gpci.pInputAssemblyState = &ia;
+	gpci.pViewportState      = &vpci;
+	gpci.pRasterizationState = &rs;
+	gpci.pMultisampleState   = &ms;
+	gpci.pColorBlendState    = &cbsi;
+	gpci.layout              = layout;
+	gpci.renderPass          = renderPass;
+
+	VkPipeline pipeline;
+	vkCreateGraphicsPipelines(device, 0, 1, &gpci, null, &pipeline);
+
+	// --- Command pool & buffers ---
+	VkCommandPoolCreateInfo cpci = {};
+	cpci.sType            = VkStructureType.CommandPoolCreateInfo;
+	cpci.queueFamilyIndex = gfx;
+	cpci.flags            = VkCommandPoolCreateFlags.ResetCommandBuffer;
+
+	VkCommandPool cmdPool;
+	vkCreateCommandPool(device, &cpci, null, &cmdPool);
+
+	VkCommandBuffer *cmdBuffers = memory.alloc(imgCount * sizeof(VkCommandBuffer));
+	VkCommandBufferAllocateInfo cbai = {};
+	cbai.sType              = VkStructureType.CommandBufferAllocateInfo;
+	cbai.commandPool        = cmdPool;
+	cbai.level              = VkCommandBufferLevel.Primary;
+	cbai.commandBufferCount = imgCount;
+	vkAllocateCommandBuffers(device, &cbai, cmdBuffers);
+
+	for (uint i = 0; i < imgCount; i++)
+	{
+		VkCommandBufferBeginInfo bi = {};
+		bi.sType = VkStructureType.CommandBufferBeginInfo;
+		vkBeginCommandBuffer(cmdBuffers[i], &bi);
+
+		VkClearValue clear = {};
+		clear.color.float32[0] = 0.2f;
+		clear.color.float32[1] = 0.1f;
+		clear.color.float32[2] = 0.3f;
+		clear.color.float32[3] = 1.0f;
+
+		VkRenderPassBeginInfo rpbi = {};
+		rpbi.sType                    = VkStructureType.RenderPassBeginInfo;
+		rpbi.renderPass               = renderPass;
+		rpbi.framebuffer              = framebuffers[i];
+		rpbi.renderArea.offset.x      = 0;
+		rpbi.renderArea.offset.y      = 0;
+		rpbi.renderArea.extent.width  = caps.currentExtent.width;
+		rpbi.renderArea.extent.height = caps.currentExtent.height;
+		rpbi.clearValueCount          = 1;
+		rpbi.pClearValues             = &clear;
+
+		vkCmdBeginRenderPass(cmdBuffers[i], &rpbi, VkSubpassContents.Inline);
+		vkCmdBindPipeline(cmdBuffers[i], VkPipelineBindPoint.Graphics, pipeline);
+		vkCmdDraw(cmdBuffers[i], 3, 1, 0, 0);
+		vkCmdEndRenderPass(cmdBuffers[i]);
+		vkEndCommandBuffer(cmdBuffers[i]);
+	}
+
+	// --- Semaphores ---
+	VkSemaphoreCreateInfo sciSem = {};
+	sciSem.sType = VkStructureType.SemaphoreCreateInfo;
+
+	VkSemaphore imageAvailable;
+	VkSemaphore renderFinished;
+	vkCreateSemaphore(device, &sciSem, null, &imageAvailable);
+	vkCreateSemaphore(device, &sciSem, null, &renderFinished);
+	
+	// --- Main loop ---
+	MSG msg = {};
+	while (msg.message != WM_QUIT)
+	{
+		while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE))
+		{
+			TranslateMessage(&msg);
+			DispatchMessageA(&msg);
+		}
+
+		uint imageIndex = 0;
+		vkAcquireNextImageKHR(device, swapchain, 0xFFFFFFFFFFFFFFFF, imageAvailable, 0, &imageIndex);
+
+		VkSemaphore waitSems[1] = { imageAvailable };
+		VkPipelineStageFlags waitStages[1] = { VkPipelineStageFlags.ColorAttachmentOutput };
+		VkSemaphore signalSems[1] = { renderFinished };
+
+		VkSubmitInfo si = {};
+		si.sType                = VkStructureType.SubmitInfo;
+		si.waitSemaphoreCount   = 1;
+		si.pWaitSemaphores      = waitSems;
+		si.pWaitDstStageMask    = waitStages;
+		si.commandBufferCount   = 1;
+		si.pCommandBuffers      = &cmdBuffers[imageIndex];
+		si.signalSemaphoreCount = 1;
+		si.pSignalSemaphores    = signalSems;
+
+		vkQueueSubmit(queue, 1, &si, 0);
+
+		VkPresentInfoKHR pi = {};
+		pi.sType              = VkStructureType.PresentInfoKHR;
+		pi.waitSemaphoreCount = 1;
+		pi.pWaitSemaphores    = signalSems;
+		pi.swapchainCount     = 1;
+		pi.pSwapchains        = &swapchain;
+		pi.pImageIndices      = &imageIndex;
+
+		vkQueuePresentKHR(queue, &pi);
+		vkQueueWaitIdle(queue);
+	}
+
+	// --- Cleanup ---
+	vkDeviceWaitIdle(device);
+
+	for (uint i = 0; i < imgCount; i++)
+		vkDestroyFramebuffer(device, framebuffers[i], null);
+
+	for (uint i = 0; i < imgCount; i++)
+		vkDestroyImageView(device, views[i], null);
+
+	vkDestroySemaphore(device, renderFinished, null);
+	vkDestroySemaphore(device, imageAvailable, null);
+	vkDestroyPipeline(device, pipeline, null);
+	vkDestroyPipelineLayout(device, layout, null);
+	vkDestroyRenderPass(device, renderPass, null);
+	vkDestroyShaderModule(device, vert, null);
+	vkDestroyShaderModule(device, frag, null);
+	vkDestroyCommandPool(device, cmdPool, null);
+	vkDestroySwapchainKHR(device, swapchain, null);
+	vkDestroyDevice(device, null);
+	vkDestroySurfaceKHR(instance, surface, null);
+	vkDestroyInstance(instance, null);
+
+	memory.free(cmdBuffers);
+	memory.free(framebuffers);
+	memory.free(views);
+	memory.free(swapImages);
+
+	return 0;
+}

@@ -1,0 +1,18 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <None Include="Vulkan.jr" />
+    <None Include="Main.jr" />
+    <None Include="fragment.frag">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="vertex.vert">
+      <Filter>Shaders</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Shaders">
+      <UniqueIdentifier>{f5fcff2b-fa11-4c06-99a6-a4a186661b5e}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
