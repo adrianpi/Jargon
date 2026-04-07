@@ -50,7 +50,7 @@
         </dict>
 		<dict>
 			<key>match</key>
-			<string>\b(bool|byte|double|float|int|long|short|ubye|uint|ulong|ushort|void|this|constructor|destructor)\b</string>
+			<string>\b(bool|byte|double|float|int|long|short|ubyte|uint|ulong|ushort|void|this|constructor|destructor)\b</string>
 			<key>name</key>
 			<string>keyword.other.jr</string>
 		</dict>
