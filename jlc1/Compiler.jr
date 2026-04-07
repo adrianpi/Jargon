@@ -277,6 +277,40 @@ class Compiler : CompilerErrorListener
         }
 	}
 
+	static bool isVarNameChar(byte c)
+	{
+		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+	}
+
+	// Expands a library include folder containing system variables starting with $ 
+	static string ExpandLibFolder(string folder)
+	{
+		string f = folder;
+		bool changed = false;
+		do
+		{
+			changed = false;
+			int start = f.indexOfChar('$');
+			if(start >= 0)
+			{
+				int end = start + 1;
+				while(end < f.length && isVarNameChar(f[end]))
+					++end;
+				string argName = f.substr(start, end-start);
+				string varName = argName.substr(1, argName.length-1);
+				string varValue = getenv(varName.c_str());
+				if(varValue != null)
+				{
+					f = f.replace(argName, varValue);
+					changed = true;
+				}
+			}
+
+		} while(changed);
+
+		return f;
+	}
+
 	// Compile - main entry point to compile input files.
 	// High-level flow:
 	//  - Validate and load input files into CompileUnit objects
@@ -479,13 +513,7 @@ class Compiler : CompilerErrorListener
 		for(int i = 0; i < options.LibraryDirectories.count; ++i)
         {
 			string ld = options.LibraryDirectories[i];
-            string ldd = ld;
-            if (ld.startsWith("$")) {
-				string sub = ld.substr(1, ld.length-1);
-                ldd = getenv(sub.c_str());
-                if (ldd == null)
-                    continue;
-            }
+			string ldd = ExpandLibFolder(ld);
             libPaths += string.format(" /LIBPATH:\"%s\"", ldd);
         }
 
@@ -501,6 +529,8 @@ class Compiler : CompilerErrorListener
 		if(options.OutputFileName.toLower().endsWith(".dll"))
 			sdll = "/LD";
 		string flags = options.AdditionalFlags;
+
+		flags += "/clang:-Wno-override-module";
 
 		// Build final output path and clang-cl command line
 		string outFilePath = options.OutputDirectory;
