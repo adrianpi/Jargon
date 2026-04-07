@@ -28,6 +28,7 @@ int start()
 	options.InputFiles.add("..\\jlc1\\DebugInfo.jr");
 	options.InputFiles.add("..\\jlc1\\LLVMCodeGen.jr");
 	options.InputFiles.add("..\\jlc1\\CodeTransform.jr");
+	options.InputFiles.add("..\\jlc1\\ConstantEvaluator.jr");
 	options.InputFiles.add("..\\jlc1\\Compiler.jr");
 	options.InputFiles.add("Main2.jr");
 

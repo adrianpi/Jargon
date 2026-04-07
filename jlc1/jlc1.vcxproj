@@ -108,7 +108,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PreBuildEvent>
-      <Command>..\jlc0\bin\Debug\jlc0.exe -g Expression.jr LLVMCodeGen.jr BaseParser.jr ExpressionParser.jr StageParser.jr Parser1.jr Parser2.jr Parser3.jr Parser4.jr CodeTransform.jr StringBuffer.jr DebugInfo.jr Compiler.jr Main.jr Scanner.jr Statement.jr Symbol.jr TypeInfo.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib</Command>
+      <Command>..\jlc0\bin\Debug\jlc0.exe -g Expression.jr LLVMCodeGen.jr BaseParser.jr ExpressionParser.jr StageParser.jr Parser1.jr Parser2.jr Parser3.jr Parser4.jr CodeTransform.jr ConstantEvaluator.jr StringBuffer.jr DebugInfo.jr Compiler.jr Main.jr Scanner.jr Statement.jr Symbol.jr TypeInfo.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -128,6 +128,7 @@
   <ItemGroup>
     <None Include="BaseParser.jr" />
     <None Include="CodeTransform.jr" />
+    <None Include="ConstantEvaluator.jr" />
     <None Include="Compiler.jr" />
     <None Include="DebugInfo.jr" />
     <None Include="Expression.jr" />

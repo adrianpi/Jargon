@@ -1199,4 +1199,15 @@ class ExpressionParser : BaseParser
 	{
 		return ParseAssignment();
 	}
+
+    ConstantExpression ParseConstantExpression()
+    {
+        Expression e = ParseExpression();
+        if (e == null)
+            return null;
+
+        ConstantEvaluator eval = new ConstantEvaluator(errorListener);
+        return eval.Evaluate(e);
+    }
+
 }

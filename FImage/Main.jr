@@ -185,7 +185,7 @@ int WinMain(long hInstance, long hPrevInstance, byte* pCmdLine, int nCmdShow)
     long hwnd = CreateWindowExA(
         0,
         "FImageViewer",
-        "FreeImage - Copyright (c) 2003-2023 by the FreeImage Project",
+        "Using FreeImage library - FreeImage Copyright (c) 2003-2023 by the FreeImage Project",
         WS_OVERLAPPEDWINDOW,
         100, 100, imgW + 16, imgH + 39,
         0, 0, hInstance, null

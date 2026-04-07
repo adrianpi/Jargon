@@ -218,6 +218,9 @@ class Parser2 : StageParser
         {
             scanner.NextToken();
 
+            Symbol prevScope = scope;
+            scope = cls;
+
             while (scanner.Token != Token.RBrace && scanner.Token != Token.EOF)
             {
                 bool _virtual = false;
@@ -247,6 +250,7 @@ class Parser2 : StageParser
                 // do not fully validate bodies at this stage (noCheck = true).
                 if (!ParseDeclaration(decl, true, null, false, true))
                 {
+                    scope = prevScope;
                     _class = null;
                     return false;
                 }
@@ -254,6 +258,7 @@ class Parser2 : StageParser
                 if (decl.isByRef)
                 {
                     Error("Reference not allowed here");
+                    scope = prevScope;
                     _class = null;
                     return false;
                 }
@@ -265,11 +270,13 @@ class Parser2 : StageParser
                     if(_weak)
                     {
                         Error("Methods cannot be weak");
+                        scope = prevScope;
                         return false;
                     }
                     if(_const)
                     {
                         Error("Methods cannot be const");
+                        scope = prevScope;
                         return false;
                     }
                     fn.line = scanner.Line;
@@ -397,7 +404,10 @@ class Parser2 : StageParser
                         // the body and generate code.
                         SkipBraces();
                         if (!Expect(Token.RBrace))
+                        {
+                            scope = prevScope;
                             return false;
+                        }
                     }
                     else if(scanner.Token == Token.DoubleArrow)
                     {
@@ -407,11 +417,15 @@ class Parser2 : StageParser
                         while (scanner.Token != Token.Semicolon && scanner.Token != Token.EOF)
                             scanner.NextToken();
                         if (!Expect(Token.Semicolon))
+                        {
+                            scope = prevScope;
                             return false;
+                        }
                     }
                     else
                     {
                         Error("Syntax error");
+                        scope = prevScope;
                         return false;
                     }
                 }
@@ -420,16 +434,17 @@ class Parser2 : StageParser
                     if(_const)
                     {
                         if(!Expect(Token.Assign))
-                            return false;
-                        Expression value = ParseExpression();
-                        if (value == null)
-                            return false;
-                        if (!(value is ConstantExpression))
                         {
-                            Error("Constant expression expected");
+                            scope = prevScope;
                             return false;
                         }
-                        value = ForceCast(value, decl.type);
+                        ConstantExpression constVal = ParseConstantExpression();
+                        if (constVal == null)
+                        {
+                            scope = prevScope;
+                            return false;
+                        }
+                        Expression value = ForceCast(constVal, decl.type);
                         ConstantValue cf = new ConstantValue(cls, decl.name, value);
                         cf.Flags |= SymbolFlags.Static;
                     }
@@ -463,7 +478,10 @@ class Parser2 : StageParser
                             else
                                 fs.InitialValue = ParseExpression();
                             if (fs.InitialValue == null)
+                            {
+                                scope = prevScope;
                                 return false;
+                            }
                         }
 
                         // If this is a static field, create a companion GlobalVariable
@@ -485,6 +503,7 @@ class Parser2 : StageParser
                     }
                     if (!Expect(Token.Semicolon))
                     {
+                        scope = prevScope;
                         _class = null;
                         return false;
                     }
@@ -493,6 +512,7 @@ class Parser2 : StageParser
 
             if (!Expect(Token.RBrace))
             {
+                scope = prevScope;
                 _class = null;
                 return false;
             }
@@ -504,27 +524,43 @@ class Parser2 : StageParser
                 if(ownCtorMethod == null)
                 {
                     if (!CreateConstructor(cls))
+                    {
+                        scope = prevScope;
                         return false;
+                    }
                 }
 
                 // Add virtual getClassName() method used by runtime reflection
                 if (!CreateGetClassNameMethod(cls))
+                {
+                    scope = prevScope;
                     return false;
+                }
 
                 // Add finalizer method that releases member references and
                 // chains to base finalize implementation.
                 if (!CreateFinalizer(cls))
+                {
+                    scope = prevScope;
                     return false;
+                }
             }        
             // Create virtual table global var and populate its static init
             if (!CreateVirtualTable(cls))
+            {
+                scope = prevScope;
                 return false;
+            }
 
             // Create per-class instance initialization method called by the
             // constructor to initialize instance fields.
             if (!CreateInstanceInitMethod(cls))
+            {
+                scope = prevScope;
                 return false;
+            }
             
+            scope = prevScope;
             _class = null;
             return true;
         }

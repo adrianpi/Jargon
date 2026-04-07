@@ -73,9 +73,11 @@ class Expression
 {
 	string Tag;
 	string file;
-    int line;
+	int line;
 
 	virtual TypeSymbol get DataType() => TypeSymbol.Void;
+
+	virtual bool IsConstant() => false;
 
 	virtual void Visit(CodeVisitor visitor, VisitMode mode) {}
 }
@@ -93,6 +95,8 @@ class ConstantExpression : Expression
 	string CStr;
 
 	TypeSymbol get DataType() => type;
+
+	bool IsConstant() => true;
 
 	static ConstantExpression FromInt(int value)
 	{
@@ -247,7 +251,9 @@ class BinaryExpression : Expression
 		return this;
 	}
 
-	TypeSymbol get DataType() 
+	bool IsConstant() => Left.IsConstant() && Right.IsConstant();
+
+	TypeSymbol get DataType()
 	{
 		// comparison operators -> bool
 		if(op >= BinOp.Equal && op <= BinOp.GEqual)
@@ -304,7 +310,9 @@ class UnaryExpression : Expression
 		return this;
 	}
 
-	TypeSymbol get DataType() 
+	bool IsConstant() => this.Expression.IsConstant();
+
+	TypeSymbol get DataType()
 	{
 		if(op == UnaryOp.LNot)
 			return TypeSymbol.Bool;
@@ -326,6 +334,8 @@ class CastExpression : Expression
 
 	TypeSymbol get DataType() => this.CastType;
 
+	bool IsConstant() => this.Expression.IsConstant();
+
 	CastExpression constructor(Expression e, TypeSymbol ctype)
 	{
 		base();
@@ -346,9 +356,14 @@ class CastExpression : Expression
 class SymbolExpression : Expression
 {
 	weak Symbol Symbol;
-	
+
 	TypeSymbol get DataType() => this.Symbol.DataType;
-	
+
+	bool IsConstant()
+	{
+		return this.Symbol is ConstantValue || this.Symbol is EnumValue;
+	}
+
 	SymbolExpression constructor(Symbol s)
 	{
 		base();
@@ -434,6 +449,11 @@ class FieldExpression : Expression
 	bool Explicit;
 
 	TypeSymbol get DataType() => this.Field.DataType;
+
+	bool IsConstant()
+	{
+		return this.Field is EnumValue || this.Field is ConstantValue;
+	}
 
 	FieldExpression constructor(Expression expression, Symbol field)
 	{

@@ -1,0 +1,367 @@
+using jargon;
+
+// ConstantEvaluator.jr
+// A CodeVisitor that evaluates constant expressions at compile time. 
+// It recursively walks expression trees, checking IsConstant()
+// on each node, and computes the final value as a ConstantExpression.
+// Supports all integer types, boolean, floating point types, constant symbols
+// (const and enum values), and type casts.
+//
+// Usage: call Evaluate(expr) which returns a ConstantExpression on success
+// or null on failure (with an error reported via errorListener).
+
+class ConstantEvaluator : CodeVisitor
+{
+    ConstantExpression result;
+    CompilerErrorListener errorListener;
+
+    ConstantEvaluator constructor(CompilerErrorListener errorListener)
+    {
+        base();
+        this.errorListener = errorListener;
+        return this;
+    }
+
+    void Error(string s, string errorFile, int line)
+    {
+        CompilerError err = CompilerError.Error(s, errorFile, line, 1);
+        errorListener.OnError(err);
+    }
+
+    // Evaluate - main entry point. Returns a ConstantExpression representing
+    // the compile-time value of 'e', or null if 'e' is not a constant.
+    ConstantExpression Evaluate(Expression e)
+    {
+        if (!e.IsConstant())
+        {
+            Error("Constant expression expected", e.file, e.line);
+            return null;
+        }
+        result = null;
+        e.Visit(this, VisitMode.Load);
+        return result;
+    }
+
+    // Helper: get the long value of a ConstantExpression regardless of its
+    // integer sub-type. 64-bit types use value64, smaller types use value.
+    long GetIntValue(ConstantExpression ce)
+    {
+        TypeSymbol dt = ce.DataType;
+        if (dt == TypeSymbol.Long || dt == TypeSymbol.ULong)
+            return ce.value64;
+        else
+            return (long)ce.value;
+    }
+
+    // Helper: get the double value of a ConstantExpression for floating point
+    // arithmetic. Handles float and double source types.
+    double GetFloatValue(ConstantExpression ce)
+    {
+        TypeSymbol dt = ce.DataType;
+        if (dt == TypeSymbol.Float)
+            return (double)ce.fValue;
+        else if (dt == TypeSymbol.Double)
+            return ce.dValue;
+        else if (dt == TypeSymbol.Long || dt == TypeSymbol.ULong)
+            return (double)ce.value64;
+        else
+            return (double)ce.value;
+    }
+
+    // Create a ConstantExpression of a given integer type from a long
+    ConstantExpression MakeInt(TypeSymbol type, long value)
+    {
+        if (type == TypeSymbol.Byte)
+            return ConstantExpression.FromByte((byte)value);
+        else if (type == TypeSymbol.UByte)
+            return ConstantExpression.FromUByte((ubyte)value);
+        else if (type == TypeSymbol.Short)
+            return ConstantExpression.FromShort((short)value);
+        else if (type == TypeSymbol.UShort)
+            return ConstantExpression.FromUShort((ushort)value);
+        else if (type == TypeSymbol.Int)
+            return ConstantExpression.FromInt((int)value);
+        else if (type == TypeSymbol.UInt)
+            return ConstantExpression.FromUInt((uint)value);
+        else if (type == TypeSymbol.Long)
+            return ConstantExpression.FromLong(value);
+        else if (type == TypeSymbol.ULong)
+            return ConstantExpression.FromULong((ulong)value);
+        else if (type == TypeSymbol.Bool)
+            return ConstantExpression.FromBool(value != 0);
+        else
+            return ConstantExpression.FromInt((int)value);
+    }
+
+    // Create a ConstantExpression of a given floating point type from a double
+    ConstantExpression MakeFloat(TypeSymbol type, double value)
+    {
+        if (type == TypeSymbol.Float)
+            return ConstantExpression.FromFloat((float)value);
+        else
+            return ConstantExpression.FromDouble(value);
+    }
+
+    void VisitConstantExpression(ConstantExpression e, VisitMode mode)
+    {
+        result = e;
+    }
+
+    void VisitSymbolExpression(SymbolExpression e, VisitMode mode)
+    {
+        if (e.Symbol is ConstantValue)
+        {
+            ConstantValue cv = (ConstantValue)e.Symbol;
+            // The Value of a ConstantValue should itself be a ConstantExpression
+            // after earlier evaluation. Recursively evaluate if needed.
+            ConstantExpression ce = cv.Value as ConstantExpression;
+            if (ce != null)
+            {
+                result = ce;
+                return;
+            }
+            // If the Value is a more complex expression, try to evaluate it
+            ConstantExpression evaluated = Evaluate(cv.Value);
+            if (evaluated != null)
+                result = evaluated;
+        }
+        else if (e.Symbol is EnumValue)
+        {
+            EnumValue ev = (EnumValue)e.Symbol;
+            TypeSymbol dt = ev.DataType;
+            result = MakeInt(dt, ev.Value);
+        }
+        else
+        {
+            Error("Not a constant expression", e.file, e.line);
+        }
+    }
+
+    void VisitFieldExpression(FieldExpression e, VisitMode mode)
+    {
+        if (e.Field is EnumValue)
+        {
+            EnumValue ev = (EnumValue)e.Field;
+            TypeSymbol dt = ev.DataType;
+            result = MakeInt(dt, ev.Value);
+        }
+        else if (e.Field is ConstantValue)
+        {
+            ConstantValue cv = (ConstantValue)e.Field;
+            ConstantExpression ce = cv.Value as ConstantExpression;
+            if (ce != null)
+            {
+                result = ce;
+                return;
+            }
+            ConstantExpression evaluated = Evaluate(cv.Value);
+            if (evaluated != null)
+                result = evaluated;
+        }
+        else
+        {
+            Error("Not a constant expression", e.file, e.line);
+        }
+    }
+
+    void VisitBinaryExpression(BinaryExpression e, VisitMode mode)
+    {
+        e.Left.Visit(this, mode);
+        ConstantExpression left = result;
+        if (left == null)
+            return;
+        e.Right.Visit(this, mode);
+        ConstantExpression right = result;
+        if (right == null)
+            return;
+
+        TypeSymbol ldt = left.DataType;
+        TypeSymbol rdt = right.DataType;
+
+        // Determine the result type: wider type wins for arithmetic
+        TypeSymbol resType = ldt.TypeCode > rdt.TypeCode ? ldt : rdt;
+
+        // Comparison and logical operators always return bool
+        if (e.op >= BinOp.Equal && e.op <= BinOp.GEqual)
+            resType = TypeSymbol.Bool;
+        if (e.op == BinOp.LAnd || e.op == BinOp.LOr)
+            resType = TypeSymbol.Bool;
+
+        // Floating point arithmetic
+        if (ldt.IsFloatingPoint() || rdt.IsFloatingPoint())
+        {
+            double flv = GetFloatValue(left);
+            double frv = GetFloatValue(right);
+            double fres = 0.0;
+
+            if (e.op == BinOp.Add) fres = flv + frv;
+            else if (e.op == BinOp.Sub) fres = flv - frv;
+            else if (e.op == BinOp.Mul) fres = flv * frv;
+            else if (e.op == BinOp.Div)
+            {
+                if (frv == 0.0)
+                {
+                    Error("Division by zero in constant expression", e.file, e.line);
+                    return;
+                }
+                fres = flv / frv;
+            }
+            else if (e.op == BinOp.Equal) { result = ConstantExpression.FromBool(flv == frv); return; }
+            else if (e.op == BinOp.NEqual) { result = ConstantExpression.FromBool(flv != frv); return; }
+            else if (e.op == BinOp.Less) { result = ConstantExpression.FromBool(flv < frv); return; }
+            else if (e.op == BinOp.Greater) { result = ConstantExpression.FromBool(flv > frv); return; }
+            else if (e.op == BinOp.LEqual) { result = ConstantExpression.FromBool(flv <= frv); return; }
+            else if (e.op == BinOp.GEqual) { result = ConstantExpression.FromBool(flv >= frv); return; }
+            else
+            {
+                Error("Invalid operator for floating point constant expression", e.file, e.line);
+                return;
+            }
+
+            // Determine the floating point result type
+            TypeSymbol fResType = ldt.TypeCode > rdt.TypeCode ? ldt : rdt;
+            result = MakeFloat(fResType, fres);
+            return;
+        }
+
+        // Integer/boolean arithmetic
+        long lv = GetIntValue(left);
+        long rv = GetIntValue(right);
+        long res = 0;
+
+        if (e.op == BinOp.Add) res = lv + rv;
+        else if (e.op == BinOp.Sub) res = lv - rv;
+        else if (e.op == BinOp.Mul) res = lv * rv;
+        else if (e.op == BinOp.Div)
+        {
+            if (rv == 0)
+            {
+                Error("Division by zero in constant expression", e.file, e.line);
+                return;
+            }
+            res = lv / rv;
+        }
+        else if (e.op == BinOp.Mod)
+        {
+            if (rv == 0)
+            {
+                Error("Division by zero in constant expression", e.file, e.line);
+                return;
+            }
+            res = lv % rv;
+        }
+        else if (e.op == BinOp.And) res = lv & rv;
+        else if (e.op == BinOp.Or) res = lv | rv;
+        else if (e.op == BinOp.Xor) res = lv ^ rv;
+        else if (e.op == BinOp.Shl) res = lv << rv;
+        else if (e.op == BinOp.Shr) res = lv >> rv;
+        else if (e.op == BinOp.Equal) { result = ConstantExpression.FromBool(lv == rv); return; }
+        else if (e.op == BinOp.NEqual) { result = ConstantExpression.FromBool(lv != rv); return; }
+        else if (e.op == BinOp.Less) { result = ConstantExpression.FromBool(lv < rv); return; }
+        else if (e.op == BinOp.Greater) { result = ConstantExpression.FromBool(lv > rv); return; }
+        else if (e.op == BinOp.LEqual) { result = ConstantExpression.FromBool(lv <= rv); return; }
+        else if (e.op == BinOp.GEqual) { result = ConstantExpression.FromBool(lv >= rv); return; }
+        else if (e.op == BinOp.LAnd) { result = ConstantExpression.FromBool(lv != 0 && rv != 0); return; }
+        else if (e.op == BinOp.LOr) { result = ConstantExpression.FromBool(lv != 0 || rv != 0); return; }
+        else
+        {
+            Error("Unsupported operator in constant expression", e.file, e.line);
+            return;
+        }
+
+        result = MakeInt(resType, res);
+    }
+
+    void VisitUnaryExpression(UnaryExpression e, VisitMode mode)
+    {
+        e.Expression.Visit(this, mode);
+        ConstantExpression inner = result;
+        if (inner == null)
+            return;
+
+        TypeSymbol dt = inner.DataType;
+
+        if (dt.IsFloatingPoint())
+        {
+            double fv = GetFloatValue(inner);
+
+            if (e.op == UnaryOp.Neg)
+            {
+                result = MakeFloat(dt, -fv);
+            }
+            else if (e.op == UnaryOp.LNot)
+            {
+                result = ConstantExpression.FromBool(fv == 0.0);
+            }
+            else
+            {
+                Error("Invalid unary operator for floating point constant", e.file, e.line);
+            }
+            return;
+        }
+
+        long v = GetIntValue(inner);
+
+        if (e.op == UnaryOp.Neg)
+        {
+            result = MakeInt(dt, -v);
+        }
+        else if (e.op == UnaryOp.Not)
+        {
+            result = MakeInt(dt, ~v);
+        }
+        else if (e.op == UnaryOp.LNot)
+        {
+            result = ConstantExpression.FromBool(v == 0);
+        }
+        else
+        {
+            Error("Unsupported unary operator in constant expression", e.file, e.line);
+        }
+    }
+
+    void VisitCastExpression(CastExpression e, VisitMode mode)
+    {
+        e.Expression.Visit(this, mode);
+        ConstantExpression inner = result;
+        if (inner == null)
+            return;
+
+        TypeSymbol target = e.CastType;
+        TypeSymbol srcType = inner.DataType;
+
+        // Float/double -> integer cast
+        if (srcType.IsFloatingPoint() && (target.IsInteger() || target.IsBool()))
+        {
+            double fv = GetFloatValue(inner);
+            result = MakeInt(target, (long)fv);
+            return;
+        }
+
+        // Integer/bool -> float/double cast
+        if ((srcType.IsInteger() || srcType.IsBool()) && target.IsFloatingPoint())
+        {
+            long iv = GetIntValue(inner);
+            result = MakeFloat(target, (double)iv);
+            return;
+        }
+
+        // Float -> double or double -> float
+        if (srcType.IsFloatingPoint() && target.IsFloatingPoint())
+        {
+            double fv = GetFloatValue(inner);
+            result = MakeFloat(target, fv);
+            return;
+        }
+
+        // Integer/bool -> integer/bool
+        if (target.IsInteger() || target.IsBool())
+        {
+            long v = GetIntValue(inner);
+            result = MakeInt(target, v);
+            return;
+        }
+
+        Error("Unsupported cast in constant expression", e.file, e.line);
+    }
+}

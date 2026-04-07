@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -108,7 +108,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PreBuildEvent>
-      <Command>..\x64\Debug\jlc2.exe -g ..\jlc1\Expression.jr ..\jlc1\LLVMCodeGen.jr ..\jlc1\BaseParser.jr ..\jlc1\ExpressionParser.jr ..\jlc1\StageParser.jr ..\jlc1\Parser1.jr ..\jlc1\Parser2.jr ..\jlc1\Parser3.jr ..\jlc1\Parser4.jr ..\jlc1\CodeTransform.jr ..\jlc1\StringBuffer.jr ..\jlc1\DebugInfo.jr ..\jlc1\Compiler.jr Main.jr ..\jlc1\Scanner.jr ..\jlc1\Statement.jr ..\jlc1\Symbol.jr ..\jlc1\TypeInfo.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib</Command>
+      <Command>..\x64\Debug\jlc2.exe -g ..\jlc1\Expression.jr ..\jlc1\LLVMCodeGen.jr ..\jlc1\BaseParser.jr ..\jlc1\ExpressionParser.jr ..\jlc1\StageParser.jr ..\jlc1\Parser1.jr ..\jlc1\Parser2.jr ..\jlc1\Parser3.jr ..\jlc1\Parser4.jr ..\jlc1\CodeTransform.jr ..\jlc1\ConstantEvaluator.jr ..\jlc1\StringBuffer.jr ..\jlc1\DebugInfo.jr ..\jlc1\Compiler.jr Main.jr ..\jlc1\Scanner.jr ..\jlc1\Statement.jr ..\jlc1\Symbol.jr ..\jlc1\TypeInfo.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">

@@ -184,11 +184,14 @@ class Parser1 : StageParser
             return false;
 
         long value = 0;
+        Symbol prevScope = scope;
+        scope = enu;
         while (scanner.Token != Token.RBrace && scanner.Token != Token.EOF)
         {
             if (scanner.Token != Token.Ident)
             {
                 Error("Identifier expected");
+                scope = prevScope;
                 return false;
             }
             name = scanner.TokenString;
@@ -197,27 +200,34 @@ class Parser1 : StageParser
             {
                 // Explicit enumerator value
                 scanner.NextToken();
-                Expression e = ParseExpression();
-                if (e == null)
-                    return false;
-                ConstantExpression ce = e as ConstantExpression;
-                TypeSymbol cedt = ce.DataType;
-                if (ce == null || !cedt.IsInteger())
+                ConstantExpression constVal = ParseConstantExpression();
+                if (constVal == null)
                 {
-                    Error("Integer constant expected");
+                    scope = prevScope;
                     return false;
                 }
-                value = ce.value;
+                if (!constVal.DataType.IsInteger())
+                {
+                    Error("Integer constant expected");
+                    scope = prevScope;
+                    return false;
+                }
+                value = constVal.DataType == TypeSymbol.Long || constVal.DataType == TypeSymbol.ULong ? 
+                    constVal.value64 : constVal.value;
             }
             if (scanner.Token != Token.RBrace)
             {
                 if(!Expect(Token.Comma))
+                {
+                    scope = prevScope;
                     return false;
+                }
             }            
             EnumValue ev = new EnumValue(enu, name, value);
             value++;
         }
 
+        scope = prevScope;
         return Expect(Token.RBrace);
     }
 
@@ -404,16 +414,14 @@ class Parser1 : StageParser
                 Declaration item = new Declaration();
                 if(!ParseDeclaration(item, true, null, false, true))
                     return false;
-                Expression value = null;
                 if(!Expect(Token.Assign))
                     return false;
-                value = ParseExpression();
-                if (!(value is ConstantExpression))
+                ConstantExpression constVal = ParseConstantExpression();
+                if (constVal == null)
                 {
-                    Error("Constant expression expected");
                     return false;
                 }
-                ConstantValue cv = new ConstantValue(module, item.name, value);
+                ConstantValue cv = new ConstantValue(module, item.name, constVal);
                 if(!Expect(Token.Semicolon))
                     return false;
                 return true;

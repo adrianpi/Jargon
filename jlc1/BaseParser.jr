@@ -1105,13 +1105,18 @@ class BaseParser
             if (scanner.Token == Token.LBracket)
             {
                 scanner.NextToken();
-                if (scanner.Token != Token.Int)
+                ConstantExpression sizeExpr = ParseConstantExpression();
+                if (sizeExpr == null)
                 {
-                    Error("Number expected");
+                    Error("Constant expression expected for array size");
                     return false;
                 }
-                int size = scanner.TokenInt;
-                scanner.NextToken();
+                if (sizeExpr.DataType != TypeSymbol.Int)
+                {
+                    Error("Integer constant expected for array size");
+                    return false;
+                }
+                int size = sizeExpr.value;
                 if (!Expect(Token.RBracket))
                 {
                     return false;
@@ -1249,6 +1254,8 @@ class BaseParser
             }
         }
     }
+
+    virtual ConstantExpression ParseConstantExpression() => null;
 }
 
 

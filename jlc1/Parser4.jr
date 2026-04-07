@@ -424,18 +424,14 @@ class Parser4 : StageParser
                         return null;
                     }
 
-                    Expression value = null;
                     if(!Expect(Token.Assign))
                         return null;
-                    value = ParseExpression();
-                    if(value == null) 
-                        return null; 
-                    if(!(value is ConstantExpression))
+                    ConstantExpression constVal = ParseConstantExpression();
+                    if(constVal == null)
                     {
-                        Error("Constant expression expected");
                         return null;
                     }
-                    value = ForceCast(value, decl.type);
+                    Expression value = ForceCast(constVal, decl.type);
                     ConstantValue cv = new ConstantValue(scope, decl.name, value);
                     if (!Expect(Token.Semicolon))
                         return null;
