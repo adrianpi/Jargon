@@ -64,4 +64,4 @@ jlc1 -g Main.jr -o Test.exe
 
 ## License
 
-This project is available under the [MIT License](LICENSE).
+This project is available under the [MIT License](LICENSE.txt).
