@@ -3,7 +3,10 @@ using jargon;
 //////////////////////////////////////////////////////////
 // Minimal FreeImage viewer — loads a JPEG and displays it
 // in a Win32 window using SetDIBitsToDevice.
-// You may need to adjust the library include path,
+// FreeImage is a powerful open-source library for image 
+// loading, saving, and manipulation.
+// Its available at https://github.com/danoli3/FreeImage
+// You may need to adjust the library include path.
 //////////////////////////////////////////////////////////
 
 // =======================================================

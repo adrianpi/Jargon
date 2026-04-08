@@ -3,7 +3,9 @@ using jargon;
 ///////////////////////////////////////////////////////////////
 // This is another interop example that generates a sawtooth 
 // wave using the PortAudio library.
-// You may need to adjust the library include path,
+// To build this example, you will need to have the PortAudio
+// library, available at http://www.portaudio.com/download.html
+// You may need to adjust the library include path.
 ///////////////////////////////////////////////////////////////
 
 // ============================================================
