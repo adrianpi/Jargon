@@ -52,15 +52,16 @@ jlc1 -g Main.jr -o Test.exe
 
 ## Prerequisites
 
-- **Windows** with Visual Studio 2022
-- **LLVM / Clang** toolchain (`clang-cl` must be available)
+- **Windows 10 or Windows 11**
+- **Visual Studio 2022 or 2026** 
+- **LLVM / Clang** toolchain (`clang-cl` must be available) [Download](https://github.com/llvm/llvm-project/releases)
 
 ## Building
 
 1. Create a JARGON_LIB system variable pointing to your binary folder. i.e JARGON_LIB=C:\Jargon\x64\Debug
-2. Open the solution in **Visual Studio 2022**.
+2. Open the solution in **Visual Studio 2022/2026**.
 3. Build the `Test` project to perform a build of all projects in the solution in the correct order.
 
 ## License
 
-This project is available under the [MIT License](LICENSE).
+This project is available under the [MIT License](LICENSE.txt).
