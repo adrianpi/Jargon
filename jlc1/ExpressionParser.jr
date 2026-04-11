@@ -8,14 +8,14 @@ using jargon;
 // "is"/"as" checks, "base" usage, array-to-pointer normalization, etc.)
 class ExpressionParser : BaseParser
 {
-    // GetMethodInvokation - helper that transforms a virtual or non-virtual
+    // GetMethodInvocation - helper that transforms a virtual or non-virtual
     // method symbol into an expression suitable for invocation.
     // If the method has no virtual slot (VSlot == -1) or the caller requested
     // an explicit invocation, we return a direct SymbolExpression referencing
     // the underlying function object. Otherwise we build an expression which
     // looks up the function pointer in the object's vtable at the method's
     // VSlot index and casts it to the appropriate function pointer type.
-    static Expression GetMethodInvokation(MethodSymbol ms, Expression _this, bool explicit)
+    static Expression GetMethodInvocation(MethodSymbol ms, Expression _this, bool explicit)
     {
         if(ms.VSlot == -1 || explicit)
         {
@@ -392,7 +392,7 @@ class ExpressionParser : BaseParser
                 {
                     MethodSymbol ms = (MethodSymbol)fe.Field;
                                         
-                    left = GetMethodInvokation(ms, fe.Expression, fe.Explicit);
+                    left = GetMethodInvocation(ms, fe.Expression, fe.Explicit);
 
                     // push 'this' as first argument for instance methods
                     args.add(fe.Expression);

@@ -109,13 +109,7 @@ class CodeTransform : CodeVisitor
 	// arguments (this, params...).
 	static FunctionCallExpression GetVirtualCall(Expression _this, MethodSymbol method)
 	{
-		// Todo: Use GetMethodInvokationFunction
-		ClassType cls = _this.DataType.ElementType as ClassType;
-		FieldExpression vtf = new FieldExpression(_this, cls.FindChild("vtable"));
-		IndexExpression vie = new IndexExpression(vtf, ConstantExpression.FromInt(method.VSlot));
-		CastExpression vcs = new CastExpression(vie, method.DataType.GetPointerType());
-		FunctionCallExpression fc = new FunctionCallExpression(vcs);
-		return fc;
+		return ExpressionParser.GetMethodInvocation(method, _this, false);
 	}
 	
 	// VisitAssignmentExpression - this method contains the majority of the
@@ -213,7 +207,7 @@ class CodeTransform : CodeVisitor
 
 					if ((ps.Setter.Flags & SymbolFlags.Virtual) != 0)
 					{
-						FunctionCallExpression fc = GetVirtualCall(fe.Expression, ps.Setter.VSlot);
+						FunctionCallExpression fc = GetVirtualCall(fe.Expression, ps.Setter);
 						fc.Arguments.add(fe.Expression);
 						fc.Arguments.add(e.Right);
 						transformed = fc;

@@ -848,14 +848,7 @@ class Parser4 : StageParser
 
         if ((dtor.Flags & SymbolFlags.Virtual) != 0)
         {
-            // Virtual destructor: look up function pointer in vtable and
-            // call it with the object as argument.
-            // Todo: Use GetInvokationMethod
-            Function dtorfn = dtor.GetFunction();
-            FieldExpression vtf = new FieldExpression(e, cls.FindChild("vtable"));
-            IndexExpression vie = new IndexExpression(vtf, ConstantExpression.FromInt(dtor.VSlot));
-            CastExpression vcs = new CastExpression(vie, dtorfn);
-            FunctionCallExpression fc = new FunctionCallExpression(vcs);
+            FunctionCallExpression fc = ExpressionParser.GetMethodInvocation(dtor, e, false);
             fc.line = e.line;
             fc.Arguments.add(e);
             sb.Statements.add(new ExpressionStatement(fc));
@@ -873,11 +866,7 @@ class Parser4 : StageParser
         {
             if((finalize.Flags & SymbolFlags.Virtual) != 0)
             {
-                // Todo: Use GetInvokationMethod
-                FieldExpression vtf = new FieldExpression(e, cls.FindChild("vtable"));
-                IndexExpression vie = new IndexExpression(vtf, ConstantExpression.FromInt(finalize.VSlot));
-                CastExpression vcs = new CastExpression(vie, finalize.DataType.GetPointerType());
-                FunctionCallExpression fc = new FunctionCallExpression(vcs);
+                FunctionCallExpression fc = ExpressionParser.GetMethodInvocation(finalize, e, false);
                 fc.Arguments.add(e);
                 fc.line = e.line;
                 sb.Statements.add(new ExpressionStatement(fc));
