@@ -573,8 +573,13 @@ namespace Jargon
 
                         var text = "class " + tname + src;
 
-                        File.WriteAllText(tname + ".jrt", text);
-                        CompileUnit cu = new CompileUnit(tname + ".jrt");
+                        if(!Directory.Exists("jrt"))
+                        {
+                            Directory.CreateDirectory("jrt");
+                        }
+
+                        File.WriteAllText("jrt\\" + tname + ".jrt", text);
+                        CompileUnit cu = new CompileUnit("jrt\\" + tname + ".jrt");
                         //File.Delete(tname + ".cm");
 
                         Parser1 p1 = new Parser1(module, errorListener);

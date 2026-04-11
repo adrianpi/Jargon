@@ -492,6 +492,9 @@ class BaseParser
         if (at.IsPointer() && bt.IsPointer() && !CanConstructFrom(at, bt) && !CanConstructFrom(bt, at))
             return;
 
+        if(at.IsStruct() || bt.IsStruct())
+            return;
+
         if (at.TypeCode < bt.TypeCode)
             a = ForceCast(a, bt);
         else
@@ -886,7 +889,11 @@ class BaseParser
                     }
 
                     string text = new string("class ") + tname + src;
-                    string fname = string.format("%s.jrt", tname);
+
+                    if(!directory.exists("jrt"))
+                        directory.create("jrt");
+
+                    string fname = string.format("jrt\\%s.jrt", tname);
 
                     file.writeAllText(fname, text);
                     CompileUnit cu = new CompileUnit(fname);
