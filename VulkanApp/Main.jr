@@ -21,6 +21,7 @@ const int SW_SHOWNORMAL = 1;
 const uint WM_DESTROY = 0x0002;
 const uint WM_QUIT    = 0x0012;
 const uint PM_REMOVE  = 0x0001;
+const long IDC_ARROW = 32512;
 
 // ============================================================
 // Win32 structures
@@ -77,6 +78,7 @@ int PeekMessageA(MSG* lpMsg, long hWnd, uint wMsgFilterMin, uint wMsgFilterMax, 
 void TranslateMessage(MSG* lpMsg) external;
 void DispatchMessageA(MSG* lpMsg) external;
 long GetModuleHandleA(byte* lpModuleName) external;
+long LoadCursorA(long hInstance, byte* lpCursorName) external;
 
 // ============================================================
 // Helper: read a binary file into a heap-allocated buffer
@@ -144,8 +146,9 @@ int WinStart(long hInstance, long hPrevInstance, byte *pstrCommandLine, int nCmd
 
 	// --- Window ---
 	WNDCLASSA wc = {};
-	wc.lpfnWndProc   = WindowProc;
+	wc.lpfnWndProc    = WindowProc;
 	wc.hInstance      = hInstance;
+	wc.hCursor        = LoadCursorA(0, (byte*)IDC_ARROW);
 	wc.lpszClassName  = "MainWindow";
 	RegisterClassA(&wc);
 

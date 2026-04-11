@@ -14,7 +14,7 @@ const uint WM_DESTROY          = 0x0002;
 const uint WM_PAINT            = 0x000F;
 const int  DIB_RGB_COLORS      = 0;
 const int  BI_RGB              = 0;
-
+const long IDC_ARROW           = 32512;
 // ----- Image dimensions -----
 const int IMG_W = 800;
 const int IMG_H = 600;
@@ -81,11 +81,14 @@ int   SetDIBitsToDevice(long hdc, int xDst, int yDst, uint w, uint h,
 int   InvalidateRect(long hWnd, void* lpRect, int bErase) external;
 long  GetDC(long hWnd) external;
 int   ReleaseDC(long hWnd, long hdc) external;
+long  LoadCursorA(long hInstance, byte* lpCursorName) external;
+uint  timeGetTime() external;
 
 // ============================================================
 //  vec3 struct
 // ============================================================
-struct vec3 {
+struct vec3
+{
     float x;
     float y;
     float z;
@@ -146,7 +149,8 @@ vec3 vec3_clamp01(vec3 @v)
 // ============================================================
 //  Ray
 // ============================================================
-struct Ray {
+struct Ray
+{
     vec3 origin;
     vec3 dir;
 }
@@ -348,14 +352,14 @@ void initBitmapInfo()
 
 void renderScene()
 {
+    uint startTime = timeGetTime();
+
     // Camera setup
     float aspect = (float)IMG_W / (float)IMG_H;
     float fov = 0.5f;   // ~30 degrees half-angle
 
     long hdc = GetDC(gHwnd);
 
-    // Render bottom-to-top so DIB scanlines match
-    //for (int py = 0; py < IMG_H; ++py)
     for (int py = IMG_H - 1; py >= 0; --py)
     {
         int rowOffset = py * IMG_W * 3;
@@ -394,7 +398,10 @@ void renderScene()
     }
 
     ReleaseDC(gHwnd, hdc);
-    Log("Render complete.");
+
+    uint endTime = timeGetTime();
+
+    Log("Render complete, %d msecs.", endTime - startTime);
 }
 
 // ============================================================
@@ -440,6 +447,7 @@ int WinStart(long hInstance, long hPrevInstance, byte* pCmdLine, int nCmdShow)
     WNDCLASSA wc = {};
     wc.lpfnWndProc   = WindowProc;
     wc.hInstance      = hInstance;
+    wc.hCursor        = LoadCursorA(0, (byte*)IDC_ARROW);
     wc.lpszClassName  = "RayTracerWnd";
 
     RegisterClassA(&wc);

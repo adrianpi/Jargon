@@ -18,6 +18,7 @@ const uint WM_DESTROY = 0x0002;
 const uint WM_PAINT   = 0x000F;
 const int  DIB_RGB_COLORS = 0x00;
 const int  SRCCOPY = 0x00CC0020;
+const long IDC_ARROW = 32512;
 
 // =======================================================
 // Win32 structures
@@ -101,6 +102,7 @@ int  SetDIBitsToDevice(
     uint colorUse
 ) external;
 int  GetClientRect(long hWnd, RECT* lpRect) external;
+long LoadCursorA(long hInstance, byte* lpCursorName) external;
 
 // =======================================================
 // Globals
@@ -180,6 +182,7 @@ int WinStart(long hInstance, long hPrevInstance, byte* pCmdLine, int nCmdShow)
     WNDCLASSA wc = {};
     wc.lpfnWndProc   = WindowProc;
     wc.hInstance      = hInstance;
+    wc.hCursor       = LoadCursorA(0, (byte*)IDC_ARROW);
     wc.lpszClassName  = "FImageViewer";
 
     RegisterClassA(&wc);

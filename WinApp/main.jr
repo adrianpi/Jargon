@@ -9,6 +9,7 @@ const int WS_OVERLAPPEDWINDOW = 0x00CF0000;
 const int CW_USEDEFAULT = 0x80000000;
 const int SW_SHOW = 5;
 const int WM_DESTROY = 0x0002;
+const long IDC_ARROW = 32512;
 
 // Structures for window class and messages
 struct WNDCLASSA {
@@ -61,6 +62,7 @@ void TranslateMessage(MSG* lpMsg) external;
 void DispatchMessageA(MSG* lpMsg) external;
 void ShowWindow(long hWnd, int nCmdShow) external;
 long GetModuleHandleA(byte* lpModuleName) external;
+long LoadCursorA(long hInstance, byte* lpCursorName) external;
 
 // Class name for the window
 string CLASS_NAME = "MinimalWin32Window";
@@ -95,6 +97,7 @@ int WinStart(long hInstance, long hPrevInstance, byte *pstrCommandLine, int nCmd
     WNDCLASSA wc = {};
     wc.lpfnWndProc   = WindowProc;
     wc.hInstance     = hInstance;
+    wc.hCursor       = LoadCursorA(0, (byte*)IDC_ARROW);
     wc.lpszClassName = CLASS_NAME.c_str();
 
     RegisterClassA(&wc);
