@@ -98,6 +98,7 @@ string ComputeMD5FromFile(string filePath)
 // Escape - convert a string to a form safe for inclusion in LLVM IR string
 // constants. Non-printable characters and quotes are escaped as hex sequences
 // (\xx), backslashes are doubled, and printable characters are left intact.
+// TODO: Move to LLVMCodeGen.jr
 string Escape(string s)
 {
 	string result = "";
@@ -168,7 +169,7 @@ class Compiler : CompilerErrorListener
 	// is built using the DINode classes and attached to the DICompileUnit for the
 	// unit. Each source file gets a DIFile with an MD5 checksum, and each function
 	// gets a DISubprogram with associated DILocalVariable entries for parameters and locals.
-	void CreateDebugInfo(CompileUnit cu, DICompileUnit @unit)
+	static void CreateDebugInfo(CompileUnit cu, DICompileUnit @unit)
 	{
 		DINode.Reset();
 

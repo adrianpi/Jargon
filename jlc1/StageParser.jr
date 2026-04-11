@@ -261,7 +261,7 @@ class StageParser : ExpressionParser
     // This is used when an initializer list does not provide a value for a
     // particular field/element. For aggregate types we return a sentinel that
     // signals zero-initialization in later stages.
-    Expression DefaultFor(TypeSymbol type)
+    static Expression DefaultFor(TypeSymbol type)
     {
         if(type == TypeSymbol.Bool)
         {

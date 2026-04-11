@@ -44,7 +44,7 @@ class ConstantEvaluator : CodeVisitor
 
     // Helper: get the long value of a ConstantExpression regardless of its
     // integer sub-type. 64-bit types use value64, smaller types use value.
-    long GetIntValue(ConstantExpression ce)
+    static long GetIntValue(ConstantExpression ce)
     {
         TypeSymbol dt = ce.DataType;
         if (dt == TypeSymbol.Long || dt == TypeSymbol.ULong)
@@ -55,7 +55,7 @@ class ConstantEvaluator : CodeVisitor
 
     // Helper: get the double value of a ConstantExpression for floating point
     // arithmetic. Handles float and double source types.
-    double GetFloatValue(ConstantExpression ce)
+    static double GetFloatValue(ConstantExpression ce)
     {
         TypeSymbol dt = ce.DataType;
         if (dt == TypeSymbol.Float)
@@ -69,7 +69,7 @@ class ConstantEvaluator : CodeVisitor
     }
 
     // Create a ConstantExpression of a given integer type from a long
-    ConstantExpression MakeInt(TypeSymbol type, long value)
+    static ConstantExpression MakeInt(TypeSymbol type, long value)
     {
         if (type == TypeSymbol.Byte)
             return ConstantExpression.FromByte((byte)value);
@@ -94,7 +94,7 @@ class ConstantEvaluator : CodeVisitor
     }
 
     // Create a ConstantExpression of a given floating point type from a double
-    ConstantExpression MakeFloat(TypeSymbol type, double value)
+    static ConstantExpression MakeFloat(TypeSymbol type, double value)
     {
         if (type == TypeSymbol.Float)
             return ConstantExpression.FromFloat((float)value);

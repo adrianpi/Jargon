@@ -15,7 +15,7 @@ class ExpressionParser : BaseParser
     // the underlying function object. Otherwise we build an expression which
     // looks up the function pointer in the object's vtable at the method's
     // VSlot index and casts it to the appropriate function pointer type.
-    Expression GetMethodInvokation(MethodSymbol ms, Expression _this, bool explicit)
+    static Expression GetMethodInvokation(MethodSymbol ms, Expression _this, bool explicit)
     {
         if(ms.VSlot == -1 || explicit)
         {
@@ -1117,7 +1117,7 @@ class ExpressionParser : BaseParser
     }
 
     //TODO: Move to Expression
-    bool IsFunctionCall(Expression e)
+    static bool IsFunctionCall(Expression e)
     {
         Expression f = e;
         while (f is CastExpression)

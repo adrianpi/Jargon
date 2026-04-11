@@ -445,7 +445,7 @@ class CodeGenVisitor : CodeVisitor
 	// IRType - map language TypeSymbol to textual IR type representation used
 	// in emitted instructions. This function handles enums, arrays, structs,
 	// classes, pointers, functions and builtin scalar types.
-	string IRType(TypeSymbol type, bool _long)
+	static string IRType(TypeSymbol type, bool _long)
     {
 		if (type.IsEnum())
         {
@@ -534,7 +534,7 @@ class CodeGenVisitor : CodeVisitor
 
 	// IRType2 - variant that treats arrays as pointers (useful for call
 	// arguments where arrays decay to pointers). Otherwise mirrors IRType.
-	string IRType2(TypeSymbol type, bool _long)
+	static string IRType2(TypeSymbol type, bool _long)
     {
 		if(type.IsArray())
 		{
@@ -1135,7 +1135,7 @@ class CodeGenVisitor : CodeVisitor
 	// IsFunctionCall - helper that returns true if the expression is (or
 	// wraps) a FunctionCallExpression. CastExpression wrappers are skipped.
 	// TODO: Move to Expression?
-	bool IsFunctionCall(Expression e)
+	static bool IsFunctionCall(Expression e)
     {
         Expression f = e;
         while (f is CastExpression)
@@ -1641,7 +1641,7 @@ class CodeGenVisitor : CodeVisitor
 
 	// ListFields - collect instance field symbols from a class hierarchy in
 	// declaration order (base class fields first, then derived class fields).
-	void ListFields(ClassType cls, array<FieldSymbol> fields)
+	static void ListFields(ClassType cls, array<FieldSymbol> fields)
     {
         if(cls.BaseClass != null)
             ListFields(cls.BaseClass, fields);

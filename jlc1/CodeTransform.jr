@@ -107,7 +107,7 @@ class CodeTransform : CodeVisitor
 	// function pointer type and returns a FunctionCallExpression using that
 	// as the callee. The caller is responsible for adding the correct
 	// arguments (this, params...).
-	FunctionCallExpression GetVirtualCall(Expression _this, MethodSymbol method)
+	static FunctionCallExpression GetVirtualCall(Expression _this, MethodSymbol method)
 	{
 		// Todo: Use GetMethodInvokationFunction
 		ClassType cls = _this.DataType.ElementType as ClassType;

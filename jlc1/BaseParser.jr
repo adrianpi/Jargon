@@ -530,7 +530,7 @@ class BaseParser
     // TypeToFName - create a string-friendly mangled name for a type used in
     // operator/function name generation. Arrays and pointers are prefixed with
     // 'a' / 'p' respectively to make unique names.
-    string TypeToFName(TypeSymbol type)
+    static string TypeToFName(TypeSymbol type)
     {
         if (type.IsPointer())
             return 'p' + TypeToFName(type.ElementType);
@@ -542,7 +542,7 @@ class BaseParser
 
     // TokenToFName - map operator tokens to textual identifiers used in
     // operator overloading naming convention.
-    string TokenToFName(Token token)
+    static string TokenToFName(Token token)
     {
         if(token == Token.Add) return "add";
         else if(token == Token.Sub) return "sub";
