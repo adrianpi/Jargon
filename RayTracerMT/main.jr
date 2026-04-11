@@ -1,0 +1,563 @@
+using jargon;
+
+// ============================================================
+// Multi-threaded Ray Tracer
+// The rendering is parallelized across multiple threads, with 
+// each thread responsible for rendering a horizontal slice of 
+// the image. The scene data is shared via raw pointers (longs)
+// to avoid contention on atomic ref-counting.
+// ============================================================
+
+// ----- Win32 constants -----
+const int  WS_OVERLAPPEDWINDOW = 0x00CF0000;
+const int  WS_MAXIMIZEBOX      = 0x00010000;
+const int  SW_SHOW             = 5;
+const uint WM_DESTROY          = 0x0002;
+const uint WM_PAINT            = 0x000F;
+const int  DIB_RGB_COLORS      = 0;
+const int  BI_RGB              = 0;
+const long IDC_ARROW           = 32512;
+const uint INFINITE            = 0xFFFFFFFF;
+// ----- Image dimensions -----
+const int IMG_W = 800;
+const int IMG_H = 600;
+// ----- Threading -----
+const int NUM_THREADS = 8;
+
+// ----- Win32 structures -----
+struct POINT  { int x; int y; }
+struct RECT   { int left; int top; int right; int bottom; }
+struct MSG    { long hwnd; uint message; ulong wParam; ulong lParam; uint time; POINT pt; }
+
+struct PAINTSTRUCT {
+    long  hdc;
+    int   fErase;
+    RECT  rcPaint;
+    int   fRestore;
+    int   fIncUpdate;
+    byte  rgbReserved[32];
+}
+
+struct WNDCLASSA {
+    uint   style;
+    void*  lpfnWndProc;
+    int    cbClsExtra;
+    int    cbWndExtra;
+    long   hInstance;
+    long   hIcon;
+    long   hCursor;
+    long   hbrBackground;
+    byte*  lpszMenuName;
+    byte*  lpszClassName;
+}
+
+struct BITMAPINFOHEADER {
+    uint  biSize;
+    int   biWidth;
+    int   biHeight;
+    short biPlanes;
+    short biBitCount;
+    uint  biCompression;
+    uint  biSizeImage;
+    int   biXPelsPerMeter;
+    int   biYPelsPerMeter;
+    uint  biClrUsed;
+    uint  biClrImportant;
+}
+
+// ----- Win32 externals -----
+void  PostQuitMessage(int nExitCode) external;
+long  DefWindowProcA(long hwnd, uint uMsg, ulong wParam, ulong lParam) external;
+short RegisterClassA(WNDCLASSA* lpWndClass) external;
+long  CreateWindowExA(uint dwExStyle, byte* cls, byte* title, uint style,
+                      int x, int y, int w, int h,
+                      long parent, long menu, long inst, void* param) external;
+void  ShowWindow(long hWnd, int nCmdShow) external;
+void  UpdateWindow(long hWnd) external;
+short GetMessageA(MSG* lpMsg, long hWnd, uint min, uint max) external;
+void  TranslateMessage(MSG* lpMsg) external;
+void  DispatchMessageA(MSG* lpMsg) external;
+long  GetModuleHandleA(byte* lpModuleName) external;
+long  BeginPaint(long hWnd, PAINTSTRUCT* ps) external;
+int   EndPaint(long hWnd, PAINTSTRUCT* ps) external;
+int   SetDIBitsToDevice(long hdc, int xDst, int yDst, uint w, uint h,
+                        int xSrc, int ySrc, uint startScan, uint numScans,
+                        byte* bits, void* bmi, uint colorUse) external;
+int   InvalidateRect(long hWnd, void* lpRect, int bErase) external;
+long  GetDC(long hWnd) external;
+int   ReleaseDC(long hWnd, long hdc) external;
+long  LoadCursorA(long hInstance, byte* lpCursorName) external;
+uint  timeGetTime() external;
+long  CreateThread(void* lpThreadAttributes, long dwStackSize, void* lpStartAddress,
+                  void* lpParameter, uint dwCreationFlags, uint* lpThreadId) external;
+uint  WaitForMultipleObjects(uint nCount, long* lpHandles, int bWaitAll, uint dwMilliseconds) external;
+int   CloseHandle(long hObject) external;
+
+// ============================================================
+//  vec3 struct
+// ============================================================
+struct vec3
+{
+    float x;
+    float y;
+    float z;
+}
+
+vec3 vec3_new(float x, float y, float z)
+{
+    vec3 v;
+    v.x = x;
+    v.y = y;
+    v.z = z;
+    return v;
+}
+
+vec3 operator+(vec3 @a, vec3 @b) => vec3_new(a.x + b.x, a.y + b.y, a.z + b.z);
+vec3 operator-(vec3 @a, vec3 @b) => vec3_new(a.x - b.x, a.y - b.y, a.z - b.z);
+vec3 operator*(vec3 @a, vec3 @b) => vec3_new(a.x * b.x, a.y * b.y, a.z * b.z);
+
+vec3 operator*(vec3 @a, float s) => vec3_new(a.x * s, a.y * s, a.z * s);
+vec3 operator*(float s, vec3 @a) => vec3_new(a.x * s, a.y * s, a.z * s);
+vec3 operator/(vec3 @a, float s) => vec3_new(a.x / s, a.y / s, a.z / s);
+
+vec3 operator-(vec3 @a) => vec3_new(-a.x, -a.y, -a.z);
+
+float vec3_dot(vec3 @a, vec3 @b) => a.x * b.x + a.y * b.y + a.z * b.z;
+
+vec3 vec3_cross(vec3 @a, vec3 @b)
+{
+    return vec3_new(a.y * b.z - a.z * b.y,
+                    a.z * b.x - a.x * b.z,
+                    a.x * b.y - a.y * b.x);
+}
+
+float vec3_length(vec3 @v) => math.sqrtf(vec3_dot(v, v));
+
+vec3 vec3_normalize(vec3 v)
+{
+    float len = vec3_length(v);
+    if (len > 0.0f)
+        return v / len;
+    return v;
+}
+
+vec3 vec3_reflect(vec3 @v, vec3 @n)
+{
+    return v - n * (2.0f * vec3_dot(v, n));
+}
+
+vec3 vec3_clamp01(vec3 @v)
+{
+    return vec3_new(
+        0.0f >? v.x <? 1.0f,
+        0.0f >? v.y <? 1.0f,
+        0.0f >? v.z <? 1.0f
+    );
+}
+
+// ============================================================
+//  Ray
+// ============================================================
+struct Ray
+{
+    vec3 origin;
+    vec3 dir;
+}
+
+Ray ray_new(vec3 origin, vec3 dir)
+{
+    Ray r;
+    r.origin = origin;
+    r.dir = dir;
+    return r;
+}
+
+// ============================================================
+//  Material
+// ============================================================
+class Material 
+{
+    vec3  color;
+    float specular;
+    float reflectivity;
+
+    Material constructor(vec3 color, float specular, float reflectivity)
+    {
+        base();
+        this.color = color;
+        this.specular = specular;
+        this.reflectivity = reflectivity;
+        return this;
+    }
+}
+
+// ============================================================
+//  Sphere
+// ============================================================
+class Sphere
+{
+    vec3     center;
+    float    radius;
+    Material mat;
+
+    Sphere constructor(vec3 center, float radius, Material mat)
+    {
+        base();
+        this.center = center;
+        this.radius = radius;
+        this.mat = mat;
+        return this;
+    }
+
+    // Returns distance to intersection, or -1 if no hit
+    float intersect(Ray* r)
+    {
+        vec3 oc = r.origin - center;
+        float a = vec3_dot(r.dir, r.dir);
+        float b = 2.0f * vec3_dot(oc, r.dir);
+        float c = vec3_dot(oc, oc) - radius * radius;
+        float disc = b * b - 4.0f * a * c;
+        if (disc < 0.0f)
+            return -1.0f;
+        float sq = math.sqrtf(disc);
+        float t0 = (-b - sq) / (2.0f * a);
+        float t1 = (-b + sq) / (2.0f * a);
+        if (t0 > 0.001f) return t0;
+        if (t1 > 0.001f) return t1;
+        return -1.0f;
+    }
+}
+
+// ============================================================
+//  Scene data
+// ============================================================
+array<Sphere> gSpheres = new array<Sphere>();
+
+// Thread-safe sphere cache: raw pointers stored as longs to bypass ref-counting.
+long* gSphereCache = null;
+int   gSphereCount = 0;
+
+vec3 gLightDir;
+vec3 gLightColor;
+vec3 gAmbient;
+vec3 gBgColor;
+
+void initScene()
+{
+    // Floor sphere (very large, acts as a ground plane)
+    gSpheres.add(new Sphere(vec3_new( 0.0f, -1001.0f, -5.0f), 1000.0f,
+        new Material(vec3_new(0.6f, 0.6f, 0.6f), 50.0f, 0.2f)));
+
+    // Red sphere
+    gSpheres.add(new Sphere(
+        vec3_new(-2.0f, 0.0f, -5.0f), 1.0f,
+        new Material(vec3_new(0.9f, 0.15f, 0.15f), 80.0f, 0.3f)));
+
+    // Green sphere
+    gSpheres.add(new Sphere(
+        vec3_new( 0.0f, 0.0f, -6.0f), 1.0f,
+        new Material(vec3_new(0.15f, 0.9f, 0.15f), 80.0f, 0.3f)));
+
+    // Blue sphere
+    gSpheres.add(new Sphere(
+        vec3_new( 2.0f, 0.0f, -5.0f), 1.0f,
+        new Material(vec3_new(0.15f, 0.15f, 0.9f), 80.0f, 0.3f)));
+
+    // White/mirror sphere
+    gSpheres.add(new Sphere(
+        vec3_new( 0.0f, 1.5f, -4.0f), 0.6f,
+        new Material(vec3_new(0.95f, 0.95f, 0.95f), 200.0f, 0.8f)));
+
+    gLightDir   = vec3_normalize(vec3_new(0.5f, 1.0f, 0.3f));
+    gLightColor = vec3_new(1.0f, 1.0f, 1.0f);
+    gAmbient    = vec3_new(0.1f, 0.1f, 0.15f);
+    gBgColor    = vec3_new(0.4f, 0.6f, 0.9f);
+}
+
+// ============================================================
+//  Tracing
+// ============================================================
+const int MAX_DEPTH = 4;
+
+// Find nearest sphere hit; returns index or -1
+int sceneHit(Ray* r, float* outT)
+{
+    int   best = -1;
+    float closest = 1.0e30f;
+    for (int i = 0; i < gSphereCount; ++i)
+    {
+        float t = ((Sphere)gSphereCache[i]).intersect(r);
+        if (t > 0.0f && t < closest)
+        {
+            closest = t;
+            best = i;
+        }
+    }
+    *outT = closest;
+    return best;
+}
+
+vec3 traceRay(Ray* r, int depth)
+{
+    if (depth > MAX_DEPTH)
+        return gBgColor;
+
+    float t = 0.0f;
+    int idx = sceneHit(r, &t);
+    if (idx < 0)
+    {
+        // Sky gradient
+        float skyT = 0.5f * (r.dir.y + 1.0f);
+        return vec3_new(1.0f, 1.0f, 1.0f) * (1.0f - skyT) + gBgColor * skyT;
+    }
+
+    // Access sphere and material via raw pointers (long casts) to avoid
+    // ref-counting races across threads.
+    long sp = gSphereCache[idx];
+    long mt = (long)((Sphere)sp).mat;
+
+    // Hit point and normal
+    vec3 hitPt = r.origin + r.dir * t;
+    vec3 normal = vec3_normalize(hitPt - ((Sphere)sp).center);
+
+    // Diffuse lighting (Lambertian)
+    float diff = 0.0f >? vec3_dot(normal, gLightDir);
+
+    // Shadow test
+    Ray shadowRay = ray_new(hitPt + normal * 0.001f, gLightDir);
+    float sT = 0.0f;
+    int sIdx = sceneHit(&shadowRay, &sT);
+    if (sIdx >= 0)
+        diff = 0.0f;
+
+    // Specular highlight (Blinn-Phong)
+    vec3 viewDir = vec3_normalize(-r.dir);
+    vec3 halfDir = vec3_normalize(gLightDir + viewDir);
+    float spec = math.powf(0.0f >? vec3_dot(normal, halfDir), ((Material)mt).specular);
+
+    vec3 color = ((Material)mt).color * (gAmbient + gLightColor * diff) + gLightColor * spec;
+
+    // Reflection
+    if (((Material)mt).reflectivity > 0.0f && depth < MAX_DEPTH)
+    {
+        vec3 reflDir = vec3_reflect(r.dir, normal);
+        Ray reflRay = ray_new(hitPt + normal * 0.001f, reflDir);
+        vec3 reflColor = traceRay(&reflRay, depth + 1);
+        color = color * (1.0f - ((Material)mt).reflectivity) + reflColor * ((Material)mt).reflectivity;
+    }
+
+    return vec3_clamp01(color);
+}
+
+// ============================================================
+//  Framebuffer & rendering
+// ============================================================
+byte *gPixels = null;
+BITMAPINFOHEADER gBmi;
+long  gHwnd = 0;
+long hdc = 0;
+
+void initBitmapInfo()
+{
+    memory.put(&gBmi, 0, sizeof(BITMAPINFOHEADER));
+    gBmi.biSize        = sizeof(BITMAPINFOHEADER);
+    gBmi.biWidth       = IMG_W;
+    gBmi.biHeight      = IMG_H;   // positive = bottom-up DIB
+    gBmi.biPlanes      = 1;
+    gBmi.biBitCount    = 24;
+    gBmi.biCompression = BI_RGB;
+}
+
+// Per-thread work descriptor: each thread renders rows [startY, endY).
+struct RenderSlice
+{
+    int startY;
+    int endY;
+}
+
+// Thread entry point – renders the horizontal band described by the
+// RenderSlice passed through the void* parameter.
+uint renderThread(void* param)
+{
+    RenderSlice* slice = (RenderSlice*)param;
+
+    float aspect = (float)IMG_W / (float)IMG_H;
+    float fov = 0.5f;
+
+    for (int py = slice.endY - 1; py >= slice.startY; --py)
+    {
+        int rowOffset = py * IMG_W * 3;
+
+        for (int px = 0; px < IMG_W; ++px)
+        {
+            float u = (2.0f * ((float)px + 0.5f) / (float)IMG_W - 1.0f) * aspect * fov;
+            float v = (2.0f * ((float)py + 0.5f) / (float)IMG_H - 1.0f) * fov;
+
+            vec3 dir = vec3_normalize(vec3_new(u, v, -1.0f));
+            Ray ray = ray_new(vec3_new(0.0f, 0.5f, 2.0f), dir);
+
+            vec3 color = traceRay(&ray, 0);
+
+            int off = rowOffset + px * 3;
+            gPixels[off + 0] = (byte)(color.z * 255.0f);
+            gPixels[off + 1] = (byte)(color.y * 255.0f);
+            gPixels[off + 2] = (byte)(color.x * 255.0f);
+        }
+
+        SetDIBitsToDevice(
+            hdc,
+            0, IMG_H - 1 - py,   // destination x, y (top-down on screen)
+            IMG_W, 1,             // width, height of region
+            0, py,                // source x, y in DIB
+            py, 1,                // startScan, numScans
+            &gPixels[rowOffset],  // pointer to this scanline's data
+            &gBmi,
+            DIB_RGB_COLORS
+        );
+    }
+
+    return 0;
+}
+
+void renderScene()
+{
+    uint startTime = timeGetTime();
+
+    hdc = GetDC(gHwnd);
+
+    // Cache sphere pointers as raw longs so worker threads never
+    // touch class references (avoids non-atomic ref-counting races).
+    gSphereCount = gSpheres.count;
+    gSphereCache = (long*)memory.alloc(gSphereCount * 8);
+    for (int i = 0; i < gSphereCount; ++i)
+        gSphereCache[i] = (long)gSpheres[i];
+
+    long handles[NUM_THREADS];
+    RenderSlice slices[NUM_THREADS];
+
+    int rowsPerThread = IMG_H / NUM_THREADS;
+
+    // Launch one thread per slice
+    for (int i = 0; i < NUM_THREADS; ++i)
+    {
+        slices[i].startY = i * rowsPerThread;
+        // Last thread picks up any remainder rows
+        slices[i].endY = (i == NUM_THREADS - 1) ? IMG_H : (i + 1) * rowsPerThread;
+        handles[i] = CreateThread(null, 0, renderThread, &slices[i], 0, null);
+    }
+
+    // Wait for every thread to finish
+    WaitForMultipleObjects(NUM_THREADS, handles, 1, INFINITE);
+
+    for (int i = 0; i < NUM_THREADS; ++i)
+        CloseHandle(handles[i]);
+
+    memory.free(gSphereCache);
+    gSphereCache = null;
+
+    // Blit the completed framebuffer in one shot
+
+    SetDIBitsToDevice(
+        hdc,
+        0, 0,
+        IMG_W, IMG_H,
+        0, 0,
+        0, IMG_H,
+        gPixels,
+        &gBmi,
+        DIB_RGB_COLORS
+    );
+
+    ReleaseDC(gHwnd, hdc);
+
+    uint endTime = timeGetTime();
+
+    Log("Render complete, %d msecs.", endTime - startTime);
+}
+
+// ============================================================
+//  Window procedure
+// ============================================================
+long WindowProc(long hwnd, uint uMsg, ulong wParam, ulong lParam)
+{
+    if (uMsg == WM_PAINT)
+    {
+        PAINTSTRUCT ps = {};
+        long hdc = BeginPaint(hwnd, &ps);
+        // Blit the full framebuffer
+        SetDIBitsToDevice(
+            hdc,
+            0, 0,
+            IMG_W, IMG_H,
+            0, 0,
+            0, IMG_H,
+            gPixels,
+            &gBmi,
+            DIB_RGB_COLORS
+        );
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    else if (uMsg == WM_DESTROY)
+    {
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+}
+
+// ============================================================
+//  Entry
+// ============================================================
+int WinStart(long hInstance, long hPrevInstance, byte* pCmdLine, int nCmdShow)
+{
+    initScene();
+    initBitmapInfo();
+
+    // Register window class
+    WNDCLASSA wc = {};
+    wc.lpfnWndProc   = WindowProc;
+    wc.hInstance      = hInstance;
+    wc.hCursor        = LoadCursorA(0, (byte*)IDC_ARROW);
+    wc.lpszClassName  = "RayTracerWnd";
+
+    RegisterClassA(&wc);
+
+    // Create window
+    gHwnd = CreateWindowExA(
+        0,
+        "RayTracerWnd",
+        "Multi-threaded Ray Tracer",
+        WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX,
+        100, 100, IMG_W + 16, IMG_H + 39,
+        0, 0, hInstance, null
+    );
+
+    if (gHwnd == null)
+        return 0;
+
+    ShowWindow(gHwnd, nCmdShow);
+    UpdateWindow(gHwnd);
+
+    gPixels = memory.alloc(IMG_W * IMG_H * 3); // (BGR)
+
+    // Render the scene using NUM_THREADS worker threads
+    renderScene();
+
+    // Force a full repaint after rendering completes
+    InvalidateRect(gHwnd, null, 0);
+
+    // Message loop
+    MSG msg = {};
+    while (GetMessageA(&msg, null, 0, 0))
+    {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+
+    memory.free(gPixels);
+    gPixels = null;
+
+    return 0;
+}
+
