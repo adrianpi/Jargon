@@ -841,6 +841,14 @@ class CodeGenVisitor : CodeVisitor
                 lingerRefs.add(dr);
             }
         }
+
+		if(mode == VisitMode.Address)
+		{
+			string tmpName = string.format("%%tmp%x", e.getHash());
+			sb.appendLine(string.format("\t%s = alloca %s", tmpName, IRType(fn.ReturnType, false)));
+			sb.appendLine(string.format("\tstore %s %s, ptr %s%s", IRType(fn.ReturnType, false), e.Tag, tmpName, dbge(e)));
+			e.Tag = tmpName;
+		}
 	}
 
 	// ReleaseExpression - helper that, given an expression that may be a
