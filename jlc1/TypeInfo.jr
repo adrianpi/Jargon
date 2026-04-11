@@ -36,8 +36,25 @@ class BinaryReader
 
     long readLong()
     {
-        long l = readInt();
-        l = l | ((long)readInt() << 32);
+        ulong l = readUInt();
+        l = l | ((ulong)readUInt() << 32U);
+        return l;
+    }
+
+    uint readUInt()
+    {
+        ubyte b1 = buffer[pos++];
+        ubyte b2 = buffer[pos++];
+        ubyte b3 = buffer[pos++];
+        ubyte b4 = buffer[pos++];
+        
+        return b1 | (b2 << 8) | (b3 << 16) | (b4 << 24);
+    }
+
+    ulong readULong()
+    {
+        ulong l = readUInt();
+        l = l | ((ulong)readUInt() << 32U);
         return l;
     }
 
@@ -62,8 +79,8 @@ class BinaryReader
 
     double readDouble()
     {
-        long l = readLong();
-        double d = *(double*)&l;
+        ulong ul = readULong();
+        double d = *(double*)&ul;
         return d;
     }
 }
@@ -171,7 +188,6 @@ class TypeInfo
                         WriteShort(buffer, c.Flags);
                         WriteType(buffer, c.DataType);
                         WriteString(buffer, c.Name);
-                        cexpr = (c as ConstantValue).Value as ConstantExpression;
                         if (cexpr.DataType.TypeCode == TypeCode.Bool)
                             WriteByte(buffer, (byte)cexpr.value);
                         else if (cexpr.DataType.TypeCode == TypeCode.Byte || cexpr.DataType.TypeCode == TypeCode.UByte)
@@ -262,10 +278,36 @@ class TypeInfo
                     for(int j = 0; j < c.Children.count; ++j)
                     {
                         Symbol cc = c.Children[j];
+                        ConstantValue cv = cc as ConstantValue;
                         FieldSymbol fs = cc as FieldSymbol;
                         MethodSymbol mthd = cc as MethodSymbol;
                         PropertySymbol ps = cc as PropertySymbol;
-                        if (fs != null)
+                        if(cv != null)
+                        {
+                            cexpr = cv.Value as ConstantExpression;
+                            if (cexpr != null)
+                            {
+                                WriteByte(buffer, cc.SymbolType);
+                                WriteShort(buffer, cc.Flags);
+                                WriteType(buffer, cc.DataType);
+                                WriteString(buffer, cc.Name);
+                                if (cexpr.DataType.TypeCode == TypeCode.Bool)
+                                    WriteByte(buffer, (byte)cexpr.value);
+                                else if (cexpr.DataType.TypeCode == TypeCode.Byte || cexpr.DataType.TypeCode == TypeCode.UByte)
+                                    WriteByte(buffer, (byte)cexpr.value);
+                                else if (cexpr.DataType.TypeCode == TypeCode.Short || cexpr.DataType.TypeCode == TypeCode.UShort)
+                                    WriteShort(buffer, (short)cexpr.value);
+                                else if (cexpr.DataType.TypeCode == TypeCode.Int || cexpr.DataType.TypeCode == TypeCode.UInt)
+                                    WriteInt(buffer, cexpr.value);
+                                else if (cexpr.DataType.TypeCode == TypeCode.Long || cexpr.DataType.TypeCode == TypeCode.ULong)
+                                    WriteLong(buffer, cexpr.value64);
+                                else if (cexpr.DataType.TypeCode == TypeCode.Float)
+                                    WriteFloat(buffer, cexpr.fValue);
+                                else if (cexpr.DataType.TypeCode == TypeCode.Double)
+                                    WriteDouble(buffer, cexpr.dValue);
+                            }
+                        }
+                        else if (fs != null)
                         {
                             WriteByte(buffer, cc.SymbolType);
                             WriteShort(buffer, cc.Flags);
@@ -608,6 +650,37 @@ class TypeInfo
                 SymbolType st2 = (SymbolType)br.readByte();
                 while (st2 != 0)
                 {
+                    if(st2 == SymbolType.Constant)
+                    {
+                        flags = br.readShort();
+                        TypeSymbol t = ReadType(br, module);
+                        name = br.readString();
+                        ConstantExpression cexpr = null;
+                        if (t.TypeCode == TypeCode.Bool)
+                            cexpr = ConstantExpression.FromBool(br.readByte() != 0);
+                        else if (t.TypeCode == TypeCode.Byte)
+                            cexpr = ConstantExpression.FromByte(br.readByte());
+                        else if(t.TypeCode == TypeCode.UByte)
+                            cexpr = ConstantExpression.FromByte(br.readByte());
+                        else if (t.TypeCode == TypeCode.Short)
+                            cexpr = ConstantExpression.FromShort(br.readShort());
+                        else if (t.TypeCode == TypeCode.UShort)
+                            cexpr = ConstantExpression.FromUShort(br.readShort());
+                        else if (t.TypeCode == TypeCode.Int)
+                            cexpr = ConstantExpression.FromInt(br.readInt());
+                        else if (t.TypeCode == TypeCode.UInt)
+                            cexpr = ConstantExpression.FromUInt(br.readInt());
+                        else if (t.TypeCode == TypeCode.Long)
+                            cexpr = ConstantExpression.FromLong(br.readLong());
+                        else if (t.TypeCode == TypeCode.ULong)
+                            cexpr = ConstantExpression.FromULong(br.readLong());
+                        else if (t.TypeCode == TypeCode.Float)
+                            cexpr = ConstantExpression.FromFloat(br.readFloat());
+                        else if (t.TypeCode == TypeCode.Double)
+                           cexpr = ConstantExpression.FromDouble(br.readDouble());
+                        ConstantValue cv = new ConstantValue(cls, name, cexpr);
+                        cv.Flags = (SymbolFlags)flags;
+                    }
                     if(st2 == SymbolType.Field)
                     {
                         flags = br.readShort();

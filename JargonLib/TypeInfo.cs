@@ -167,7 +167,43 @@ namespace Jargon
                         bw.Write((ushort)(c as ClassType).FieldCount);
                         foreach (var cc in c.Children)
                         {
-                            if (cc is FieldSymbol fs)
+                            if (cc is ConstantValue)
+                            {
+                                bw.Write((byte)cc.SymbolType);
+                                bw.Write((short)cc.Flags);
+                                WriteType(bw, (cc as ConstantValue).DataType);
+                                WriteString(bw, cc.Name);
+                                cexpr = (cc as ConstantValue).Value as ConstantExpression;
+                                System.Diagnostics.Debug.Assert(cexpr != null);
+                                if ((cc as ConstantValue).DataType.IsPrimitive())
+                                {
+                                    if ((cc as ConstantValue).DataType == TypeSymbol.Bool)
+                                        bw.Write(unchecked((byte)cexpr.Value));
+                                    else if ((cc as ConstantValue).DataType == TypeSymbol.Byte)
+                                        bw.Write(unchecked((byte)cexpr.Value));
+                                    else if ((cc as ConstantValue).DataType == TypeSymbol.UByte)
+                                        bw.Write(unchecked((byte)cexpr.Value));
+                                    else if ((cc as ConstantValue).DataType == TypeSymbol.Short)
+                                        bw.Write(unchecked((short)cexpr.Value));
+                                    else if ((cc as ConstantValue).DataType == TypeSymbol.UShort)
+                                        bw.Write(unchecked((ushort)cexpr.Value));
+                                    else if ((cc as ConstantValue).DataType == TypeSymbol.Int)
+                                        bw.Write(cexpr.Value);
+                                    else if ((cc as ConstantValue).DataType == TypeSymbol.UInt)
+                                        bw.Write(cexpr.Value);
+                                    else if ((cc as ConstantValue).DataType == TypeSymbol.Long)
+                                        bw.Write(cexpr.Value64);
+                                    else if ((cc as ConstantValue).DataType == TypeSymbol.ULong)
+                                        bw.Write(cexpr.Value64);
+                                    else if ((cc as ConstantValue).DataType == TypeSymbol.Float)
+                                        bw.Write(cexpr.FloatValue);
+                                    else if ((cc as ConstantValue).DataType == TypeSymbol.Double)
+                                        bw.Write(cexpr.DoubleValue);
+                                    else
+                                        System.Diagnostics.Debug.Assert(false); // should not happen
+                                }
+                            }
+                            else if (cc is FieldSymbol fs)
                             {
                                 bw.Write((byte)cc.SymbolType);
                                 bw.Write((short)cc.Flags);
@@ -543,6 +579,56 @@ namespace Jargon
                             {
                                 switch (st2)
                                 {
+                                    case SymbolType.Constant:
+                                        {
+                                            flags = br.ReadInt16();
+                                            TypeSymbol et = ReadType(br, module);
+                                            name = ReadString(br);
+                                            ConstantExpression cexpr = null;
+                                            switch (et.TypeCode)
+                                            {
+                                                case TypeCode.Bool:
+                                                    cexpr = new ConstantExpression(br.ReadByte() != 0);
+                                                    break;
+                                                case TypeCode.Byte:
+                                                    cexpr = new ConstantExpression(br.ReadSByte());
+                                                    break;
+                                                case TypeCode.UByte:
+                                                    cexpr = new ConstantExpression(br.ReadByte());
+                                                    break;
+                                                case TypeCode.Short:
+                                                    cexpr = new ConstantExpression(br.ReadInt16());
+                                                    break;
+                                                case TypeCode.UShort:
+                                                    cexpr = new ConstantExpression(br.ReadUInt16());
+                                                    break;
+                                                case TypeCode.Int:
+                                                    cexpr = new ConstantExpression(br.ReadInt32());
+                                                    break;
+                                                case TypeCode.UInt:
+                                                    cexpr = new ConstantExpression(br.ReadUInt32());
+                                                    break;
+                                                case TypeCode.Long:
+                                                    cexpr = new ConstantExpression(br.ReadInt64());
+                                                    break;
+                                                case TypeCode.ULong:
+                                                    cexpr = new ConstantExpression(br.ReadUInt64());
+                                                    break;
+                                                case TypeCode.Float:
+                                                    cexpr = new ConstantExpression(br.ReadSingle());
+                                                    break;
+                                                case TypeCode.Double:
+                                                    cexpr = new ConstantExpression(br.ReadDouble());
+                                                    break;
+                                                default:
+                                                    System.Diagnostics.Debug.Assert(false); // should not happen
+                                                    break;
+                                            }
+                                            var cv = new ConstantValue(cls, name, cexpr);
+                                            cv.Flags = (SymbolFlags)flags;
+                                        }
+                                        break;
+
                                     case SymbolType.Field:
                                         {
                                             flags = br.ReadInt16();
