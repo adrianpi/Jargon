@@ -48,6 +48,17 @@ namespace Jargon
             SkipBraces();
             return Expect(Token.RBrace);
         }
+
+        static int GetAlignment(TypeSymbol type)
+        {
+            if (type.IsStruct())
+                return (type as StructType).Alignment;
+            else if (type.IsArray())
+                return GetAlignment(type.ElementType);
+            else
+                return type.Size;   // otherwise align to the type size
+        }
+
         protected override bool ParseStructure(bool isUnion)
         {
             if (scanner.GetToken() != Token.Ident)
@@ -80,7 +91,11 @@ namespace Jargon
                     fs.Unit = unit;
                     if (fs.DataType.IsPointer() && fs.DataType.ElementType.IsClass())
                         fs.Flags |= SymbolFlags.Weak;   // references in a struct are always weak
-                                                        // as structs have no finalizers                    
+                                                        // as structs have no finalizers
+
+                    int alignment = GetAlignment(decl.type);
+                    st.Alignment = st.Alignment > alignment ? st.Alignment : alignment;
+
                     if (isUnion)
                     {
                         fs.Offset = 0;
@@ -89,7 +104,8 @@ namespace Jargon
                     }
                     else
                     {
-                        int offs = ((st.Size + decl.type.Size - 1) / decl.type.Size) * decl.type.Size;
+                        //int offs = ((st.Size + decl.type.Size - 1) / decl.type.Size) * decl.type.Size;
+                        int offs = ((st.Size + alignment - 1) / alignment) * alignment;
                         fs.Offset = offs;
                         st.SetSize(offs + decl.type.Size);
                     }
@@ -101,6 +117,13 @@ namespace Jargon
                 if (!Expect(Token.RBrace))
                     return false;
 
+                // Final struct size is rounded up to the alignment
+                int size = st.Size;
+                if (size != 0 && st.Alignment != 0)
+                {
+                    size = ((size + st.Alignment - 1) / st.Alignment) * st.Alignment;
+                    st.SetSize(size);
+                }
                 return true;
             }
             else

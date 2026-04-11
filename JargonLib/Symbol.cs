@@ -380,6 +380,8 @@ namespace Jargon
 
     public class StructType : TypeSymbol
     {
+        public int Alignment;
+
         public override bool IsStruct() => true;
 
         public StructType(Symbol parent, string name)
@@ -390,6 +392,7 @@ namespace Jargon
         public void SetSize(int size)
         {
             Size = size;
+            Alignment = 0;
         }
 
         public override void Visit(CodeVisitor visitor)
