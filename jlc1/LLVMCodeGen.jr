@@ -404,6 +404,10 @@ class CodeGenVisitor : CodeVisitor
 
 			sb.appendLine(string.format("\t%s = %s %s %s, %s%s", e.Tag, op, IRType(lt, false), e.Left.Tag, e.Right.Tag, sdbg));
 		}
+		else
+		{
+			Error("Invalid operation", e.file, e.line);
+		}
 
 		// After emitting the operation, release any object temporaries that
 		// were used for left/right subexpressions and are no longer needed.

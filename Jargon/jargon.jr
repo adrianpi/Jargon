@@ -364,6 +364,8 @@ class string
 	
 	byte * c_str()
 	{
+		if(this == null)
+			return null;
 		return str;
 	}
 	
@@ -1070,7 +1072,7 @@ template class dictionary<K,T>
             while (current != null) {
 				hash_pair<K,T>* temp = current;
                 current = current.next;
-                temp.key = 0;
+                temp.key = (K)0;
                 temp.data = (T)0;
                 if(prev != null)
                     prev.next = null;
@@ -1238,7 +1240,7 @@ template class hash_set<K>
             while (current != null) {
 				hash_item<K>* temp = current;
                 current = current.next;
-                temp.key = 0;
+                temp.key = (K)0;
                 if(prev != null)
                     prev.next = null;
                 prev = temp;

@@ -1128,6 +1128,42 @@ class ExpressionParser : BaseParser
         return f is FunctionCallExpression;
     }
 
+    static bool IsNull(Expression e)
+    {
+        ConstantExpression ce = e as ConstantExpression;
+        return ce != null && ce.DataType == TypeSymbol.Void.GetPointerType()
+            && ce.value64 == 0L;
+    }
+
+    bool IsAssignable(TypeSymbol ldt, Expression right)
+    {
+        TypeSymbol rdt = right.DataType;
+        bool result = true;
+        if(ldt.IsStruct())
+        {
+            if((!rdt.IsStruct() || rdt != ldt))
+            {
+                result = false;
+            }
+        }
+
+        if(ldt.IsClassRef())
+        {
+            if(!IsNull(right) 
+              && (!rdt.IsClassRef() || !((ClassType)rdt.ElementType).IsClassOf((ClassType)ldt.ElementType)) 
+              && !CanConstructFrom(ldt, rdt))
+            {
+                result = false;
+            }
+        }
+
+        if(!result)
+            Error("Type mismatch");
+
+        return result;
+    }
+
+
     // Assignment expressions (including compound assignment) - assignment
     // is right-associative so ParseAssignment calls itself to properly parse
     // chains like a = b = c.
@@ -1164,7 +1200,11 @@ class ExpressionParser : BaseParser
                 }
             }
 
-            right = ForceCast(right, left.DataType);
+            if(!IsAssignable(left.DataType, right))
+                return null;
+
+            right = ForceCast(right, left.DataType);     
+
             SetContext(right, -1);
             left = new AssignmentExpression(left, right);
             SetContext(left, -1);

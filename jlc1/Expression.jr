@@ -192,6 +192,7 @@ class ConstantExpression : Expression
 		ConstantExpression e = new ConstantExpression();
 		e.type = TypeSymbol._void.GetPointerType();
 		e.value = 0;
+		e.value64 = 0;
 		return e;
 	}
 

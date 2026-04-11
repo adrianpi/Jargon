@@ -340,6 +340,10 @@ class StageParser : ExpressionParser
         else
         {
             Expression r = right;
+
+            if(!IsAssignable(left.DataType, r))
+                return false;
+
             r = ForceCast(r, left.DataType);
 
             AssignmentExpression ae = new AssignmentExpression(left, r);
