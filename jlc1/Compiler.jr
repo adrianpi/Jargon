@@ -95,29 +95,6 @@ string ComputeMD5FromFile(string filePath)
 	return ComputeMD5(mem, size);
 }
 
-// Escape - convert a string to a form safe for inclusion in LLVM IR string
-// constants. Non-printable characters and quotes are escaped as hex sequences
-// (\xx), backslashes are doubled, and printable characters are left intact.
-// TODO: Move to LLVMCodeGen.jr
-string Escape(string s)
-{
-	string result = "";
-	for(int i = 0; i < s.length; ++i)
-	{
-		byte c = s[i];
-		// If character is outside normal printable ASCII range or a quote,
-		// emit it as an escaped hex sequence \xx
-		if(c < ' ' || c > 'z' || c == '\"')
-			result += string.format("\\%2.2x", (long)c);
-		// Double-up existing backslashes so LLVM sees a single backslash
-		else if(c == '\\')
-			result = result + new string("\\\\");
-		else
-			result = result + c;
-	}
-	return result;
-}
-
 // Compiler class - drives the compilation pipeline. Implements
 // CompilerErrorListener so it can receive and report errors/warnings.
 class Compiler : CompilerErrorListener

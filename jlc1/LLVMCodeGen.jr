@@ -83,6 +83,28 @@ class DelayRelease
     string dbg; // debug information placeholder
 }
 
+// Escape - convert a string to a form safe for inclusion in LLVM IR string
+// constants. Non-printable characters and quotes are escaped as hex sequences
+// (\xx), backslashes are doubled, and printable characters are left intact.
+string Escape(string s)
+{
+	string result = "";
+	for(int i = 0; i < s.length; ++i)
+	{
+		byte c = s[i];
+		// If character is outside normal printable ASCII range or a quote,
+		// emit it as an escaped hex sequence \xx
+		if(c < ' ' || c > 'z' || c == '\"')
+			result += string.format("\\%2.2x", (long)c);
+		// Double-up existing backslashes so LLVM sees a single backslash
+		else if(c == '\\')
+			result = result + new string("\\\\");
+		else
+			result = result + c;
+	}
+	return result;
+}
+
 // CodeGenVisitor - main visitor that emits IR text for expressions,
 // statements and top-level declarations. It maintains state such as
 // current function, SSA tag counter and stacks for nested loops/blocks.
@@ -1390,8 +1412,7 @@ class CodeGenVisitor : CodeVisitor
 	
 	// VisitGlobalVariable - emit global variable definition. For aggregate
 	// types emit a zeroinitializer; otherwise emit a scalar global initialized
-	// to zero. Some string globals are handled specially but that case is
-	// left as commented-out TODO.
+	// to zero.
 	void VisitGlobalVariable(GlobalVariable s)
     {
 		if(s.Unit != unit)
