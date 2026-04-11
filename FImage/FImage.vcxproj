@@ -101,11 +101,11 @@
       <ConformanceMode>true</ConformanceMode>
     </ClCompile>
     <Link>
-      <SubSystem>Console</SubSystem>
+      <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PreBuildEvent>
-      <Command>..\x64\Debug\jlc2.exe -g FreeImage.jr Main.jr -o $(OutputPath)$(TargetFileName) -luser32.lib -lgdi32.lib -lFreeImage.lib -IC:\2026\FreeImage-master\Dist\x64</Command>
+      <Command>..\x64\Debug\jlc2.exe -g FreeImage.jr Main.jr -o $(OutputPath)$(TargetFileName) -luser32.lib -lgdi32.lib -lFreeImage.lib -IC:\2026\FreeImage-master\Dist\x64 -SUBSYSTEM:WINDOWS</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">

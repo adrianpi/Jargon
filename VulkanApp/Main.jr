@@ -138,11 +138,9 @@ long WindowProc(long hwnd, uint uMsg, ulong wParam, ulong lParam)
 // Main
 // ============================================================
 
-int main(int argc, byte **argv)
+int WinStart(long hInstance, long hPrevInstance, byte *pstrCommandLine, int nCmdShow)
 {
 	vkInit();
-
-	long hInstance = GetModuleHandleA(null);
 
 	// --- Window ---
 	WNDCLASSA wc = {};

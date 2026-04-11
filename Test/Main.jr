@@ -1,8 +1,6 @@
 using jargon;
 
-long GetModuleHandleA(byte *name) external;
-
-int start()
+int run()
 {
 	println("Compiling compiler...");
 
@@ -59,12 +57,9 @@ int start()
 	return result;
 }
 
-int main()
+int start(int argc, byte **argv)
 {
-	long hModule = GetModuleHandleA(null);
-	_readTypeInfo(hModule);
-
-	int result = start();
+	int result = run();
 	println("-----------------------------");
 	_checkLeaks();
 	return result;

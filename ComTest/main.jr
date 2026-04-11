@@ -561,7 +561,7 @@ const uint SCRIPTITEM_ISVISIBLE      = 0x00000002;
 // Main
 // ============================================================
 
-int main(int argc, byte **argv)
+int start(int argc, byte **argv)
 {
     uint hr = CoInitialize(null);
 

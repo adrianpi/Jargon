@@ -151,7 +151,7 @@ long WindowProc(long hwnd, uint uMsg, ulong wParam, ulong lParam)
 // =======================================================
 // Entry point
 // =======================================================
-int WinMain(long hInstance, long hPrevInstance, byte* pCmdLine, int nCmdShow)
+int WinStart(long hInstance, long hPrevInstance, byte* pCmdLine, int nCmdShow)
 {
     // Init FreeImage
     FreeImage_Initialise(0);

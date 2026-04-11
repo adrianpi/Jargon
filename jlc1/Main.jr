@@ -68,6 +68,14 @@ int start(array<string> args)
         {
             options.AdditionalLibraries.add(args[i].substr(2, args[i].length-2));
         }
+        else if(args[i].startsWith("-SUBSYSTEM:"))
+        {
+            options.Subsystem = args[i].substr(11, args[i].length-11);
+        }
+        else if(args[i] == "-NoStartup")
+        {
+            options.NoStartup = true;
+        }
         else if (!op)
         {
 			files.add(args[i]);

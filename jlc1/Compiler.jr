@@ -503,47 +503,101 @@ class Compiler : CompilerErrorListener
 		if(options.Verbose)
 			OnError(CompilerError.Info("Building..."));
 
-		// Add any user-specified additional libraries to the link list
-		for(int i = 0; i < options.AdditionalLibraries.count; ++i)
-			usingLibs.add(options.AdditionalLibraries[i]);
-
-		// Build library search path string, supporting environment variable
-		// substitution when a directory starts with '$'
-		string libPaths = "";
-		for(int i = 0; i < options.LibraryDirectories.count; ++i)
-        {
-			string ld = options.LibraryDirectories[i];
-			string ldd = ExpandLibFolder(ld);
-            libPaths += string.format(" /LIBPATH:\"%s\"", ldd);
-        }
+		// Build final output path 
+		string outFilePath = options.OutputDirectory;
+		outFilePath += '\\';
+		outFilePath += options.OutputFileName;
 
 		// Compose lists of files and libraries for clang-cl
 		string fileList = "";
 		for(int i = 0; i < outFiles.count; ++i)
 			fileList += outFiles[i] + ' ';
-		string libList = "";
-		for(int i = 0; i < usingLibs.count; ++i)
-			libList += usingLibs[i] + ' ';
-		// If producing a DLL, add /LD flag
-		string sdll = "";
-		if(options.OutputFileName.toLower().endsWith(".dll"))
-			sdll = "/LD";
-		string flags = options.AdditionalFlags;
 
-		flags += "/clang:-Wno-override-module";
+		int result = 0;
 
-		// Build final output path and clang-cl command line
-		string outFilePath = options.OutputDirectory;
-		outFilePath += '\\';
-		outFilePath += options.OutputFileName;
+		if(outFilePath.toLower().endsWith(".lib"))
+		{
+			string flags = options.AdditionalFlags;
 
-		string cmd = string.format("clang-cl.exe -g /MD %s -%s %s %s -o %s /link %s %s", sdll, options.OptimizationLevel, flags, fileList, outFilePath, libList, libPaths);
+			flags += "/clang:-Wno-override-module";
 
-		OnError(CompilerError.Info(cmd));
+			string outObj = path.getFileNameWithoutExtension(options.OutputFileName) + ".obj";
 
-		// Run the compiler/linker command
-		int result = system(cmd.c_str());
+			// Build clang-cl command line
+			string cmd = string.format("clang-cl.exe -g /MD -%s %s /c %s /Fo%s", options.OptimizationLevel, flags, fileList, outObj);
 
+			OnError(CompilerError.Info(cmd));
+
+			// Run the compiler/linker command
+			result = system(cmd.c_str());
+
+			if(result == 0 || result == 3)
+			{
+				// If compilation succeeded, run lib.exe to create the .lib from the .obj
+				string libCmd = string.format("lib.exe /OUT:%s %s", outFilePath, outObj);
+				OnError(CompilerError.Info(libCmd));
+				result = system(libCmd.c_str());
+
+				// clean up intermediate .obj file
+				file.deleteFile(outObj); 
+			}
+			else
+			{
+				println(string.format("Compilation error: %d", result));
+				return result;
+			}
+		}
+		else
+		{
+			// Add any user-specified additional libraries to the link list
+			for(int i = 0; i < options.AdditionalLibraries.count; ++i)
+				usingLibs.add(options.AdditionalLibraries[i]);
+
+			// Build library search path string, supporting environment variable
+			// substitution when a directory starts with '$'
+			string libPaths = "";
+			for(int i = 0; i < options.LibraryDirectories.count; ++i)
+			{
+				string ld = options.LibraryDirectories[i];
+				string ldd = ExpandLibFolder(ld);
+				libPaths += string.format(" /LIBPATH:\"%s\"", ldd);
+			}
+
+			string libList = "";
+			for(int i = 0; i < usingLibs.count; ++i)
+				libList += usingLibs[i] + ' ';
+
+			// If producing a DLL, add /LD flag
+			string sdll = "";
+			if(options.OutputFileName.toLower().endsWith(".dll"))
+			{
+				sdll = "/LD";
+				if(!options.NoStartup)
+					libList += "StartupDLL.lib"; // link with startup code for DLLs
+			}
+			else if(!options.NoStartup)
+			{
+				if(options.Subsystem == new string("WINDOWS"))
+					libList += "StartupWin32.lib";
+				else
+					libList += "StartupCLI.lib";
+			}
+
+			string flags = options.AdditionalFlags;
+
+			flags += "/clang:-Wno-override-module";
+
+			string subsys = string.format("/SUBSYSTEM:%s", options.Subsystem);
+
+			// Build clang-cl command line
+			string cmd = string.format("clang-cl.exe -g /MD %s -%s %s %s -o %s /link %s %s %s", sdll, options.OptimizationLevel, flags, fileList, outFilePath, libList, libPaths, subsys);
+
+			OnError(CompilerError.Info(cmd));
+
+			// Run the compiler/linker command
+			result = system(cmd.c_str());			
+		}
+		
 		// Remove intermediate .ll files unless the user requested to keep them
 		if(!options.KeepIntermediateFiles)
 		{

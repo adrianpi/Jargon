@@ -101,11 +101,11 @@
       <ConformanceMode>true</ConformanceMode>
     </ClCompile>
     <Link>
-      <SubSystem>Console</SubSystem>
+      <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PreBuildEvent>
-      <Command>..\x64\Debug\jlc2.exe -g main.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib -lole32.lib -loleaut32.lib -lkernel32.lib -luser32.lib</Command>
+      <Command>..\x64\Debug\jlc2.exe -g main.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib -lole32.lib -loleaut32.lib -lkernel32.lib -luser32.lib -lStartupCLI.lib -SUBSYSTEM:WINDOWS</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">

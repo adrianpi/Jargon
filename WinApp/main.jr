@@ -77,8 +77,20 @@ long WindowProc(long hwnd, uint uMsg, uint wParam, ulong lParam)
 }
 
 // Entry point for Windows applications
-int WinMain(long hInstance, long hPrevInstance, byte *pstrCommandLine, int nCmdShow)
+int WinStart(long hInstance, long hPrevInstance, byte *pstrCommandLine, int nCmdShow)
 {  
+    Log("cos(0) = %f", math.cos(0));
+    Log("sin(0) = %f", math.sin(0));
+
+    Log("cosf(0) = %f", math.cosf(0));
+    Log("sinf(0) = %f", math.sinf(0));
+
+    Log("FLT_MAX = %g", math.FLT_MAX);
+    Log("FLT_MIN = %g", math.FLT_MIN);
+
+    Log("DBL_MAX = %lg", math.DBL_MAX);
+    Log("DBL_MIN = %lg", math.DBL_MIN);
+
     // Register window class
     WNDCLASSA wc = {};
     wc.lpfnWndProc   = WindowProc;
@@ -116,11 +128,4 @@ int WinMain(long hInstance, long hPrevInstance, byte *pstrCommandLine, int nCmdS
     }
 
     return 0;
-}
-
-// TODO: Remove this when we can directly specify WinMain as the entry point
-// (/SUBSYSTEM:WINDOWS and /ENTRY:WinMain) in the linker options
-int main(int argc, byte **argv)
-{
-    return WinMain(GetModuleHandleA(null), 0, null, SW_SHOW);
 }

@@ -1,0 +1,17 @@
+// Startup code for the Jargon Runtime.
+// This is the entry point for the runtime and is responsible for initializing
+// the runtime and calling the WinStart() function of the Win32 program.
+
+using jargon;
+
+int DllStart(long hModule, int dwReason, void *pReserved) external;
+
+// Entry point for DLL builds
+int DllMain(long hModule, int dwReason, void *pReserved)
+{
+	if(dwReason == 1)
+	{
+		_readTypeInfo((byte*)hModule);
+	}
+	return DllStart(hModule, dwReason, pReserved);
+}

@@ -47,7 +47,7 @@ int sawtoothCallback(void *input, void *output, uint frameCount,
 // Main - open default output and play sawtooth for 2 seconds
 // ============================================================
 
-int main(int argc, byte **argv)
+int start(int argc, byte **argv)
 {
     PaError err = Pa_Initialize();
 

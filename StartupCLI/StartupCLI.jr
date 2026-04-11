@@ -1,0 +1,16 @@
+// Startup code for the Jargon Runtime.
+// This is the entry point for the runtime and is responsible for initializing
+// the runtime and calling the start() function of the console program.
+
+using jargon;
+
+ulong GetModuleHandleA(byte *lpModuleName) external;
+int start(int argc, byte **argv) external;
+
+// Entry point for CLI executable builds
+int main(int argc, byte **argv)
+{
+	ulong hModule = GetModuleHandleA(null);
+	_readTypeInfo(hModule);
+	return start(argc, argv);
+}

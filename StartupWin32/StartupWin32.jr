@@ -1,0 +1,14 @@
+// Startup code for the Jargon Runtime.
+// This is the entry point for the runtime and is responsible for initializing
+// the runtime and calling the WinStart() function of the Win32 program.
+
+using jargon;
+
+int WinStart(long hInstance, long hPrevInstance, byte* pCmdLine, int nCmdShow) external;
+
+// Entry point for Win32 builds
+int WinMain(long hInstance, long hPrevInstance, byte* pCmdLine, int nCmdShow)
+{
+	_readTypeInfo((ulong)hInstance);
+	return WinStart(hInstance, hPrevInstance, pCmdLine, nCmdShow);
+}
