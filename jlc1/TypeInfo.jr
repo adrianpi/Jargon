@@ -85,91 +85,103 @@ class BinaryReader
     }
 }
 
-class TypeInfo
+class BinaryWriter
 {
-    static void WriteByte(array<byte> buffer, byte value)
+    array<byte> buffer;
+
+    BinaryWriter constructor(array<byte> buff)
+    {
+        base();
+        this.buffer = buff;
+        return this;
+    }
+
+    void writeByte(byte value)
     {
         buffer.add(value);
     }
 
-    static void WriteShort(array<byte> buffer, short value)
+    void writeShort(short value)
     {
         buffer.add((byte)(value & 0xff));
         buffer.add((byte)((value >> 8) & 0xff));
     }
 
-	static void WriteInt(array<byte> buffer, int value)
-	{
-		buffer.add((value & 0xff));
-		buffer.add(((value >> 8) & 0xff));
-		buffer.add(((value >> 16) & 0xff));
-		buffer.add(((value >> 24) & 0xff));
-	}
-
-    static void WriteLong(array<byte> buffer, long value)
+    void writeInt(int value)
     {
-        WriteInt(buffer, value & 0xffffffff);
-        WriteInt(buffer, value >> 32);
+        buffer.add((value & 0xff));
+        buffer.add(((value >> 8) & 0xff));
+        buffer.add(((value >> 16) & 0xff));
+        buffer.add(((value >> 24) & 0xff));
     }
 
-	static void WriteString(array<byte> buffer, string value)
-	{
-		for(int i = 0; i < value.length; ++i)
-			buffer.add(value[i]);
-		buffer.add(0);
-	}
+    void writeLong(long value)
+    {
+        writeInt(value & 0xffffffff);
+        writeInt(value >> 32);
+    }
 
+    void writeString(string value)
+    {
+        for(int i = 0; i < value.length; ++i)
+            buffer.add(value[i]);
+        buffer.add(0);
+    }
 
-    static void WriteFloat(array<byte> buffer, float value)
+    void writeFloat(float value)
     {
         byte* b = (byte*)&value;
         for(int i = 0; i < 4; ++i)
             buffer.add(b[i]);
     }
 
-    static void WriteDouble(array<byte> buffer, double value)
+    void writeDouble(double value)
     {
         byte* b = (byte*)&value;
         for(int i = 0; i < 8; ++i)
             buffer.add(b[i]);
     }
+}
 
-	static void WriteType(array<byte> buffer, TypeSymbol type)
+class TypeInfo
+{
+    static void WriteType(BinaryWriter bw, TypeSymbol type)
     {
         if(type == null)
         {
-            WriteByte(buffer, (byte)TypeCode.None);
+            bw.writeByte((byte)TypeCode.None);
             return;
         }
 
-        WriteByte(buffer, (byte)type.TypeCode);
-
+        bw.writeByte((byte)type.TypeCode);
         if(type.TypeCode == TypeCode.Pointer)
         {
-            WriteType(buffer, type.ElementType);
+            WriteType(bw, type.ElementType);
         }
         else if(type.TypeCode == TypeCode.Array)
         {
-            WriteInt(buffer, (int)(type as ArrayType).ArraySize);
-            WriteType(buffer, type.ElementType);
+            bw.writeInt((int)(type as ArrayType).ArraySize);
+            WriteType(bw, type.ElementType);
         }
         else if(type.TypeCode == TypeCode.Struct)
         {
-            WriteString(buffer, type.Name);
+            bw.writeString(type.Name);
         }
-    }    
+    }
 
     static void Write(array<byte> buffer, Module m)
     {
-        WriteByte(buffer, (int)SymbolType.Module);
-        WriteInt(buffer, (int)0x01000000);
-        WriteString(buffer, m.Name);
+        BinaryWriter bw = new BinaryWriter(buffer);
+
+        bw.writeByte((int)SymbolType.Module);
+        bw.writeInt((int)0x01000000);
+        bw.writeString(m.Name);
 
         /*todo:foreach(var u in m.Usings)
         {
             WriteString(bw, u.Name);
         }*/
-        WriteString(buffer, "");
+        bw.writeString("");
 
         ConstantExpression cexpr = null;
         
@@ -184,97 +196,97 @@ class TypeInfo
                     cexpr = (c as ConstantValue).Value as ConstantExpression;
                     if (cexpr != null)
                     {
-                        WriteByte(buffer, c.SymbolType);
-                        WriteShort(buffer, c.Flags);
-                        WriteType(buffer, c.DataType);
-                        WriteString(buffer, c.Name);
+                        bw.writeByte(c.SymbolType);
+                        bw.writeShort(c.Flags);
+                        WriteType(bw, c.DataType);
+                        bw.writeString(c.Name);
                         if (cexpr.DataType.TypeCode == TypeCode.Bool)
-                            WriteByte(buffer, (byte)cexpr.value);
+                            bw.writeByte((byte)cexpr.value);
                         else if (cexpr.DataType.TypeCode == TypeCode.Byte || cexpr.DataType.TypeCode == TypeCode.UByte)
-                            WriteByte(buffer, (byte)cexpr.value);
+                            bw.writeByte((byte)cexpr.value);
                         else if (cexpr.DataType.TypeCode == TypeCode.Short || cexpr.DataType.TypeCode == TypeCode.UShort)
-                            WriteShort(buffer, (short)cexpr.value);
+                            bw.writeShort((short)cexpr.value);
                         else if (cexpr.DataType.TypeCode == TypeCode.Int || cexpr.DataType.TypeCode == TypeCode.UInt)
-                            WriteInt(buffer, cexpr.value);
+                            bw.writeInt(cexpr.value);
                         else if (cexpr.DataType.TypeCode == TypeCode.Long || cexpr.DataType.TypeCode == TypeCode.ULong)
-                            WriteLong(buffer, cexpr.value64);
+                            bw.writeLong(cexpr.value64);
                         else if (cexpr.DataType.TypeCode == TypeCode.Float)
-                            WriteFloat(buffer, cexpr.fValue);
+                            bw.writeFloat(cexpr.fValue);
                         else if (cexpr.DataType.TypeCode == TypeCode.Double)
-                            WriteDouble(buffer, cexpr.dValue);
+                            bw.writeDouble(cexpr.dValue);
                     }
                 }
                 if(c.SymbolType == SymbolType.Enum)
                 {
-                    WriteByte(buffer, c.SymbolType);
-                    WriteShort(buffer, c.Flags);
-                    WriteType(buffer, (c as EnumType).ElementType);
-                    WriteString(buffer, c.Name);
+                    bw.writeByte(c.SymbolType);
+                    bw.writeShort(c.Flags);
+                    WriteType(bw, (c as EnumType).ElementType);
+                    bw.writeString(c.Name);
                     for(int j = 0; j < c.Children.count; ++j)
                     {
                         Symbol cc = c.Children[j];
                         EnumValue ev = cc as EnumValue;
                         if (ev != null) 
                         {
-                            WriteByte(buffer, cc.SymbolType);
-                            WriteShort(buffer, cc.Flags);
-                            WriteString(buffer, cc.Name);
-                            WriteLong(buffer, ev.Value);
+                            bw.writeByte(cc.SymbolType);
+                            bw.writeShort(cc.Flags);
+                            bw.writeString(cc.Name);
+                            bw.writeLong(ev.Value);
                         }
                     }
-                    WriteByte(buffer, 0);
+                    bw.writeByte(0);
                 }
                 else if(c.SymbolType == SymbolType.Function)
                 {
-                    WriteByte(buffer, c.SymbolType);
-                    WriteShort(buffer, c.Flags);
-                    WriteType(buffer, (c as Function).ReturnType);
-                    WriteString(buffer, c.Name);
+                    bw.writeByte(c.SymbolType);
+                    bw.writeShort(c.Flags);
+                    WriteType(bw, (c as Function).ReturnType);
+                    bw.writeString(c.Name);
                     if ((c as Function).Verbatim != null)
-                        WriteString(buffer, (c as Function).Verbatim);
+                        bw.writeString((c as Function).Verbatim);
                     else
-                        WriteString(buffer, "");
+                        bw.writeString("");
                     for(int j = 0; j < (c as Function).Parameters.count; ++j)
                     {
                         LocalVariable p = (c as Function).Parameters[j];
-                        WriteByte(buffer, p.SymbolType);
-                        WriteShort(buffer, p.Flags);
-                        WriteType(buffer, p.DataType);
-                        WriteString(buffer, p.Name);
-                        WriteByte(buffer, p.Offset);
+                        bw.writeByte(p.SymbolType);
+                        bw.writeShort(p.Flags);
+                        WriteType(bw, p.DataType);
+                        bw.writeString(p.Name);
+                        bw.writeByte(p.Offset);
                     }
-                    WriteByte(buffer, 0);
+                    bw.writeByte(0);
                 }
                 else if(c.SymbolType == SymbolType.Struct)
                 {
-                    WriteByte(buffer, c.SymbolType);
-                    WriteShort(buffer, c.Flags);
-                    WriteString(buffer, c.Name);
-                    WriteShort(buffer, (c as StructType).Size);
+                    bw.writeByte(c.SymbolType);
+                    bw.writeShort(c.Flags);
+                    bw.writeString(c.Name);
+                    bw.writeShort((c as StructType).Size);
                     for(int j = 0; j < c.Children.count; ++j)
                     {
                         FieldSymbol fs = c.Children[j] as FieldSymbol;
                         if (fs != null)
                         {
-                            WriteByte(buffer, fs.SymbolType);
-                            WriteShort(buffer, fs.Flags);
-                            WriteType(buffer, fs.DataType);
-                            WriteString(buffer, fs.Name);
-                            WriteShort(buffer, fs.Offset);
-                            WriteShort(buffer, fs.Index);
+                            bw.writeByte(fs.SymbolType);
+                            bw.writeShort(fs.Flags);
+                            WriteType(bw, fs.DataType);
+                            bw.writeString(fs.Name);
+                            bw.writeShort(fs.Offset);
+                            bw.writeShort(fs.Index);
                         }
                     }
-                    WriteByte(buffer, 0);
+                    bw.writeByte(0);
                 }
                 else if(c.SymbolType == SymbolType.Class)
                 {
                     ClassType cls = (ClassType)c;
-                    WriteByte(buffer, c.SymbolType);
-                    WriteShort(buffer, c.Flags);
-                    WriteString(buffer, c.Name);
-                    WriteType(buffer, cls.BaseClass);
-                    WriteShort(buffer, cls.Size);
-                    WriteShort(buffer, cls.FieldCount);
+                    bw.writeByte(c.SymbolType);
+                    bw.writeShort(c.Flags);
+                    bw.writeString(c.Name);
+                    WriteType(bw, cls.BaseClass);
+                    bw.writeShort(cls.Size);
+                    bw.writeShort(cls.FieldCount);
                     for(int j = 0; j < c.Children.count; ++j)
                     {
                         Symbol cc = c.Children[j];
@@ -287,86 +299,85 @@ class TypeInfo
                             cexpr = cv.Value as ConstantExpression;
                             if (cexpr != null)
                             {
-                                WriteByte(buffer, cc.SymbolType);
-                                WriteShort(buffer, cc.Flags);
-                                WriteType(buffer, cc.DataType);
-                                WriteString(buffer, cc.Name);
+                                bw.writeByte(cc.SymbolType);
+                                bw.writeShort(cc.Flags);
+                                WriteType(bw, cc.DataType);
+                                bw.writeString(cc.Name);
                                 if (cexpr.DataType.TypeCode == TypeCode.Bool)
-                                    WriteByte(buffer, (byte)cexpr.value);
+                                    bw.writeByte((byte)cexpr.value);
                                 else if (cexpr.DataType.TypeCode == TypeCode.Byte || cexpr.DataType.TypeCode == TypeCode.UByte)
-                                    WriteByte(buffer, (byte)cexpr.value);
+                                    bw.writeByte((byte)cexpr.value);
                                 else if (cexpr.DataType.TypeCode == TypeCode.Short || cexpr.DataType.TypeCode == TypeCode.UShort)
-                                    WriteShort(buffer, (short)cexpr.value);
+                                    bw.writeShort((short)cexpr.value);
                                 else if (cexpr.DataType.TypeCode == TypeCode.Int || cexpr.DataType.TypeCode == TypeCode.UInt)
-                                    WriteInt(buffer, cexpr.value);
+                                    bw.writeInt(cexpr.value);
                                 else if (cexpr.DataType.TypeCode == TypeCode.Long || cexpr.DataType.TypeCode == TypeCode.ULong)
-                                    WriteLong(buffer, cexpr.value64);
+                                    bw.writeLong(cexpr.value64);
                                 else if (cexpr.DataType.TypeCode == TypeCode.Float)
-                                    WriteFloat(buffer, cexpr.fValue);
+                                    bw.writeFloat(cexpr.fValue);
                                 else if (cexpr.DataType.TypeCode == TypeCode.Double)
-                                    WriteDouble(buffer, cexpr.dValue);
+                                    bw.writeDouble(cexpr.dValue);
                             }
                         }
                         else if (fs != null)
                         {
-                            WriteByte(buffer, cc.SymbolType);
-                            WriteShort(buffer, cc.Flags);
-                            WriteType(buffer, fs.DataType);
-                            WriteString(buffer, cc.Name);
-                            WriteShort(buffer, fs.Offset);
-                            WriteShort(buffer, fs.Index);
+                            bw.writeByte(cc.SymbolType);
+                            bw.writeShort(cc.Flags);
+                            WriteType(bw, fs.DataType);
+                            bw.writeString(cc.Name);
+                            bw.writeShort(fs.Offset);
+                            bw.writeShort(fs.Index);
                         }
                         else if (mthd != null)
                         {
-                            WriteByte(buffer, cc.SymbolType);
-                            WriteShort(buffer, cc.Flags);
-                            WriteString(buffer, cc.Name);
+                            bw.writeByte(cc.SymbolType);
+                            bw.writeShort(cc.Flags);
+                            bw.writeString(cc.Name);
                             Function fn = mthd.GetFunction();
                             string tname = string.format("%s__%s", cls.Name, mthd.Name);
                             if(fn.Name != tname)
-                                WriteString(buffer, fn.Name);
+                                bw.writeString(fn.Name);
                             else
-                                WriteString(buffer, "");
-                            WriteShort(buffer, mthd.VSlot);
+                                bw.writeString("");
+                            bw.writeShort(mthd.VSlot);
                         }
                         else if (ps != null)
                         {
-                            WriteByte(buffer, cc.SymbolType);
-                            WriteShort(buffer, cc.Flags);
-                            WriteType(buffer, ps.DataType);
-                            WriteString(buffer, cc.Name);
+                            bw.writeByte(cc.SymbolType);
+                            bw.writeShort(cc.Flags);
+                            WriteType(bw, ps.DataType);
+                            bw.writeString(cc.Name);
                             byte getset = 0;
                             if (ps.Getter != null)
                                 getset |= 1;
                             if (ps.Setter != null)
                                 getset |= 2;
-                            WriteByte(buffer, getset);
+                            bw.writeByte(getset);
                         }
                     }
                     
-                    WriteByte(buffer, 0);
-
+                    bw.writeByte(0);
                     for(int j = 0; j < (c as ClassType).VirtualMethods.count; ++j)
                     {
                         MethodSymbol vm = (c as ClassType).VirtualMethods[j];
                         if (vm != null) 
-                            WriteString(buffer, vm.Name);
+                            bw.writeString(vm.Name);
                     }
-                    WriteString(buffer, "");
+                    bw.writeString("");
                 }
                 else if(c.SymbolType == SymbolType.Template)
                 {
-                    WriteByte(buffer, c.SymbolType);
-                    WriteShort(buffer, c.Flags);
-                    WriteString(buffer, c.Name);
+                    bw.writeByte(c.SymbolType);
+                    bw.writeShort(c.Flags);
+                    bw.writeString(c.Name);
                     for(int j = 0; j < (c as Template).TemplateParams.count; ++j)
-                        WriteString(buffer, (c as Template).TemplateParams[j]);
-                    WriteString(buffer, "");
-                    WriteString(buffer, ((c as Template).Source));
+                        bw.writeString((c as Template).TemplateParams[j]);
+                    bw.writeString("");
+                    bw.writeString(((c as Template).Source));
                 }
             }
         }
-        WriteByte(buffer, 0);
+        bw.writeByte(0);
     }
 
     static array<byte> GetSectionData(string filePath, string sectionName)
@@ -757,17 +768,6 @@ class TypeInfo
             MethodSymbol m = methodKeys[i];
             Function fn = module.Find(methodMap[m]) as Function;
             m.SetFunction(fn);
-
-            /*todo:if ((m.Flags & SymbolFlags.Static) != 0
-                && (m.DataType as Function).Parameters.count > 0
-                && (m.DataType as Function).Parameters[0].Name == new string("this"))
-            {
-                // load extension method
-                TypeSymbol typeToExtend = (m.DataType as Function).Parameters[0].DataType;
-                if(typeToExtend.IsClassRef())
-                    typeToExtend = typeToExtend.ElementType;
-                MethodSymbol extensionMethod = new MethodSymbol(typeToExtend, m.Name, m.DataType as Function);
-            }*/
         }
 
         array<PropertySymbol> getterKeys = getterMap.keys;
