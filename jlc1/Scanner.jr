@@ -22,9 +22,10 @@ int strtol(byte *str, byte *ptr, int _base) external;
 long strtoll(byte *str, byte *ptr, int _base) external;
 uint strtoul(byte *str, byte *ptr, int _base) external;
 ulong strtoull(byte *str, byte *ptr, int _base) external;
-double atof(byte *str) external;
 byte* strcpy(byte *dst, byte *src) external;
 int strcmp(byte *a, byte *b) external;
+
+double strtod(byte *str, byte **ptr) external;
 
 // Token enumeration
 // Defines all lexical token kinds produced by the scanner. The parser and
@@ -742,6 +743,23 @@ class Scanner
                         isReal = true;
                     NextChar();
                 }
+
+                if(isReal && (c == 'e' || c == 'E'))
+                {
+                    tokenString += c;
+                    NextChar();
+                    if(c == '+' || c == '-')
+                    {
+                        tokenString += c;
+                        NextChar();
+                    }
+                    while(c >= '0' && c <= '9')
+                    {
+                        tokenString += c;
+                        NextChar();
+                    }
+                }
+
                 if(isReal && (c == 'f' || c == 'F'))
                 {
                     NextChar();
@@ -764,12 +782,12 @@ class Scanner
                 {
                     if(isFloat)
                     {
-                        tokenFloat = (float)atof(tokenString.c_str());
+                        tokenFloat = (float)strtod(tokenString.c_str(), null);
                         token = Token.Float;
                     }
                     else
                     {
-                        tokenDouble = atof(tokenString.c_str());
+                        tokenDouble = strtod(tokenString.c_str(), null);
                         token = Token.Double;
                     }
                 }

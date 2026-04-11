@@ -661,6 +661,28 @@ namespace Jargon
                     NextChar();
                 }
 
+                if(isReal && (c == 'e' || c == 'E'))
+                {
+                    isReal = true;
+                    tokenString += c;
+                    NextChar();
+                    if (c == '+' || c == '-')
+                    {
+                        tokenString += c;
+                        NextChar();
+                    }
+                    while (char.IsDigit(c) || c == '_')
+                    {
+                        if (c == '_')
+                        {
+                            NextChar();
+                            continue;
+                        }
+                        tokenString += c;
+                        NextChar();
+                    }
+                }
+
                 if (isReal && (c == 'f' || c == 'F'))
                 {
                     isFloat = true;
