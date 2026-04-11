@@ -250,6 +250,8 @@ class CompilerOptions
     bool KeepIntermediateFiles = false;
     bool Verbose = false;
     string OptimizationLevel = "Og";
+    string Subsystem = "CONSOLE";
+    bool NoStartup = false;
 
     array<string> InputFiles = new array<string>();
     array<string> AdditionalLibraries = new array<string>();
@@ -616,16 +618,46 @@ class BaseParser
         // Try pointer-prefixed variants where operator expects pointers instead
         // of value types. This handles overloads that accept address-of
         // semantics or reference parameters.
-        fname = string.format("operator_%s_p%s_p%s", TokenToFName(token), 
-                                TypeToFName(left.DataType), TypeToFName(right.DataType));
+        //fname = string.format("operator_%s_p%s_p%s", TokenToFName(token), 
+        //                        TypeToFName(left.DataType), TypeToFName(right.DataType));
+
+        fname = string.format("operator_%s_", TokenToFName(token));
+
+        int byref = 0;
+
+        if(left.DataType.IsStruct()) 
+        {
+            fname += string.format("p%s_", TypeToFName(left.DataType));
+            byref |= 1;
+        }
+        else
+        {
+            fname += string.format("%s_", TypeToFName(left.DataType));
+        }
+        
+        if(right.DataType.IsStruct())
+        {
+            fname += string.format("p%s", TypeToFName(right.DataType));
+            byref |= 2;
+        }
+        else
+        {
+            fname += string.format("%s", TypeToFName(right.DataType));
+        }
             
         opovr = FindOrImport(fname);
 
         if (opovr != null)
         {
             FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(opovr));
-            fc.Arguments.add(new AddressOfExpression(left));
-            fc.Arguments.add(new AddressOfExpression(right));
+            if((byref & 1) != 0) 
+                fc.Arguments.add(new AddressOfExpression(left));
+            else
+                fc.Arguments.add(left);
+            if((byref & 2) != 0)
+                fc.Arguments.add(new AddressOfExpression(right));
+            else
+                fc.Arguments.add(right);
             left = fc;
             return true;
         }

@@ -827,10 +827,14 @@ class ExpressionParser : BaseParser
 			if(right == null)
 				return null;
             // Attempt to coerce types to a common type
-            AutoCast(left, right);
+            //AutoCast(left, right);
             SetContext(right, -1);
             if(!CheckBinaryOperatorOverride(tkn, left, right))
-				left = new BinaryExpression(op, left, right);
+            {
+                AutoCast(left, right);
+                if(!CheckBinaryOperatorOverride(Token.Or, left, right))
+				    left = new BinaryExpression(op, left, right);
+            }
             SetContext(left, -1);
             SetContext(right, -1);
 		}
@@ -902,9 +906,12 @@ class ExpressionParser : BaseParser
 			Expression right = ParseAddSub();
 			if(right == null)
 				return null;
-            AutoCast(left, right);
             if(!CheckBinaryOperatorOverride(tkn, left, right))
-				left = new BinaryExpression(op, left, right);
+            {
+                AutoCast(left, right);
+                if(!CheckBinaryOperatorOverride(Token.Or, left, right))
+				    left = new BinaryExpression(op, left, right);
+            }
             SetContext(left, -1);
             SetContext(right, -1);
 		}
@@ -924,9 +931,12 @@ class ExpressionParser : BaseParser
 			Expression right = ParseShift();
 			if(right == null)
 				return null;
-            AutoCast(left, right);
             if(!CheckBinaryOperatorOverride(Token.And, left, right))
-				left = new BinaryExpression(BinOp.And, left, right);
+            {
+                AutoCast(left, right);
+                if(!CheckBinaryOperatorOverride(Token.Or, left, right))
+				    left = new BinaryExpression(BinOp.And, left, right);
+            }
             SetContext(left, -1);
             SetContext(right, -1);
 		}
@@ -945,9 +955,12 @@ class ExpressionParser : BaseParser
 			Expression right = ParseAnd();
 			if(right == null)
 				return null;
-            AutoCast(left, right);
             if(!CheckBinaryOperatorOverride(Token.Xor, left, right))
-				left = new BinaryExpression(BinOp.Xor, left, right);
+            {
+                AutoCast(left, right);
+                if(!CheckBinaryOperatorOverride(Token.Or, left, right))
+				    left = new BinaryExpression(BinOp.Xor, left, right);
+            }
             SetContext(left, -1);
             SetContext(right, -1);
 		}
@@ -966,9 +979,12 @@ class ExpressionParser : BaseParser
 			Expression right = ParseXor();
 			if(right == null)
 				return null;
-            AutoCast(left, right);
             if(!CheckBinaryOperatorOverride(Token.Or, left, right))
-				left = new BinaryExpression(BinOp.Or, left, right);
+            {
+                AutoCast(left, right);
+                if(!CheckBinaryOperatorOverride(Token.Or, left, right))
+				    left = new BinaryExpression(BinOp.Or, left, right);
+            }
             SetContext(left, -1);
             SetContext(right, -1);
 		}
@@ -990,11 +1006,14 @@ class ExpressionParser : BaseParser
 			Expression right = ParseOr();
 			if(right == null)
 				return null;
-            AutoCast(left, right);
             if(!CheckBinaryOperatorOverride(tkn, left, right))
             {
-				Expression cond = new BinaryExpression(op, left, right);
-                left = new TernaryExpression(cond, left, right);
+                AutoCast(left, right);
+                if(!CheckBinaryOperatorOverride(tkn, left, right))
+                {
+				    Expression cond = new BinaryExpression(op, left, right);
+                    left = new TernaryExpression(cond, left, right);
+                }
             }
             SetContext(left, -1);
             SetContext(right, -1);
@@ -1017,9 +1036,12 @@ class ExpressionParser : BaseParser
 			Expression right = ParseMinMax();
 			if(right == null)
 				return null;
-            AutoCast(left, right);
             if(!CheckBinaryOperatorOverride(tkn, left, right))
-				left = new BinaryExpression(op, left, right);
+            {
+                AutoCast(left, right);
+                if(!CheckBinaryOperatorOverride(tkn, left, right))
+				    left = new BinaryExpression(op, left, right);
+            }
             SetContext(left, -1);
             SetContext(right, -1);
 		}
