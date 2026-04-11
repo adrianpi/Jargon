@@ -995,12 +995,12 @@ class CodeGenVisitor : CodeVisitor
 			}
 
 			if (dt.IsClassRef() && IsFunctionCall(e.Expression))
-                {
-                    DelayRelease dr = new DelayRelease();
-                    dr.tag = e.Expression.Tag;
-					dr.dbg = sdbg;
-                    lingerRefs.add(dr);
-                }
+            {
+                DelayRelease dr = new DelayRelease();
+                dr.tag = e.Expression.Tag;
+				dr.dbg = sdbg;
+                lingerRefs.add(dr);
+            }
 		}
 		else if(e.Field is EnumValue)
         {
@@ -1134,7 +1134,6 @@ class CodeGenVisitor : CodeVisitor
 
 	// IsFunctionCall - helper that returns true if the expression is (or
 	// wraps) a FunctionCallExpression. CastExpression wrappers are skipped.
-	// TODO: Move to Expression?
 	static bool IsFunctionCall(Expression e)
     {
         Expression f = e;

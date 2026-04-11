@@ -1116,18 +1116,6 @@ class ExpressionParser : BaseParser
         return left;
     }
 
-    //TODO: Move to Expression
-    static bool IsFunctionCall(Expression e)
-    {
-        Expression f = e;
-        while (f is CastExpression)
-		{
-			CastExpression ce = (CastExpression)f;
-            f = ce.Expression;
-		}
-        return f is FunctionCallExpression;
-    }
-
     static bool IsNull(Expression e)
     {
         ConstantExpression ce = e as ConstantExpression;
@@ -1192,7 +1180,7 @@ class ExpressionParser : BaseParser
             if(se != null)
             {
                 LocalVariable lv = se.Symbol as LocalVariable;
-                if(lv != null && lv.Offset >= 0 && lv.DataType.IsClassRef() && (lv.Flags & SymbolFlags.ByRef) == 0 /*&& IsFunctionCall(right)*/)
+                if(lv != null && lv.Offset >= 0 && lv.DataType.IsClassRef() && (lv.Flags & SymbolFlags.ByRef) == 0)
                 {
                     // Assigning to a classref parameter would cause a leak.
                     Error("Invalid assignment. By-val parameters cannot take ownership.");
