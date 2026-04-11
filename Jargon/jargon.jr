@@ -58,6 +58,8 @@ long va_arg_long(void *ap) verbatim "va_arg ptr #ap, i64";
 double va_arg_double(void *ap) verbatim "va_arg ptr #ap, f64";
 void* va_arg_ptr(void *ap) verbatim "va_arg ptr #ap, ptr";
 void debugBreak() verbatim "call void @llvm.debugtrap()";
+void _atomicInc(int *p) verbatim "%$ai1 = load ptr, ptr #p\n\t%$ai2 = atomicrmw add ptr %$ai1, i32 1 seq_cst";
+void _atomicSub(int *p, int *r) verbatim "%$as1 = load ptr, ptr #p\n\t%$as2 = atomicrmw sub ptr %$as1, i32 1 seq_cst\n\t%$as3 = load ptr, ptr #r\n\tstore i32 %$as2, ptr %$as3";
 
 double sin(double x) external;
 double cos(double x) external;
@@ -235,8 +237,8 @@ class object
 	{
 		if(this != null)
 		{
-			++refCount;
-			//printf("addRef %x [%d]\n", this, refCount);
+			int *p = &refCount;
+			_atomicInc(p);
 		}
 	}
 
@@ -244,9 +246,11 @@ class object
 	{
 		if(this != null)
 		{
-			--refCount;
-			//printf("release %x [%d]\n", this, refCount);
-			if(refCount == 0)
+			int *p = &refCount;
+			int oldVal;
+			int *r = &oldVal;
+			_atomicSub(p, r);
+			if(oldVal == 1)
 				delete this;
 		}
 	}
