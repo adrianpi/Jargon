@@ -111,7 +111,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PreBuildEvent>
-      <Command>..\x64\Debug\jlc2.exe -g main.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib -lole32.lib -loleaut32.lib -lkernel32.lib -luser32.lib -lgdi32.lib  -SUBSYSTEM:WINDOWS</Command>
+      <Command>..\x64\Debug\jlc2.exe -g main.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib -lole32.lib -loleaut32.lib -lkernel32.lib -luser32.lib -lgdi32.lib -lwinmm.lib  -SUBSYSTEM:WINDOWS</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -125,11 +125,11 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
-      <SubSystem>Console</SubSystem>
+      <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PreBuildEvent>
-      <Command>..\x64\Debug\jlc2.exe -g -O3 main.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib -lole32.lib -loleaut32.lib -lkernel32.lib -luser32.lib -lgdi32.lib -lStartup.lib</Command>
+      <Command>..\x64\Release\jlc2.exe -Ox main.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib -lole32.lib -loleaut32.lib -lkernel32.lib -luser32.lib -lgdi32.lib -lwinmm.lib  -SUBSYSTEM:WINDOWS /Ot /clang:-ffast-math /clang:-fvectorize</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

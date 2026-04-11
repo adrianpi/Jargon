@@ -124,6 +124,9 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <PreBuildEvent>
+      <Command>..\x64\Release\jlc2.exe -Ox main.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib -lole32.lib -loleaut32.lib -lkernel32.lib -luser32.lib</Command>
+    </PreBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

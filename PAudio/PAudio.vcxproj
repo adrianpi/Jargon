@@ -121,6 +121,9 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <PreBuildEvent>
+      <Command>..\x64\Release\jlc2.exe -Oc portaudio.jr Main.jr -o $(OutputPath)$(TargetFileName)  -lportaudio_x64.lib -IC:\2026\portaudio\build\msvc\x64\Release</Command>
+    </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include="Main.jr" />

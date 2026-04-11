@@ -121,6 +121,9 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <PreBuildEvent>
+      <Command>..\x64\Release\jlc2.exe -Ox ..\jlc1\Expression.jr ..\jlc1\LLVMCodeGen.jr ..\jlc1\BaseParser.jr ..\jlc1\ExpressionParser.jr ..\jlc1\StageParser.jr ..\jlc1\Parser1.jr ..\jlc1\Parser2.jr ..\jlc1\Parser3.jr ..\jlc1\Parser4.jr ..\jlc1\CodeTransform.jr ..\jlc1\ConstantEvaluator.jr ..\jlc1\StringBuffer.jr ..\jlc1\DebugInfo.jr ..\jlc1\Compiler.jr Main.jr ..\jlc1\Scanner.jr ..\jlc1\Statement.jr ..\jlc1\Symbol.jr ..\jlc1\TypeInfo.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib</Command>
+    </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include="Main.jr" />

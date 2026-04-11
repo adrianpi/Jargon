@@ -121,6 +121,9 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <PreBuildEvent>
+      <Command>..\jlc0\bin\Release\jlc0.exe -Ox Expression.jr LLVMCodeGen.jr BaseParser.jr ExpressionParser.jr StageParser.jr Parser1.jr Parser2.jr Parser3.jr Parser4.jr CodeTransform.jr ConstantEvaluator.jr StringBuffer.jr DebugInfo.jr Compiler.jr Main.jr Scanner.jr Statement.jr Symbol.jr TypeInfo.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib -NoStartup</Command>
+    </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include="BaseParser.jr" />
