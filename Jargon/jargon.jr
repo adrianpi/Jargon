@@ -27,6 +27,26 @@ long fwrite(void *buffer, long size, long count, void *fptr) external;
 int rename(byte *oldFileName, byte *newFileName) external;
 int remove(byte *fileName) external;
 byte* _getcwd(byte *buffer, int maxLen) external;
+int _mkdir(byte *dir) external;
+int _rmdir(byte *dir) external;
+int _access(byte *dir, int mode) external;
+
+struct _finddata_t
+{
+    uint    attrib;
+    long    time_create;
+    long    time_access;
+    long    time_write;
+    uint    size;
+    byte    name[260];
+}
+
+const int _A_SUBDIR = 0x10;
+
+long _findfirst64i32(byte *path, _finddata_t *file) external;
+int _findnext64i32(long handle,  _finddata_t *file) external;
+void _findclose(long handle) external;
+
 void OutputDebugStringA(byte *str) external;
 
 void __stdio_common_vsprintf(void *options, byte *buffer, long bufferCount, byte *fmt, void *locale, void *ap) external;
@@ -39,8 +59,67 @@ double va_arg_double(void *ap) verbatim "va_arg ptr #ap, f64";
 void* va_arg_ptr(void *ap) verbatim "va_arg ptr #ap, ptr";
 void debugBreak() verbatim "call void @llvm.debugtrap()";
 
-const int K_NUM = 202;
-const float K_PI = 3.141592f;
+double sin(double x) external;
+double cos(double x) external;
+double tan(double x) external;
+double asin(double x) external;
+double acos(double x) external;
+double atan(double x) external;
+double atan2(double y, double x) external;
+
+double sinh(double x) external;
+double cosh(double x) external;
+double tanh(double x) external;
+double asinh(double x) external;
+double acosh(double x) external;
+double atanh(double x) external;
+
+double exp(double x) external;
+double exp2(double x) external;
+double log(double x) external;
+double log10(double x) external;
+double log2(double x) external;
+
+double pow(double x, double y) external;
+double sqrt(double x) external;
+
+double ceil(double x) external;
+double floor(double x) external;
+double trunc(double x) external;
+double round(double x) external;
+double fmod(double x, double y) external;
+double fabs(double x) external;
+
+float sinf(float x) external;
+float cosf(float x) external;
+float tanf(float x) external;
+float asinf(float x) external;
+float acosf(float x) external;
+float atanf(float x) external;
+float atan2f(float y, float x) external;
+
+float sinhf(float x) external;
+float coshf(float x) external;
+float tanhf(float x) external;
+float asinhf(float x) external;
+float acoshf(float x) external;
+float atanhf(float x) external;
+
+float expf(float x) external;
+float exp2f(float x) external;
+float logf(float x) external;
+float log10f(float x) external;
+float log2f(float x) external;
+
+float powf(float x, float y) external;
+float sqrtf(float x) external;
+
+float ceilf(float x) external;
+float floorf(float x) external;
+float truncf(float x) external;
+float roundf(float x) external;
+float fmodf(float x, float y) external;
+float fabsf(float x) external;
 
 void print(string *fmt, ...)
 {
@@ -59,7 +138,7 @@ void println(string *fmt, ...)
 	printf("\n");
 }
 
-void log(string fmt, ...)
+void Log(string fmt, ...)
 {
 	byte buffer[4096];
 	void *ap;
@@ -74,7 +153,7 @@ void assert(bool condition)
 {
 	if(!condition)
 	{
-		log("Assertion failed.");
+		Log("Assertion failed.");
 		debugBreak();
 	}
 }
@@ -83,7 +162,7 @@ void assertMsg(bool condition, string msg)
 {
 	if(!condition)
 	{
-		log("Assertion failed: %s", msg);
+		Log("Assertion failed: %s", msg);
 		debugBreak();
 	}
 }
@@ -1337,7 +1416,7 @@ class file
 		return true;
 	}
 
-	static bool move(string *oldFileName, string *newFileName)
+	static bool rename(string *oldFileName, string *newFileName)
 	{
 		return rename(oldFileName.c_str(), newFileName.c_str()) == 0;
 	}
@@ -1357,6 +1436,71 @@ class file
 		else {
 			return false;
 		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+
+class directory
+{
+	static bool create(string *path)
+	{
+		return _mkdir(path.c_str()) == 0;
+	}
+
+	static bool remove(string *path)
+	{
+		return _rmdir(path.c_str()) == 0;
+	}
+
+	static bool rename(string *oldPath, string *newPath)
+	{
+		return rename(oldPath.c_str(), newPath.c_str()) == 0;
+	}
+
+	static bool exists(string *path)
+	{
+		return _access(path.c_str(), 0) == 0;
+	}
+
+	static array<string> getFiles(string path, string filter)
+	{
+		array<string> result = new array<string>();
+		string *searchPath = path + "\\" + filter;
+		_finddata_t fileInfo;
+		long handle = _findfirst64i32(searchPath.c_str(), &fileInfo);
+		if(handle != -1)
+		{
+			do
+			{
+				if((fileInfo.attrib & _A_SUBDIR) == 0)
+				{
+					result.add(new string(&fileInfo.name[0]));
+				}
+			} while(_findnext64i32(handle, &fileInfo) == 0);
+			_findclose(handle);
+		}
+		return result;
+	}
+
+	static array<string> getDirectories(string path, string filter)
+	{
+		array<string> result = new array<string>();
+		string *searchPath = path + "\\" + filter;
+		_finddata_t fileInfo;
+		long handle = _findfirst64i32(searchPath.c_str(), &fileInfo);
+		if(handle != -1)
+		{
+			do
+			{
+				if((fileInfo.attrib & _A_SUBDIR) != 0)
+				{
+					result.add(new string(&fileInfo.name[0]));
+				}
+			} while(_findnext64i32(handle, &fileInfo) == 0);
+			_findclose(handle);
+		}
+		return result;
 	}
 }
 
@@ -1465,6 +1609,99 @@ class path
             return filePath;
         }
     }
+}
+
+//-----------------------------------------------------------------------------
+
+class math
+{
+    const double PI = 3.14159265358979323846;
+    const double PI_2 = 1.57079632679489661923;
+    const double PI_4 = 0.78539816339744830962;
+    const double TWO_PI = 6.28318530717958647692;
+    const double E = 2.71828182845904523536;
+    const double LOG2E = 1.44269504088896340736;
+    const double LOG10E = 0.43429448190325182765;
+    const double LN2 = 0.69314718055994530942;
+    const double LN10 = 2.30258509299404568402;
+
+    const float F_PI = 3.1415927f;
+    const float F_PI_2 = 1.5707963f;
+    const float F_PI_4 = 0.7853982f;
+    const float F_TWO_PI = 6.2831855f;
+    const float F_E = 2.7182818f;
+    const float F_LOG2E = 1.442695f;
+    const float F_LOG10E = 0.4342945f;
+    const float F_LN2 = 0.6931472f;
+    const float F_LN10 = 2.3025851f;
+
+    const double DBL_MAX = 1.7976931348623157e+308;
+    const double DBL_MIN = 2.2250738585072014e-308;
+
+    const float FLT_MAX = 3.4028235e+38f;
+    const float FLT_MIN = 1.1754944e-38f;
+
+    static double sin(double x) { return sin(x); }
+    static double cos(double x) { return cos(x); }
+    static double tan(double x) { return tan(x); }
+    static double asin(double x) { return asin(x); }
+    static double acos(double x) { return acos(x); }
+    static double atan(double x) { return atan(x); }
+    static double atan2(double y, double x) { return atan2(y, x); }
+
+    static double sinh(double x) { return sinh(x); }
+    static double cosh(double x) { return cosh(x); }
+    static double tanh(double x) { return tanh(x); }
+    static double asinh(double x) { return asinh(x); }
+    static double acosh(double x) { return acosh(x); }
+    static double atanh(double x) { return atanh(x); }
+
+    static double exp(double x) { return exp(x); }
+    static double exp2(double x) { return exp2(x); }
+    static double log(double x) { return log(x); }
+    static double log10(double x) { return log10(x); }
+    static double log2(double x) { return log2(x); }
+
+    static double pow(double x, double y) { return pow(x, y); }
+    static double sqrt(double x) { return sqrt(x); }
+
+    static double ceil(double x) { return ceil(x); }
+    static double floor(double x) { return floor(x); }
+    static double trunc(double x) { return trunc(x); }
+    static double round(double x) { return round(x); }
+    static double mod(double x, double y) { return fmod(x, y); }
+    static double abs(double x) { return fabs(x); }
+
+    static float sinf(float x) { return sinf(x); }
+    static float cosf(float x) { return cosf(x); }
+    static float tanf(float x) { return tanf(x); }
+    static float asinf(float x) { return asinf(x); }
+    static float acosf(float x) { return acosf(x); }
+    static float atanf(float x) { return atanf(x); }
+    static float atan2f(float y, float x) { return atan2f(y, x); }
+
+    static float sinhf(float x) { return sinhf(x); }
+    static float coshf(float x) { return coshf(x); }
+    static float tanhf(float x) { return tanhf(x); }
+    static float asinhf(float x) { return asinhf(x); }
+    static float acoshf(float x) { return acoshf(x); }
+    static float atanhf(float x) { return atanhf(x); }
+
+    static float expf(float x) { return expf(x); }
+    static float exp2f(float x) { return exp2f(x); }
+    static float logf(float x) { return logf(x); }
+    static float log10f(float x) { return log10f(x); }
+    static float log2f(float x) { return log2f(x); }
+
+    static float powf(float x, float y) { return powf(x, y); }
+    static float sqrtf(float x) { return sqrtf(x); }
+
+    static float ceilf(float x) { return ceilf(x); }
+    static float floorf(float x) { return floorf(x); }
+    static float truncf(float x) { return truncf(x); }
+    static float roundf(float x) { return roundf(x); }
+    static float modf(float x, float y) { return fmodf(x, y); }
+    static float absf(float x) { return (float)fabs((float)x); }
 }
 
 //-----------------------------------------------------------------------------
@@ -1858,7 +2095,38 @@ bool _readTypeInfo(byte *address)
 					int st2 = __readByte();
 					while(st2 != 0)
 					{
-						if(st2 == SymbolType.Field)
+						if(st2 == SymbolType.Constant)
+						{
+							flags = __readShort();
+							int t = ReadType();
+							__readString(name);
+							if(_readTypeLog) printf("constant %s\n", (byte*)name);
+							if(t == TypeCode.Bool || t == TypeCode.Byte || t == TypeCode.UByte) {
+								byte value = __readByte();
+								if(_readTypeLog) printf("\tvalue %d\n", value);
+							}
+							if(t == TypeCode.Short || t == TypeCode.UShort) {
+								int value = __readShort();
+								if(_readTypeLog) printf("\tvalue %d\n", value);
+							}
+							if(t == TypeCode.Int || t == TypeCode.UInt) {
+								int value = __readInt();
+								if(_readTypeLog) printf("\tvalue %d\n", value);
+							}
+							if(t == TypeCode.Long || t == TypeCode.ULong) {
+								long value = __readInt();
+								if(_readTypeLog) printf("\tvalue %lld\n", value);
+							}
+							else if(t == TypeCode.Float) {
+								float value = __readFloat();
+								if(_readTypeLog) printf("\tvalue %f\n", value);
+							}
+							else if(t == TypeCode.Double) {
+								double value = __readDouble();
+								if(_readTypeLog) printf("\tvalue %f\n", value);
+							}
+						}
+						else if(st2 == SymbolType.Field)
 						{
 							flags = __readShort();
 							int ft = ReadType();
