@@ -28,8 +28,14 @@
 - **jlc1** - Jargon Compiler implemented in Jargon, compiled with jlc0
 - **jlc2** - Jargon Compiler implemented in Jargon, compiled with jlc1, to check for no degradation
 - **Test** - Test project
+- **HelloWorld** - Simple Hello World example
 - **ComTest** - Exampe of using COM
-- **WinApp** - Example of minimal Windows application
+- **WinApp** - Example minimal Windows application
+- **FImage** - FreeImage library integration example
+- **PAudio** - PortAudio library integration example
+- **VulkanApp** - Vulkan bindings example
+- **Raytracer** - Simple raytracer example
+- **RaytraceMT** - Multi-threaded raytracer example
 
 ## Usage
 
@@ -46,10 +52,40 @@
 | `-V` | Verbose output |
 | `-h`, `--help` | Show help |
 
-### Example
+### Quick Taste
 
-jlc1 -g Main.jr -o Test.exe
+```csharp
+int start()
+{
+  println("Hello world!");
+  return 0;
+}
+```
+```csharp
+class Foo
+{
+  int bar = 99;
+  int get Bar() => bar;
+  void set Bar(int value)
+  {
+    bar = value;
+  }
+}
 
+int start()
+{
+  Foo foo = new Foo();
+  println("foo.bar: %d", foo.Bar);
+  foo.Bar = foo.Bar + 2;
+  println("foo.bar: %d", foo.Bar);
+  return 0;
+}
+```
+
+### Compilation Example
+```
+jlc2 -g Main.jr -o Test.exe
+```
 ## Prerequisites
 
 - **Windows 10 or Windows 11**
@@ -60,7 +96,7 @@ jlc1 -g Main.jr -o Test.exe
 
 1. Create a JARGON_LIB system variable pointing to your binary folder. i.e JARGON_LIB=C:\Jargon\x64\Debug
 2. Open the solution in **Visual Studio 2022/2026**.
-3. Build the `Test` project to perform a build of all projects in the solution in the correct order.
+3. Build the `Test` project to perform a build of all compiler projects in the solution in the correct order.
 
 ## License
 
