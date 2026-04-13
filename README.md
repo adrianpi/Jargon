@@ -76,7 +76,7 @@ int start()
 {
   Foo foo = new Foo();
   println("foo.bar: %d", foo.Bar);
-  foo.Bar = foo.Bar + 2;
+  foo.Bar += 2;
   println("foo.bar: %d", foo.Bar);
   return 0;
 }
