@@ -72,6 +72,9 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <PreBuildEvent>
+      <Command>..\x64\Release\jlc2.exe -Ox -k main.jr -o $(OutputPath)$(TargetFileName)</Command>
+    </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include="main.jr" />
