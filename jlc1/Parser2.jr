@@ -455,9 +455,11 @@ class Parser2 : StageParser
                         fs.Unit = unit;
                         if (!_static)
                         {
+                            int alignment = GetAlignment(decl.type);
+
                             fs.Index = cls.FieldCount;
                             cls.FieldCount++;
-                            int offs = ((cls.Size + decl.type.Size - 1) / decl.type.Size) * decl.type.Size;
+                            int offs = ((cls.Size + alignment - 1) / alignment) * alignment;
                             fs.Offset = offs;
                             cls.SetSize(offs + decl.type.Size);
                         }
