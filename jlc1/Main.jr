@@ -46,6 +46,8 @@ int start(array<string> args)
             println("  -O<level>         Set optimization level (O0, O1, O2, Os, Ofast, Od, Ot, Ox)");
             println("  -I<dir>           Add directory to library search path");
             println("  -l<library>       Link with specified library");
+            println("  -SUBSYSTEM:<type> Set subsystem type (CONSOLE, WINDOWS)");
+            println("  -NoStartup        Do not link with startup code");
             println("  -V                Verbose output");
             return 0;
         }
