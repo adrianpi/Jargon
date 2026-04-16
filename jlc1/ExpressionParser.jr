@@ -35,6 +35,22 @@ class ExpressionParser : BaseParser
         }
     }
 
+    // IsVisible - check if a symbol is visible in the current context
+    bool IsVisible(Symbol s)
+    {
+        if((s.Flags & SymbolFlags.VisibilityMask) != 0)
+	    {
+		    if((s.Flags & SymbolFlags.Private) != 0 && s.Parent != _class)
+			    return false;
+		    else if((s.Flags & SymbolFlags.Protected) != 0 && !_class.IsClassOf(s.Parent))
+			    return false;
+		    else if((s.Flags & SymbolFlags.Internal) != 0 && s.Parent.Parent != module)
+			    return false;
+	    }
+	    return true;
+    }
+
+    // sizeof/base/new and simple constructs that do not include selectors
     // ParsePrimary - parse the smallest expression units: literals, strings,
     // parenthesized expressions and casts, identifiers, keywords like null/
     // sizeof/base/new and simple constructs that do not include selectors
@@ -186,6 +202,12 @@ class ExpressionParser : BaseParser
             if(s == null)
             {
                 Error(string.format("Undefined symbol '%s'", name));
+                return null;
+            }
+
+            if(!IsVisible(s))
+            {
+                Error(string.format("Symbol '%s' is not accessible", name));
                 return null;
             }
 
@@ -514,6 +536,13 @@ class ExpressionParser : BaseParser
                         return null;
                     }
                 }
+
+                if(!IsVisible(field))
+                {
+                    Error(string.format("Member '%s' is not accessible", name));
+                    return null;
+                }
+
                 string file = left.file;
                 int line = left.line;
                 // If the member is static or we accessed it on a ClassType symbol

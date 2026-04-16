@@ -76,6 +76,15 @@ class Parser4 : StageParser
                 bool _static = false;
                 bool _const = false;
 
+                if(IsKeyword("public"))
+                {}
+                else if(IsKeyword("private"))
+                {}
+                else if(IsKeyword("protected"))
+                {}
+                else if(IsKeyword("internal"))
+                {}
+
                 if(IsKeyword("const"))
                 {
                     _const = true;

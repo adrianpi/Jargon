@@ -228,6 +228,17 @@ class Parser2 : StageParser
                 bool _weak = false;
                 bool _const = false;
 
+                int visibility = 0;
+
+                if(IsKeyword("public"))
+                    visibility = 0;
+                else if(IsKeyword("private"))
+                    visibility = SymbolFlags.Private;
+                else if(IsKeyword("protected"))
+                    visibility = SymbolFlags.Protected;
+                else if(IsKeyword("internal"))
+                    visibility = SymbolFlags.Internal;
+
                 if(IsKeyword("const"))
                 {
                     _const = true;
@@ -395,6 +406,7 @@ class Parser2 : StageParser
                     fn.Name = string.format("%s__%s", cls.Name, fn.Name);
                     module.AddChild(fn);
                     unit.AddSymbol(fn);
+                    ms.Flags += visibility;
 
                     // Method bodies can either be provided as braces (function
                     // definition) or as a double-arrow shorthand or omitted.
@@ -447,6 +459,7 @@ class Parser2 : StageParser
                         Expression value = ForceCast(constVal, decl.type);
                         ConstantValue cf = new ConstantValue(cls, decl.name, value);
                         cf.Flags |= SymbolFlags.Static;
+                        cf.Flags += visibility;
                     }
                     else
                     {
@@ -470,6 +483,8 @@ class Parser2 : StageParser
 
                         if (_weak)
                             fs.Flags += SymbolFlags.Weak;
+
+                        fs.Flags += visibility;
 
                         // Parse optional initializer for static fields
                         if (scanner.Token == Token.Assign)
