@@ -1,10 +1,17 @@
 using jargon;
 
+// TypeInfo.jr - Module serialization and deserialization for Jargon compiler
+// This file contains utilities for reading/writing type information to/from binary format,
+// including parsing PE file sections and serializing module metadata.
+
+// BinaryReader - Utility class for reading primitive types from a byte buffer
+// Reads data in little-endian format
 class BinaryReader
 {
-    array<byte> buffer;
-    int pos = 0;
+    array<byte> buffer;  // Internal byte buffer to read from
+    int pos = 0;         // Current read position in the buffer
 
+    // Constructor - Initializes the reader with the given byte buffer
     BinaryReader constructor(array<byte> buff)
     {
         base();
@@ -12,11 +19,13 @@ class BinaryReader
         return this;
     }
 
+    // Reads a single byte from the buffer and advances position
     byte readByte()
     {
         return buffer[pos++];
     }
 
+    // Reads a 16-bit short value in little-endian format
     short readShort()
     {
         ubyte b1 = buffer[pos++];
@@ -24,16 +33,18 @@ class BinaryReader
         return (short)(b1 | (b2 << 8));
     }
 
+    // Reads a 32-bit integer value in little-endian format
     int readInt()
     {
         ubyte b1 = buffer[pos++];
         ubyte b2 = buffer[pos++];
         ubyte b3 = buffer[pos++];
         ubyte b4 = buffer[pos++];
-        
+
         return b1 | (b2 << 8) | (b3 << 16) | (b4 << 24);
     }
 
+    // Reads a 64-bit long value by reading two 32-bit integers
     long readLong()
     {
         ulong l = readUInt();
@@ -41,16 +52,18 @@ class BinaryReader
         return l;
     }
 
+    // Reads an unsigned 32-bit integer value in little-endian format
     uint readUInt()
     {
         ubyte b1 = buffer[pos++];
         ubyte b2 = buffer[pos++];
         ubyte b3 = buffer[pos++];
         ubyte b4 = buffer[pos++];
-        
+
         return b1 | (b2 << 8) | (b3 << 16) | (b4 << 24);
     }
 
+    // Reads an unsigned 64-bit long value by reading two 32-bit unsigned integers
     ulong readULong()
     {
         ulong l = readUInt();
@@ -58,11 +71,12 @@ class BinaryReader
         return l;
     }
 
+    // Reads a null-terminated string from the buffer
     string readString()
     {
         string str = "";
         byte c = buffer[pos++];
-        while(c != 0)
+        while(c != 0)  // Read until null terminator
         {
             str = str + c;
             c = buffer[pos++];
@@ -70,25 +84,30 @@ class BinaryReader
         return str;
     }
 
+    // Reads a 32-bit floating point value using pointer reinterpretation
     float readFloat()
     {
         int i = readInt();
-        float f = *(float*)&i;
+        float f = *(float*)&i;  // Reinterpret int bits as float
         return f;
     }
 
+    // Reads a 64-bit double precision floating point value using pointer reinterpretation
     double readDouble()
     {
         ulong ul = readULong();
-        double d = *(double*)&ul;
+        double d = *(double*)&ul;  // Reinterpret ulong bits as double
         return d;
     }
 }
 
+// BinaryWriter - Utility class for writing primitive types to a byte buffer
+// Writes data in little-endian format
 class BinaryWriter
 {
-    array<byte> buffer;
+    array<byte> buffer;  // Internal byte buffer to write to
 
+    // Constructor - Initializes the writer with the given byte buffer
     BinaryWriter constructor(array<byte> buff)
     {
         base();
@@ -96,17 +115,20 @@ class BinaryWriter
         return this;
     }
 
+    // Writes a single byte to the buffer
     void writeByte(byte value)
     {
         buffer.add(value);
     }
 
+    // Writes a 16-bit short value in little-endian format
     void writeShort(short value)
     {
         buffer.add((byte)(value & 0xff));
         buffer.add((byte)((value >> 8) & 0xff));
     }
 
+    // Writes a 32-bit integer value in little-endian format
     void writeInt(int value)
     {
         buffer.add((value & 0xff));
@@ -115,19 +137,22 @@ class BinaryWriter
         buffer.add(((value >> 24) & 0xff));
     }
 
+    // Writes a 64-bit long value as two 32-bit integers
     void writeLong(long value)
     {
         writeInt(value & 0xffffffff);
         writeInt(value >> 32);
     }
 
+    // Writes a null-terminated string to the buffer
     void writeString(string value)
     {
         for(int i = 0; i < value.length; ++i)
             buffer.add(value[i]);
-        buffer.add(0);
+        buffer.add(0);  // Null terminator
     }
 
+    // Writes a 32-bit floating point value by writing its raw bytes
     void writeFloat(float value)
     {
         byte* b = (byte*)&value;
@@ -135,6 +160,7 @@ class BinaryWriter
             buffer.add(b[i]);
     }
 
+    // Writes a 64-bit double precision floating point value by writing its raw bytes
     void writeDouble(double value)
     {
         byte* b = (byte*)&value;
@@ -143,8 +169,13 @@ class BinaryWriter
     }
 }
 
+// TypeInfo - Main class for module serialization and deserialization
+// Handles writing module metadata to binary format and reading it back,
+// including support for extracting metadata from PE file sections
 class TypeInfo
 {
+    // Recursively writes type information to the binary writer
+    // Handles primitive types, pointers, arrays, and user-defined types (structs/classes)
     static void WriteType(BinaryWriter bw, TypeSymbol type)
     {
         if(type == null)
@@ -169,12 +200,15 @@ class TypeInfo
         }
     }
 
+    // Serializes a module and all its symbols to binary format
+    // Writes constants, enums, functions, structs, classes, and templates
     static void Write(array<byte> buffer, Module m)
     {
         BinaryWriter bw = new BinaryWriter(buffer);
 
+        // Write module header
         bw.writeByte((int)SymbolType.Module);
-        bw.writeInt((int)0x01000000);
+        bw.writeInt((int)0x01000000);  // Version number
         bw.writeString(m.Name);
 
         /*todo:foreach(var u in m.Usings)
@@ -184,13 +218,15 @@ class TypeInfo
         bw.writeString("");
 
         ConstantExpression cexpr = null;
-        
+
+        // Iterate through all module children and serialize non-external symbols
         for(int i = 0; i < m.Children.count; ++i)
         {
             Symbol c = m.Children[i];
 
-            if ((c.Flags & SymbolFlags.External) == 0)
+            if ((c.Flags & SymbolFlags.External) == 0)  // Skip external symbols
             {
+                // Write constant values with their type-specific data
                 if(c.SymbolType == SymbolType.Constant)
                 {
                     cexpr = (c as ConstantValue).Value as ConstantExpression;
@@ -200,6 +236,7 @@ class TypeInfo
                         bw.writeShort(c.Flags);
                         WriteType(bw, c.DataType);
                         bw.writeString(c.Name);
+                        // Write the constant value based on its type
                         if (cexpr.DataType.TypeCode == TypeCode.Bool)
                             bw.writeByte((byte)cexpr.value);
                         else if (cexpr.DataType.TypeCode == TypeCode.Byte || cexpr.DataType.TypeCode == TypeCode.UByte)
@@ -216,12 +253,14 @@ class TypeInfo
                             bw.writeDouble(cexpr.dValue);
                     }
                 }
+                // Write enum types and their values
                 if(c.SymbolType == SymbolType.Enum)
                 {
                     bw.writeByte(c.SymbolType);
                     bw.writeShort(c.Flags);
                     WriteType(bw, (c as EnumType).ElementType);
                     bw.writeString(c.Name);
+                    // Write all enum values
                     for(int j = 0; j < c.Children.count; ++j)
                     {
                         Symbol cc = c.Children[j];
@@ -234,18 +273,21 @@ class TypeInfo
                             bw.writeLong(ev.Value);
                         }
                     }
-                    bw.writeByte(0);
+                    bw.writeByte(0);  // End of enum values marker
                 }
+                // Write function definitions including parameters
                 else if(c.SymbolType == SymbolType.Function)
                 {
                     bw.writeByte(c.SymbolType);
                     bw.writeShort(c.Flags);
                     WriteType(bw, (c as Function).ReturnType);
                     bw.writeString(c.Name);
+                    // Write verbatim code if present (for external functions)
                     if ((c as Function).Verbatim != null)
                         bw.writeString((c as Function).Verbatim);
                     else
                         bw.writeString("");
+                    // Write all function parameters
                     for(int j = 0; j < (c as Function).Parameters.count; ++j)
                     {
                         LocalVariable p = (c as Function).Parameters[j];
@@ -255,14 +297,16 @@ class TypeInfo
                         bw.writeString(p.Name);
                         bw.writeByte(p.Offset);
                     }
-                    bw.writeByte(0);
+                    bw.writeByte(0);  // End of parameters marker
                 }
+                // Write struct definitions including fields
                 else if(c.SymbolType == SymbolType.Struct)
                 {
                     bw.writeByte(c.SymbolType);
                     bw.writeShort(c.Flags);
                     bw.writeString(c.Name);
                     bw.writeShort((c as StructType).Size);
+                    // Write all struct fields
                     for(int j = 0; j < c.Children.count; ++j)
                     {
                         FieldSymbol fs = c.Children[j] as FieldSymbol;
@@ -276,8 +320,9 @@ class TypeInfo
                             bw.writeShort(fs.Index);
                         }
                     }
-                    bw.writeByte(0);
+                    bw.writeByte(0);  // End of fields marker
                 }
+                // Write class definitions including fields, methods, and properties
                 else if(c.SymbolType == SymbolType.Class)
                 {
                     ClassType cls = (ClassType)c;
@@ -287,6 +332,7 @@ class TypeInfo
                     WriteType(bw, cls.BaseClass);
                     bw.writeShort(cls.Size);
                     bw.writeShort(cls.FieldCount);
+                    // Write all class members (constants, fields, methods, properties)
                     for(int j = 0; j < c.Children.count; ++j)
                     {
                         Symbol cc = c.Children[j];
@@ -294,6 +340,7 @@ class TypeInfo
                         FieldSymbol fs = cc as FieldSymbol;
                         MethodSymbol mthd = cc as MethodSymbol;
                         PropertySymbol ps = cc as PropertySymbol;
+                        // Write class constant members
                         if(cv != null)
                         {
                             cexpr = cv.Value as ConstantExpression;
@@ -303,6 +350,7 @@ class TypeInfo
                                 bw.writeShort(cc.Flags);
                                 WriteType(bw, cc.DataType);
                                 bw.writeString(cc.Name);
+                                // Write constant value based on type
                                 if (cexpr.DataType.TypeCode == TypeCode.Bool)
                                     bw.writeByte((byte)cexpr.value);
                                 else if (cexpr.DataType.TypeCode == TypeCode.Byte || cexpr.DataType.TypeCode == TypeCode.UByte)
@@ -319,6 +367,7 @@ class TypeInfo
                                     bw.writeDouble(cexpr.dValue);
                             }
                         }
+                        // Write class field members
                         else if (fs != null)
                         {
                             bw.writeByte(cc.SymbolType);
@@ -328,6 +377,7 @@ class TypeInfo
                             bw.writeShort(fs.Offset);
                             bw.writeShort(fs.Index);
                         }
+                        // Write class method members
                         else if (mthd != null)
                         {
                             bw.writeByte(cc.SymbolType);
@@ -335,12 +385,14 @@ class TypeInfo
                             bw.writeString(cc.Name);
                             Function fn = mthd.GetFunction();
                             string tname = string.format("%s__%s", cls.Name, mthd.Name);
+                            // Write function name if it differs from default naming
                             if(fn.Name != tname)
                                 bw.writeString(fn.Name);
                             else
                                 bw.writeString("");
-                            bw.writeShort(mthd.VSlot);
+                            bw.writeShort(mthd.VSlot);         // Virtual table slot
                         }
+                        // Write class property members
                         else if (ps != null)
                         {
                             bw.writeByte(cc.SymbolType);
@@ -349,80 +401,90 @@ class TypeInfo
                             bw.writeString(cc.Name);
                             byte getset = 0;
                             if (ps.Getter != null)
-                                getset |= 1;
+                                getset |= 1;  // Bit 0: has getter
                             if (ps.Setter != null)
-                                getset |= 2;
+                                getset |= 2;  // Bit 1: has setter
                             bw.writeByte(getset);
                         }
                     }
-                    
-                    bw.writeByte(0);
+
+                    bw.writeByte(0);  // End of class members marker
+                    // Write virtual method table
                     for(int j = 0; j < (c as ClassType).VirtualMethods.count; ++j)
                     {
                         MethodSymbol vm = (c as ClassType).VirtualMethods[j];
                         if (vm != null) 
                             bw.writeString(vm.Name);
                     }
-                    bw.writeString("");
+                    bw.writeString("");  // End of virtual methods marker
                 }
+                // Write template definitions
                 else if(c.SymbolType == SymbolType.Template)
                 {
                     bw.writeByte(c.SymbolType);
                     bw.writeShort(c.Flags);
                     bw.writeString(c.Name);
+                    // Write template parameter names
                     for(int j = 0; j < (c as Template).TemplateParams.count; ++j)
                         bw.writeString((c as Template).TemplateParams[j]);
-                    bw.writeString("");
-                    bw.writeString(((c as Template).Source));
+                    bw.writeString("");  // End of template parameters
+                    bw.writeString(((c as Template).Source));  // Template source code
                 }
             }
         }
-        bw.writeByte(0);
+        bw.writeByte(0);  // End of module symbols marker
     }
 
+    // Reads a PE file section by name and returns its raw data
+    // Used to extract the .module section containing type information
     static array<byte> GetSectionData(string filePath, string sectionName)
     {
         file f = file.open(filePath.c_str(), "rb");
         if(f == null)
             return null;
 
-        // Verify DOS header
+        // Verify DOS header ("MZ" signature)
         ushort dosHeader;
         f.read(&dosHeader, sizeof(ushort));
-        if(dosHeader != 0x5A4D)
+        if(dosHeader != 0x5A4D)  // "MZ" magic number
             return null;
 
-        // Get offset to NT header
+        // Get offset to NT header from DOS stub
         f.seek(0x3c, SeekPos.Start);
         int ntOffset;
         f.read(&ntOffset, sizeof(int));
 
-        // Verify NT header
+        // Verify NT header ("PE\0\0" signature)
         int ntHeader;
         f.seek(ntOffset, SeekPos.Start);
         f.read(&ntHeader, sizeof(int));
-        if(ntHeader != 0x00004550)
+        if(ntHeader != 0x00004550)  // "PE\0\0" magic number
             return null;
 
-        // Read IMAGE_FILE_HEADER
-        f.seek(2, SeekPos.Current); // Machine
+        // Read IMAGE_FILE_HEADER fields
+        f.seek(2, SeekPos.Current); // Skip Machine field
         ushort numSections;
-        f.read(&numSections, sizeof(ushort));
-        f.seek(4, SeekPos.Current); // Timestamp
-        f.seek(4, SeekPos.Current); // PointerToSymbolTable
-        f.seek(4, SeekPos.Current); // NumberOfSymbols
+        f.read(&numSections, sizeof(ushort));  // Number of sections
+        f.seek(4, SeekPos.Current); // Skip Timestamp
+        f.seek(4, SeekPos.Current); // Skip PointerToSymbolTable
+        f.seek(4, SeekPos.Current); // Skip NumberOfSymbols
         ushort sizeOfOptionalHeader;
         f.read(&sizeOfOptionalHeader, sizeof(ushort));
-        f.seek(2, SeekPos.Current); // Characteristics
+        f.seek(2, SeekPos.Current); // Skip Characteristics
 
+        // Skip optional header to reach section headers
+        // Skip optional header to reach section headers
         f.seek(sizeOfOptionalHeader, SeekPos.Current);
 
+        // Parse section headers to find the requested section
         for (ushort i = 0; i < numSections; i++)
         {
+            // Read section name (8 bytes, null-padded)
             byte nameBytes[9];
             f.read(nameBytes, 8);
-            nameBytes[8] = 0;
+            nameBytes[8] = 0;  // Ensure null termination
             string secName = new string(nameBytes);
+            // Read section header fields
             uint virtualSize;
             uint virtualAddress;
             uint sizeOfRawData;
@@ -432,12 +494,14 @@ class TypeInfo
             f.read(&sizeOfRawData, sizeof(uint));
             f.read(&pointerToRawData, sizeof(uint));
 
-            f.seek(16, SeekPos.Current);
+            f.seek(16, SeekPos.Current);  // Skip remaining section header fields
 
+            // If this is the requested section, read its data
             if(secName == sectionName)
             {
                 array<byte> buffer = new array<byte>();
-                f.seek(pointerToRawData, SeekPos.Start);
+                f.seek(pointerToRawData, SeekPos.Start);  // Seek to section data
+                // Read all section bytes
                 for(int i = 0; i < virtualSize; i++)
                 {
                     byte b;
@@ -447,14 +511,17 @@ class TypeInfo
                 return buffer;
             }
         }
-        return null;
+        return null;  // Section not found
     }
 
+    // Recursively reads type information from the binary reader
+    // Returns the appropriate TypeSymbol based on the TypeCode
     static TypeSymbol ReadType(BinaryReader br, Module module)
     {
         TypeCode tc = (TypeCode)br.readByte();
         if (tc == TypeCode.None)
             return null;
+        // Return built-in primitive type symbols
         else if (tc == TypeCode.Void)
             return TypeSymbol.Void;
         else if (tc == TypeCode.Bool)
@@ -479,23 +546,27 @@ class TypeInfo
             return TypeSymbol.Float;
         else if (tc == TypeCode.Double)
             return TypeSymbol.Double;
+        // Handle pointer types - recursively read the pointed-to type
         else if(tc == TypeCode.Pointer)
         {
             TypeSymbol t = ReadType(br, module);
             return t.GetPointerType();
         }
+        // Handle array types - read size and element type
         else if(tc == TypeCode.Array)
         {
             int sz = br.readInt();
             TypeSymbol t = ReadType(br, module);
             return t.GetArrayType(sz);
         }
+        // Handle user-defined types (structs/classes) - lookup by name
         else if(tc == TypeCode.Struct)
         {
             string name = br.readString();
             TypeSymbol t = module.Find(name) as TypeSymbol;
             if(t == null)
             {
+                // TODO: Search in module usings for the type
                 /*foreach(var u in module.Usings)
                 {
                     t = u.Module.Find(name) as TypeSymbol;
@@ -509,10 +580,12 @@ class TypeInfo
         }
         else
         {
-            return null;
+            return null;  // Unknown type code
         }
     }
 
+    // Parses a module from a compiled DLL file by reading the .module PE section
+    // Deserializes all symbols and reconstructs the module's symbol table
     static Module ParseModule(string filePath)
     {
         array<byte> typeInfo = GetSectionData(filePath, ".module");
@@ -522,16 +595,18 @@ class TypeInfo
         BinaryReader br = new BinaryReader(typeInfo);
         string strEmpty = new string("");
 
+        // Verify module header
         SymbolType st = (SymbolType)br.readByte();
         if(st != SymbolType.Module)
             return null;
         uint version = (uint)br.readInt();
-        if (version != 0x01000000)
+        if (version != 0x01000000)  // Check version compatibility
             return null;
         string name = br.readString();
 
         Module module = new Module(name);
 
+        // Read module usings (currently not fully implemented)
         string un = br.readString();
         while(un != strEmpty)
         {
@@ -544,18 +619,22 @@ class TypeInfo
         int flags = 0;
         st = (SymbolType)br.readByte();
 
+        // Create maps for resolving method and property references
         dictionary<MethodSymbol, string> methodMap = new dictionary<MethodSymbol, string>();
         dictionary<PropertySymbol, string> getterMap = new dictionary<PropertySymbol, string>();
         dictionary<PropertySymbol, string> setterMap = new dictionary<PropertySymbol, string>();
 
+        // Parse all module symbols
         while(st != SymbolType.None)
         {
+            // Parse constant values
             if(st == SymbolType.Constant)
             {
                 flags = br.readShort();
                 TypeSymbol t = ReadType(br, module);
                 name = br.readString();
                 ConstantExpression cexpr = null;
+                // Read constant value based on type
                 if (t.TypeCode == TypeCode.Bool)
                     cexpr = ConstantExpression.FromBool(br.readByte() != 0);
                 else if (t.TypeCode == TypeCode.Byte)
@@ -578,9 +657,11 @@ class TypeInfo
                     cexpr = ConstantExpression.FromFloat(br.readFloat());
                 else if (t.TypeCode == TypeCode.Double)
                    cexpr = ConstantExpression.FromDouble(br.readDouble());
+                // Create constant value symbol
                 ConstantValue cv = new ConstantValue(module, name, cexpr);
                 cv.Flags = (SymbolFlags)flags;
             }
+            // Parse enum types and their values
             else if(st == SymbolType.Enum)
             {
                 flags = br.readShort();
@@ -588,6 +669,7 @@ class TypeInfo
                 name = br.readString();
                 EnumType enu = new EnumType(module, name, et);
                 enu.Flags = (SymbolFlags)flags;
+                // Read all enum values
                 SymbolType st2 = (SymbolType)br.readByte();
                 while(st2 != 0)
                 {
@@ -599,6 +681,7 @@ class TypeInfo
                     st2 = (SymbolType)br.readByte();
                 }
             }
+            // Parse function definitions
             else if(st == SymbolType.Function)
             {
                 flags = br.readShort();
@@ -609,6 +692,7 @@ class TypeInfo
                 fn.Verbatim = br.readString();
                 if (fn.Verbatim == strEmpty)
                     fn.Verbatim = null;
+                // Read all function parameters
                 SymbolType st2 = (SymbolType)br.readByte();
                 while(st2 != 0)
                 {
@@ -623,6 +707,7 @@ class TypeInfo
                     st2 = (SymbolType)br.readByte();
                 }
             }                 
+            // Parse struct definitions
             else if(st == SymbolType.Struct)
             {
                 flags = br.readShort();
@@ -631,6 +716,7 @@ class TypeInfo
                 StructType struc = new StructType(module, name);
                 struc.Flags = (SymbolFlags)flags;
                 struc.SetSize(sz);
+                // Read all struct fields
                 SymbolType st2 = (SymbolType)br.readByte();
                 while (st2 != 0)
                 {
@@ -646,6 +732,7 @@ class TypeInfo
                     st2 = (SymbolType)br.readByte();
                 }
             }
+            // Parse class definitions
             else if(st == SymbolType.Class)
             {
                 flags = br.readShort();
@@ -658,6 +745,7 @@ class TypeInfo
                 cls.BaseClass = baseType;
                 cls.SetSize(csz);
                 cls.FieldCount = fcnt;
+                // Read all class members (constants, fields, methods, properties)
                 SymbolType st2 = (SymbolType)br.readByte();
                 while (st2 != 0)
                 {
@@ -712,7 +800,7 @@ class TypeInfo
                         flags = br.readShort();
                         name = br.readString();
                         string fname = br.readString();
-                        if(fname.length == 0)
+                        if(fname.length == 0) // If empty, use default naming
                             fname = string.format("%s__%s", cls.Name, name);
                         int vslot = br.readShort();
                         MethodSymbol mi = new MethodSymbol(cls, name, null);
