@@ -365,13 +365,9 @@ class Parser2 : StageParser
                         fn.Flags += SymbolFlags.Static;
                     }
 
-                    if (_virtual)
-                    {
-                        ms.Flags += SymbolFlags.Virtual;
-                        ms.VSlot = cls.VirtualMethods.count;
-                        cls.VirtualMethods.add(ms);
-                    }
-                    else if (cls.BaseClass != null && !_static)
+                    // Check if this method overrides a base class virtual method
+                    bool overridesBaseMethod = false;
+                    if (cls.BaseClass != null && !_static)
                     {
                         // Attempt to locate an overridden virtual method in the
                         // base class; if found inherit its vslot index.
@@ -381,7 +377,17 @@ class Parser2 : StageParser
                             ms.VSlot = vm.VSlot;
                             cls.VirtualMethods[ms.VSlot] = ms;
                             ms.Flags += SymbolFlags.Virtual;
+                            overridesBaseMethod = true;
                         }
+                    }
+
+                    // If marked as virtual but doesn't override a base method,
+                    // assign a new VSlot
+                    if (_virtual && !overridesBaseMethod)
+                    {
+                        ms.Flags += SymbolFlags.Virtual;
+                        ms.VSlot = cls.VirtualMethods.count;
+                        cls.VirtualMethods.add(ms);
                     }
 
                     // Static method extension: a static method whose first
