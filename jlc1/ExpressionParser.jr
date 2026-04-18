@@ -211,6 +211,26 @@ class ExpressionParser : BaseParser
                 return null;
             }
 
+            // If this is a static field accessed without class prefix, we need to
+            // reference the actual global variable that backs it.
+            if ((s.Flags & SymbolFlags.Static) != 0 && s is FieldSymbol)
+            {
+                FieldSymbol fs = (FieldSymbol)s;
+                string gname = string.format("%s__%s", fs.Parent.Name, fs.Name);
+                GlobalVariable gv = module.Find(gname) as GlobalVariable;
+                if(gv == null) {
+                    gv = new GlobalVariable(module, gname, fs.DataType, null);
+                    gv.Unit = fs.Unit;
+                    if((fs.Flags & SymbolFlags.External) != 0)
+                        gv.Flags += SymbolFlags.External;
+                    if(fs.Unit != null)
+                        fs.Unit.AddSymbol(gv);
+                }
+                if(gv.Unit != unit)
+                    unit.AddSymbolRef(gv);
+                return new SymbolExpression(gv);
+            }
+
             // If this is a function coming from a different unit, record the
             // reference so the compile unit knows about cross-unit dependencies.
             Function fn = s as Function;
