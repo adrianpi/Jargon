@@ -438,7 +438,7 @@ namespace Jargon
     public class PostFixExpression : Expression
     {
         public Expression Operand { get; set; }
-        public Expression Operation { get; private set; }
+        public Expression Operation { get; set; }
 
         public PostFixExpression(Expression operand, Expression operation)
         {

@@ -740,6 +740,8 @@ namespace Jargon
         {
             e.Operand.Visit(this, mode);
             e.Operand = transformed;
+            e.Operation.Visit(this, mode);
+            e.Operation = transformed;
             transformed = e;
         }
 
