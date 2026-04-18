@@ -296,6 +296,7 @@ class Parser1 : StageParser
                 Error("Identifier expected");
                 return false;
             }
+
             scanner.NextToken();
         }
 
@@ -307,6 +308,22 @@ class Parser1 : StageParser
                 cls.BaseClass = FindType("object") as ClassType;
             unit.AddSymbol(cls);
             existing = cls;
+
+            if(cls.Name != "object")
+            {
+                ClassType baseClass = (ClassType)FindType("object");
+                if(baseClass == null)
+                {
+                    Error("Base 'object' class not found. Missing 'using jargon;'? ");
+                    return false;
+                }
+                cls.BaseClass = baseClass;
+                cls.SetSize(baseClass.Size);
+                cls.FieldCount = baseClass.FieldCount;
+                for(int i = 0; i < baseClass.VirtualMethods.count; ++i)
+                    cls.VirtualMethods.add(baseClass.VirtualMethods[i]);
+            }
+
         }
         else if (existing.SymbolType != SymbolType.Class)
         {

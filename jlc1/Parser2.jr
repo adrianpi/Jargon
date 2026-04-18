@@ -176,30 +176,13 @@ class Parser2 : StageParser
             cls.BaseClass = baseClass;
             cls.SetSize(baseClass.Size);
             cls.FieldCount = baseClass.FieldCount;
+            cls.VirtualMethods.clear();
             for(int i = 0; i < baseClass.VirtualMethods.count; ++i)
                 cls.VirtualMethods.add(baseClass.VirtualMethods[i]);
         }
         else
         {
-            // If no base specified, default to the root 'object' class unless
-            // this class itself is 'object'. This enforces a single root in
-            // the class hierarchy and ensures derived classes have a vtable
-            // layout to inherit from.
-            if(cls.Name != "object")
-            {
-                ClassType baseClass = (ClassType)FindType("object");
-                if(baseClass == null)
-                {
-                    Error("Base 'object' class not found. Missing 'using jargon;'? ");
-                    return false;
-                }
-                cls.BaseClass = baseClass;
-                cls.SetSize(baseClass.Size);
-                cls.FieldCount = baseClass.FieldCount;
-                for(int i = 0; i < baseClass.VirtualMethods.count; ++i)
-                    cls.VirtualMethods.add(baseClass.VirtualMethods[i]);
-            }
-            else
+            if(cls.Name == "object")
             {
                 // Root object class: create a vtable field which is a pointer
                 // to a pointer (i.e. void** convention). This special field is
