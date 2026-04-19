@@ -458,7 +458,13 @@ class Parser2 : StageParser
                         if (!_static)
                         {
                             int alignment = GetAlignment(decl.type);
-
+                            if (alignment == 0)
+                            {
+                                Error(string.format("Type '%s' is incomplete or has zero size", decl.type.Name));
+                                scope = prevScope;
+                                _class = null;
+                                return false;
+                            }
                             fs.Index = cls.FieldCount;
                             cls.FieldCount++;
                             int offs = ((cls.Size + alignment - 1) / alignment) * alignment;
@@ -646,7 +652,7 @@ class Parser2 : StageParser
         }
         else
         {
-            MethodSymbol getBaseClassName = cls.BaseClass.Find("getClassName") as MethodSymbol;
+            MethodSymbol getBaseClassName = cls.BaseClass.FindChild("getClassName") as MethodSymbol;
             if(getBaseClassName == null)
             {
                 Error(string.format("No getClassName for %s", cls.BaseClass.Name));
