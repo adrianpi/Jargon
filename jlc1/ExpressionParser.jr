@@ -44,7 +44,7 @@ class ExpressionParser : BaseParser
 			    return false;
 		    else if((s.Flags & SymbolFlags.Protected) != 0 && !_class.IsClassOf(s.Parent))
 			    return false;
-		    else if((s.Flags & SymbolFlags.Internal) != 0 && s.Parent.Parent != module)
+		    else if((s.Flags & SymbolFlags.Internal) != 0 && s.Parent is ClassType && s.Parent.Parent != module)
 			    return false;
 	    }
 	    return true;
