@@ -626,3 +626,19 @@ class PostFixExpression : Expression
         visitor.VisitPostFixExpression(this, mode);
     }
 }
+
+class BufferExpression : Expression
+{
+	byte *buffer;
+	int size;
+
+	BufferExpression constructor(byte *buffer, int size)
+	{
+		base();
+		this.buffer = buffer;
+		this.size = size;
+		return this;
+	}
+
+	TypeSymbol get DataType() => TypeSymbol._byte.GetPointerType();
+}

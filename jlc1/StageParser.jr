@@ -85,6 +85,17 @@ class StageParser : ExpressionParser
         return Expect(Token.RBrace);
     }
 
+    virtual bool ParseResource()
+    { 
+        while(scanner.Token != Token.EOF)
+        {
+            if (scanner.Token == Token.Semicolon)
+                break;
+            scanner.NextToken();
+        }
+        return Expect(Token.Semicolon);
+    }
+
     // ParseUnit - entry point for parsing a CompileUnit. This controls the
     // top-level parsing loop and dispatches to the virtual handlers above.
     // parentUnit: if provided, the unit is attached as a child to the
@@ -149,6 +160,11 @@ class StageParser : ExpressionParser
             else if (IsKeyword("template"))
             {
                 if (!ParseTemplate())
+                    return false;
+            }
+            else if(IsKeyword("resource"))
+            {
+                if (!ParseResource())
                     return false;
             }
             else if (!ParseGlobalOrFunction())

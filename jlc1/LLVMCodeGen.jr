@@ -1409,6 +1409,8 @@ class CodeGenVisitor : CodeVisitor
 		CodeLabel lbl = loop.ContinueLabel as CodeLabel;
 		sb.appendLine(string.format("\tbr label %%%s%s", lbl.Name, sdbg));
     }
+
+	array<string> used = new array<string>();
 	
 	// VisitGlobalVariable - emit global variable definition. For aggregate
 	// types emit a zeroinitializer; otherwise emit a scalar global initialized
@@ -1441,10 +1443,27 @@ class CodeGenVisitor : CodeVisitor
 
         if (sdt.IsStruct() || sdt.IsArray() || sdt.IsPointer())
         {
-            sb.appendLine(string.format("@%s = global %s zeroinitializer%s", s.Name, IRType(s.DataType, false), sdbg));
+			BufferExpression buf = s.Init as BufferExpression;
+			if(buf != null)
+			{
+				//sb.appendLine(string.format("@%s = global %s 0.0 %s", s.Name, IRType(s.DataType, false), sdbg));
+				sb.append(string.format("@%s = global [%d x i8] c\"", s.Name, buf.size));
+				for(int i = 0; i < buf.size; ++i)
+				{
+					ubyte b = buf.buffer[i];
+					sb.append(string.format("\\%02x", (b & 0xff)));
+				}
+				sb.appendLine("\", section \".resrc\"");
+				//sb.appendLine(string.format("@llvm.used = appending global [1 x ptr] [ptr @%s], section \"llvm.metadata\"", s.Name));
+				used.add(s.Name);
+			}
+			else
+			{
+				sb.appendLine(string.format("@%s = global %s zeroinitializer%s", s.Name, IRType(s.DataType, false), sdbg));
+			}
         }
         else
-        {
+        {			
 			if(s.DataType.IsFloatingPoint())
 			{
 				sb.appendLine(string.format("@%s = global %s 0.0 %s", s.Name, IRType(s.DataType, false), sdbg));
@@ -1849,7 +1868,21 @@ class CodeGenVisitor : CodeVisitor
 				sb.append(string.format("\\%02x", (b & 0xff)));
 			}
 			sb.appendLine("\", section \".module\"");
-			sb.appendLine("@llvm.used = appending global [1 x ptr] [ptr @type_info], section \"llvm.metadata\"");
+			//sb.appendLine("@llvm.used = appending global [1 x ptr] [ptr @type_info], section \"llvm.metadata\"");
+			used.add("type_info");
+		}
+
+		if(used.count > 0)
+		{
+			string usedVars = "";
+			for(int i = 0; i < used.count; ++i)
+			{
+				string s = used[i];
+				if(i != 0)
+					usedVars += ", ";
+				usedVars += string.format("ptr @%s", s);
+			}
+			sb.appendLine(string.format("@llvm.used = appending global [%d x ptr] [%s], section \"llvm.metadata\"", used.count, usedVars));
 		}
 
 		sb.appendLine(";==============================================================================");

@@ -198,6 +198,13 @@ class TypeInfo
         {
             bw.writeString(type.Name);
         }
+        else if(type.TypeCode == TypeCode.Function)
+        {
+            WriteType(bw, (type as Function).ReturnType);
+            bw.writeInt((type as Function).Parameters.count);
+            for(int i = 0; i < (type as Function).Parameters.count; ++i)
+                WriteType(bw, ((type as Function).Parameters[i] as LocalVariable).DataType);
+        }
     }
 
     // Serializes a module and all its symbols to binary format
@@ -208,16 +215,30 @@ class TypeInfo
 
         // Write module header
         bw.writeByte((int)SymbolType.Module);
-        bw.writeInt((int)0x01000000);  // Version number
+        bw.writeInt((int)0x01010000);  // Version number
         bw.writeString(m.Name);
 
-        /*todo:foreach(var u in m.Usings)
+        //foreach(var u in m.Usings)
+        for(int i = 0; i < m.Usings.count; ++i)
         {
-            WriteString(bw, u.Name);
-        }*/
+            ModuleUsing u = m.Usings[i];
+            bw.writeString(u.Name);
+        }
         bw.writeString("");
 
         ConstantExpression cexpr = null;
+
+        // Forward declarations
+        for(int i = 0; i < m.Children.count; ++i)
+        {
+            Symbol c = m.Children[i];
+            if(c is ClassType)
+            {
+                bw.writeByte((int)SymbolType.Class);
+                bw.writeString(c.Name);                
+            }
+        }
+        bw.writeByte(0);
 
         // Iterate through all module children and serialize non-external symbols
         for(int i = 0; i < m.Children.count; ++i)
@@ -329,6 +350,7 @@ class TypeInfo
                     bw.writeByte(c.SymbolType);
                     bw.writeShort(c.Flags);
                     bw.writeString(c.Name);
+                    println("write class %s", c.Name);
                     WriteType(bw, cls.BaseClass);
                     bw.writeShort(cls.Size);
                     bw.writeShort(cls.FieldCount);
@@ -550,7 +572,12 @@ class TypeInfo
         else if(tc == TypeCode.Pointer)
         {
             TypeSymbol t = ReadType(br, module);
-            return t.GetPointerType();
+            PointerType ptrt = t.GetPointerType();
+            if(t is Function)
+            {
+                ptrt.StrongElementType = t;
+            }
+            return ptrt;
         }
         // Handle array types - read size and element type
         else if(tc == TypeCode.Array)
@@ -563,20 +590,32 @@ class TypeInfo
         else if(tc == TypeCode.Struct)
         {
             string name = br.readString();
-            TypeSymbol t = module.Find(name) as TypeSymbol;
-            if(t == null)
+            TypeSymbol ts = module.Find(name) as TypeSymbol;
+            if(ts == null)
             {
-                // TODO: Search in module usings for the type
-                /*foreach(var u in module.Usings)
+                for(int i = 0; i < module.Usings.count; ++i)
                 {
-                    t = u.Module.Find(name) as TypeSymbol;
-                    if (t != null)
-                        return t;
+                    ModuleUsing u = module.Usings[i];
+                    ts = u.Module.Find(name) as TypeSymbol;
+                    if (ts != null)
+                        return ts;
                 }
-                System.Diagnostics.Debug.Assert(false);*/
+                assert(false);
                 return null;
             }
-            return t;
+            return ts;
+        }
+        else if(tc == TypeCode.Function)
+        {
+            TypeSymbol retType = ReadType(br, module);
+            int paramCount = br.readInt();
+            array<TypeSymbol> paramTypes = new array<TypeSymbol>();
+            for(int i = 0; i < paramCount; ++i)
+                paramTypes.add(ReadType(br, module));
+            Function fn = new Function(null, "", retType);
+            for(int i = 0; i < paramTypes.count; ++i)
+                fn.Parameters.add(new LocalVariable(fn, string.format("p%d", i), paramTypes[i], null));
+            return fn;
         }
         else
         {
@@ -600,7 +639,7 @@ class TypeInfo
         if(st != SymbolType.Module)
             return null;
         uint version = (uint)br.readInt();
-        if (version != 0x01000000)  // Check version compatibility
+        if (version != 0x01000000 && version != 0x01010000)  // Check version compatibility
             return null;
         string name = br.readString();
 
@@ -610,10 +649,39 @@ class TypeInfo
         string un = br.readString();
         while(un != strEmpty)
         {
+            if(loadedModules.contains(un.toLower()))
+            {
+                ModuleUsing mu = new ModuleUsing(un);
+                mu.Module = loadedModules[un.toLower()];
+                module.Usings.add(mu);
+            }
+            else
+            {
+                assert(false);
+            }
             /*var mu = new ModuleUsing(un);
             mu.Module = ParseModule(mu.Name+".dll");
             module.Usings.Add(mu);*/
             un = br.readString();
+        }
+
+        if(version == 0x01010000)
+        {
+            // Forward declarations
+            st = (SymbolType)br.readByte();
+            while(st != SymbolType.None)
+            {
+                if(st == SymbolType.Class)
+                {
+                    name = br.readString();
+                    ClassType cls = new ClassType(module, name);
+                }
+                else
+                {
+                    assert(false);
+                }
+                st = (SymbolType)br.readByte();
+            }
         }
 
         int flags = 0;
@@ -740,7 +808,12 @@ class TypeInfo
                 ClassType baseType = ReadType(br, module) as ClassType;
                 int csz = br.readShort();
                 int fcnt = br.readShort();
-                ClassType cls = new ClassType(module, name);
+                ClassType cls;
+                if(version == 0x01010000)
+                    cls = module.Find(name) as ClassType;
+                else
+                    cls = new ClassType(module, name);
+                assert(cls != null);
                 cls.Flags = (SymbolFlags)flags;
                 cls.BaseClass = baseType;
                 cls.SetSize(csz);
@@ -875,6 +948,14 @@ class TypeInfo
         }
 
         return module;
+    }
+
+    static dictionary<string, Module> loadedModules = new dictionary<string, Module>();
+
+    static void AddModule(Module module)
+    {
+        if(!loadedModules.contains(module.Name.toLower()))
+            loadedModules[module.Name.toLower()] = module;
     }
 
 }

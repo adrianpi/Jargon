@@ -319,7 +319,7 @@ class Compiler : CompilerErrorListener
 		}
 
 		// Create module object representing the whole compilation output
-		Module module = new Module(path.getFileNameWithoutExtension(options.OutputFileName));
+		Module module = new Module(path.getFileNameWithoutExtension(options.OutputFileName).toLower());
 
 		// PASS 1: initial parsing
 		if(options.Verbose)
@@ -544,6 +544,9 @@ class Compiler : CompilerErrorListener
 			string libList = "";
 			for(int i = 0; i < usingLibs.count; ++i)
 				libList += usingLibs[i] + ' ';
+			
+			string flags = options.AdditionalFlags;
+			string subsys = string.format("/SUBSYSTEM:%s", options.Subsystem);
 
 			// If producing a DLL, add /LD flag
 			string sdll = "";
@@ -551,7 +554,10 @@ class Compiler : CompilerErrorListener
 			{
 				sdll = "/LD";
 				if(!options.NoStartup)
+				{
 					libList += "StartupDLL.lib"; // link with startup code for DLLs
+					subsys += " /INCLUDE:DllMain";
+				}
 			}
 			else if(!options.NoStartup)
 			{
@@ -561,11 +567,7 @@ class Compiler : CompilerErrorListener
 					libList += "StartupCLI.lib";
 			}
 
-			string flags = options.AdditionalFlags;
-
-			flags += "/clang:-Wno-override-module";
-
-			string subsys = string.format("/SUBSYSTEM:%s", options.Subsystem);
+			flags += "/clang:-Wno-override-module";			
 
 			// Build clang-cl command line
 			string cmd = string.format("clang-cl.exe -g /MD %s -%s %s %s -o %s /link %s %s %s", sdll, options.OptimizationLevel, flags, fileList, outFilePath, libList, libPaths, subsys);

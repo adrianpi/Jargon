@@ -118,6 +118,7 @@ class Parser1 : StageParser
                 Error(string.format("Error loading %s", dllname));
                 return false;
             }
+            TypeInfo.AddModule(moduleToUse);
         }
         // Create and register the ModuleUsing in the compile unit and module
         // (if it wasn't already present) so types/functions from the module
@@ -482,5 +483,53 @@ class Parser1 : StageParser
         }
         Error("Syntax error");
         return false;
+    }
+
+    bool ParseResource()
+    {
+        if (scanner.Token != Token.Ident)
+        {
+            Error("Identifier expected");
+            return false;
+        }
+        string name = scanner.TokenString;
+        scanner.NextToken();
+
+        if(scanner.Token != Token.String)
+        {
+            Error("Path literal expected");
+            return false;
+        }
+        string fileName = scanner.TokenString;
+        scanner.NextToken();
+
+        if(!Expect(Token.Semicolon))
+            return false;
+
+        file f = file.open(fileName, "rb");
+        if(f == null)
+        {
+            Error(string.format("Could not open resource file: %s", fileName));
+            return false;
+        }
+        f.seek(0, SeekPos.End);
+        int size = f.position;
+        f.seek(0, SeekPos.Start);
+        byte *data = memory.alloc(size);
+        f.read(data, size);
+        f.close();
+
+        BufferExpression buf = new BufferExpression(data, size);
+
+        GlobalVariable gv = new GlobalVariable(module, name, TypeSymbol.Byte.GetArrayType(size), buf);
+        gv.Unit = unit;
+        gv.line = scanner.Line;
+        unit.AddSymbol(gv);
+        /*GlobalVariable gvSize = new GlobalVariable(module, string.format("%s_size", name), TypeSymbol.Int, ConstantExpression.FromInt(size));
+        gvSize.Unit = unit;
+        gvSize.line = scanner.Line;
+        unit.AddSymbol(gvSize);*/
+
+        return true;
     }
 }

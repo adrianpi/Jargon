@@ -274,4 +274,32 @@ class Parser3 : StageParser
             return false;
         }
     }
+
+    /*bool ParseResource()
+    {
+        if(scanner.Token != Token.Ident)
+        {
+            Error("Identifier expected");
+            return false;
+        }
+        string name = scanner.TokenString;
+
+        string sizeName = string.format("%s_size", name);
+        GlobalVariable gvSize = module.Find(sizeName) as GlobalVariable;
+        if(gvSize == null)
+        {
+            Error(string.format("No size variable for resource %s", name));
+            return false;
+        }
+
+        Function static_init = unit.staticInit;
+        StatementBlock sb = static_init.Body;
+        SymbolExpression se = new SymbolExpression(gvSize);
+        StaticAssign(sb, se, gvSize.Init, scanner.Line, null);
+
+        while(scanner.Token != Token.Semicolon && scanner.Token != Token.EOF)
+            scanner.NextToken();
+
+        return Expect(Token.Semicolon);
+    }*/
 }

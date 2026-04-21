@@ -1834,6 +1834,15 @@ int ReadType()
 		byte name[256];
 		__readString(name);
 	}
+	else if(tc == TypeCode.Function)
+	{
+		int returnType = ReadType();
+		int paramCount = __readInt();
+		for(int i = 0; i < paramCount; ++i)
+		{
+			ReadType();
+		}
+	}
 	return tc;
 }
 
@@ -1972,7 +1981,7 @@ bool _readTypeInfo(byte *address)
 			}
 			if(_readTypeLog) printf("\tData Present\n");
 			uint version = __readInt();
-			if(version != 0x01000000) {
+			if(version != 0x01000000 && version != 0x01010000) {
 				printf("Bad version");
 				return false;
 			}
@@ -1986,7 +1995,18 @@ bool _readTypeInfo(byte *address)
 			while(strcmp(name, "")) {
 				__readString(name);
 			}
-			
+
+			// forward declarations
+			if(version == 0x01010000)
+			{
+				st = __readByte();
+				while(st != 0)
+				{
+					__readString(name);
+					st = __readByte();
+				}
+			}
+
 			int flags = 0;
 			st = __readByte();
 
