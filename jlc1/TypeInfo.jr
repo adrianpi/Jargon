@@ -350,7 +350,6 @@ class TypeInfo
                     bw.writeByte(c.SymbolType);
                     bw.writeShort(c.Flags);
                     bw.writeString(c.Name);
-                    println("write class %s", c.Name);
                     WriteType(bw, cls.BaseClass);
                     bw.writeShort(cls.Size);
                     bw.writeShort(cls.FieldCount);
