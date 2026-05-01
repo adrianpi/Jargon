@@ -55,6 +55,8 @@ int test()
 
 	TypeSymbol.Finalize();
 
+	TypeInfo.Finalize();
+
 	return 0;
 }
 

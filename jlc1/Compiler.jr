@@ -538,6 +538,7 @@ class Compiler : CompilerErrorListener
 			{
 				string ld = options.LibraryDirectories[i];
 				string ldd = ExpandLibFolder(ld);
+				TypeInfo.AddLibSearchPath(ldd);
 				libPaths += string.format(" /LIBPATH:\"%s\"", ldd);
 			}
 

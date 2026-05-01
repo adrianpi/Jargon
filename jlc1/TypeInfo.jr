@@ -622,6 +622,27 @@ class TypeInfo
         }
     }
 
+    static array<string> libSearchPaths = new array<string>();
+
+    static void AddLibSearchPath(string path)
+    {
+        libSearchPaths.add(path);
+    }
+
+    static string LocateDLL(string dllName, string parentPath)
+    {
+        string dllpath = parentPath + "\\" + dllName + ".dll";
+        if(file.exists(dllpath))
+            return dllpath;
+        for(int i = 0; i < libSearchPaths.count; ++i)
+        {
+            dllpath = libSearchPaths[i] + "\\" + dllName + ".dll";
+            if(file.exists(dllpath))
+                return dllpath;
+        }
+        return null;
+    }
+
     // Parses a module from a compiled DLL file by reading the .module PE section
     // Deserializes all symbols and reconstructs the module's symbol table
     static Module ParseModule(string filePath)
@@ -656,7 +677,19 @@ class TypeInfo
             }
             else
             {
-                assert(false);
+                string dllPath = LocateDLL(un, path.getDirectoryName(filePath));
+                if(dllPath != null)
+                {
+                    ModuleUsing mu = new ModuleUsing(un);
+                    mu.Module = ParseModule(dllPath);
+                    module.Usings.add(mu);
+                    loadedModules[un.toLower()] = mu.Module;
+                }
+                else
+                {
+                    println("Could not locate %s dll", un);
+                    assert(false);
+                }
             }
             /*var mu = new ModuleUsing(un);
             mu.Module = ParseModule(mu.Name+".dll");
@@ -955,6 +988,14 @@ class TypeInfo
     {
         if(!loadedModules.contains(module.Name.toLower()))
             loadedModules[module.Name.toLower()] = module;
+    }
+
+    static void Finalize()
+    {
+        loadedModules.clear();
+        loadedModules = null;
+        libSearchPaths.clear();
+        libSearchPaths = null;
     }
 
 }
