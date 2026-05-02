@@ -1001,7 +1001,7 @@ class CodeGenVisitor : CodeVisitor
 		if(e.Field is FieldSymbol)
 		{
 			FieldSymbol fs = e.Field as FieldSymbol;
-			if (mode == VisitMode.Load)
+			if (mode == VisitMode.Load && !fs.DataType.IsArray())
 			{
 				e.Expression.Visit(this, dt.IsPointer() ? VisitMode.Load : VisitMode.Address);
 				string temp = NewTag();
