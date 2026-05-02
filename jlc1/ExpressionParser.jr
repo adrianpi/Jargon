@@ -130,10 +130,25 @@ class ExpressionParser : BaseParser
         // Parenthesized sub-expression or cast: either (type)expr or (expr)
         else if(scanner.Token == Token.LPar)
 		{
-			scanner.NextToken();
+			scanner.NextToken();            
 
             if(IsType())
             {
+                // Ambiguity, could be a static field expression i.e. (math.PI ...)
+                ScannerState state = scanner.GetState();
+                TypeSymbol ts = ParseType();
+                if(scanner.Token == Token.Period)
+                {
+                    scanner.RestoreState(state);
+                    Expression e = ParseExpression();
+				    if(e == null)
+					    return null;
+                    if(!Expect(Token.RPar))
+                        return null;
+				    return e;
+                }
+                scanner.RestoreState(state);
+
                 // C-style cast: (Type)expr. Parse the type, then parse a
                 // pointer-op expression and wrap with CastExpression.
                 Declaration decl = new Declaration();
