@@ -144,6 +144,7 @@ namespace Jargon
                         bw.Write((short)c.Flags);
                         WriteString(bw, c.Name);
                         bw.Write((ushort)(c as StructType).Size);
+                        bw.Write((ushort)(c as StructType).Alignment);
                         foreach (var cc in c.Children)
                         {
                             if (cc is FieldSymbol fs)
@@ -542,9 +543,11 @@ namespace Jargon
                             flags = br.ReadInt16();
                             name = ReadString(br);
                             int sz = br.ReadUInt16();
+                            int align = br.ReadUInt16();
                             var struc = new StructType(module, name);
                             struc.Flags = (SymbolFlags)flags;
                             struc.SetSize(sz);
+                            struc.Alignment = align;
                             SymbolType st2 = (SymbolType)br.ReadByte();
                             while (st2 != 0)
                             {

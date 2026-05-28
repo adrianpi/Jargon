@@ -327,6 +327,7 @@ class TypeInfo
                     bw.writeShort(c.Flags);
                     bw.writeString(c.Name);
                     bw.writeShort((c as StructType).Size);
+                    bw.writeShort((c as StructType).Alignment);
                     // Write all struct fields
                     for(int j = 0; j < c.Children.count; ++j)
                     {
@@ -813,9 +814,11 @@ class TypeInfo
                 flags = br.readShort();
                 name = br.readString();
                 int sz = br.readShort();
+                int align = br.readShort();
                 StructType struc = new StructType(module, name);
                 struc.Flags = (SymbolFlags)flags;
                 struc.SetSize(sz);
+                struc.Alignment = align;
                 // Read all struct fields
                 SymbolType st2 = (SymbolType)br.readByte();
                 while (st2 != 0)

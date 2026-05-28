@@ -30,6 +30,7 @@ byte* _getcwd(byte *buffer, int maxLen) external;
 int _mkdir(byte *dir) external;
 int _rmdir(byte *dir) external;
 int _access(byte *dir, int mode) external;
+int __getcwd(byte *buffer, int maxLen) external;
 
 struct _finddata_t
 {
@@ -274,18 +275,14 @@ object* newObj(int sz, void **vtab)
 void _checkLeaks()
 {
 	if(objectInstances == 0)
-		printf("No leaks detected!\n");
+		Log("No leaks detected!");
 	else {
-		printf("Detected %d object leaks\n", objectInstances);
+		Log("Detected %d object leaks", objectInstances);
 		if(collectInstances)
 		{
 			obj_instance *inst = obj_instances;
 			while(inst) {
-				print(((object*)inst.obj).getClassName());
-				print(" %p", inst.obj);
-				print(" [%d], ", ((object*)inst.obj).refCount);
-				print(" %s", ((object*)inst.obj).toString());
-				println("");
+				Log("%s %p [%d], %s", ((object*)inst.obj).getClassName(), inst.obj, ((object*)inst.obj).refCount, ((object*)inst.obj).toString());
 				inst = inst.next;
 			}
 		}
@@ -525,10 +522,10 @@ class string
 
 	static string* format(string *fmt, ...)
 	{
-		byte buffer[2048];
+		byte buffer[4096];
 		void *ap;
 		va_start(ap);
-		__stdio_common_vsprintf(null, buffer, 2048, fmt.c_str(), null, ap);
+		__stdio_common_vsprintf(null, buffer, 4096, fmt.c_str(), null, ap);
 		va_end(ap);
 		return new string(buffer);
 	}
@@ -1469,6 +1466,15 @@ class directory
 		return _access(path.c_str(), 0) == 0;
 	}
 
+	static string current()
+	{
+		byte dir[1024];
+		if(_getcwd(dir, 1024))
+			return new string(dir);
+		else
+			return null;
+	}
+
 	static array<string> getFiles(string path, string filter)
 	{
 		array<string> result = new array<string>();
@@ -2082,6 +2088,7 @@ bool _readTypeInfo(byte *address)
 					flags = __readShort();
 					__readString(name);
 					int sz = __readShort();
+					int align = __readShort();
 					if(_readTypeLog) printf("struct %s\n", (byte*)name);
 					int st2 = __readByte();
 					while(st2 != 0)
