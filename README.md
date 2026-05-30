@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/Platform-Windows-0078D6" alt="Windows">
   <img src="https://img.shields.io/badge/Backend-LLVM-FF9900" alt="LLVM">
   <img src="https://img.shields.io/badge/Self--Hosting-Yes-00C853" alt="Self-Hosting">
-  <img src="https://img.shields.io/badge/Status-Alpha-blue" alt="Status">
+  <img src="https://img.shields.io/badge/Status-Beta-red" alt="Status">
   <img src="https://img.shields.io/github/stars/adrianpi/Jargon?style=social" alt="Stars">
 </p>
 
