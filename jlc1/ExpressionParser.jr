@@ -159,6 +159,14 @@ class ExpressionParser : BaseParser
                 Expression e = ParsePointerOp();
                 if(e == null)
 					return null;
+
+                ConstantExpression ce = e as ConstantExpression;
+                if(decl.type.IsStruct() && ce != null && ce.DataType == TypeSymbol.Int && ce.value == 0)
+                {
+                    // special case, (T)0 maps to 0 if T is struct
+                    return e;
+                }
+
                 return new CastExpression(e, decl.type);
             }
             else
@@ -1193,6 +1201,12 @@ class ExpressionParser : BaseParser
         bool result = true;
         if(ldt.IsStruct())
         {
+            ConstantExpression ce = right as ConstantExpression;
+            if(ce != null && ce.DataType == TypeSymbol.Int && ce.value == 0)
+            {
+                // Special case: allow assigning 0 to structs as a zero-init
+                return true;
+            }
             if((!rdt.IsStruct() || rdt != ldt))
             {
                 result = false;
@@ -1255,7 +1269,10 @@ class ExpressionParser : BaseParser
             if(!IsAssignable(left.DataType, right))
                 return null;
 
-            right = ForceCast(right, left.DataType);     
+            ConstantExpression ce = right as ConstantExpression;
+
+            if(!(left.DataType.IsStruct() && ce != null && ce.DataType == TypeSymbol.Int && ce.value == 0))
+                right = ForceCast(right, left.DataType);
 
             SetContext(right, -1);
             left = new AssignmentExpression(left, right);
