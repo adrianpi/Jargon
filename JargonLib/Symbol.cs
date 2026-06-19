@@ -392,7 +392,7 @@ namespace Jargon
         public void SetSize(int size)
         {
             Size = size;
-            Alignment = 0;
+            //Alignment = 0;
         }
 
         public override void Visit(CodeVisitor visitor)

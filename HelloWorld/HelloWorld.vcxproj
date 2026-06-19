@@ -55,7 +55,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PreBuildEvent>
-      <Command>..\x64\Debug\jlc2.exe -g -k main.jr -o $(OutputPath)$(TargetFileName)</Command>
+      <Command>..\x64\Debug\jlc2.exe -g -k main.jr -o $(OutputPath)$(TargetFileName) -NoExports</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -73,7 +73,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PreBuildEvent>
-      <Command>..\x64\Release\jlc2.exe -Ox -k main.jr -o $(OutputPath)$(TargetFileName)</Command>
+      <Command>..\x64\Release\jlc2.exe -Ox -k main.jr -o $(OutputPath)$(TargetFileName) -NoExports</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

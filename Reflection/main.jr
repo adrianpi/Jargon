@@ -1,0 +1,101 @@
+using jargon;
+
+// This example demonstrates how to use the RTTI Reflection API to inspect types
+// and invoke functions.
+
+struct Point
+{
+	int x;
+	int y;
+}
+
+const int TRUE = 1;
+const int FALSE = 0;
+const float PI = 3.141592f;
+
+int testSum(int a, int b)
+{
+	return a + b;
+}
+
+class TestClass
+{
+	int a = 5;
+	int b = 2;
+
+	int get A() => a;
+	void set A(int value) { a = value; }
+
+	void foo()
+	{
+		println("foo(): %d", a + b);
+	}
+}
+
+int start()
+{
+	// Get jargon module
+	RTTIModule module = RTTIModule.GetModule("jargon");
+
+	// Get an enum type and its values
+	RTTIEnumType eSeekPos = module.GetEnum("SeekPos");
+	RTTIEnumValue evStart = eSeekPos.GetValue("Start");
+	RTTIEnumValue evCurrent = eSeekPos.GetValue("Current");
+	RTTIEnumValue evEnd = eSeekPos.GetValue("End");
+	println("SeekPos.Start is %d", evStart.value);
+	println("SeekPos.Current is %d", evCurrent.value);
+	println("SeekPos.End is %d", evEnd.value);
+
+	// Get this module
+	RTTIModule module2 = RTTIModule.GetModule("Reflection");
+
+	// Get some constants
+	RTTIConstant kTrue = module2.GetConstant("TRUE");
+	println("TRUE is %d", kTrue.value.i);
+	RTTIConstant kFalse = module2.GetConstant("FALSE");
+	println("FALSE is %d", kFalse.value.i);
+	RTTIConstant kPI = module2.GetConstant("PI");
+	println("PI is %f", kPI.value.f);
+
+	// Get Point struct info and fields
+	RTTIStructType sPoint = module2.GetStruct("Point");
+	RTTIField fX = sPoint.GetField("x");
+	RTTIField fY = sPoint.GetField("y");
+	println("Point size:%d align:%d", sPoint.size, sPoint.alignment);
+	println("Point.x offset:%d index:%d", fX.offset, fX.index);
+	println("Point.y offset:%d index:%d", fY.offset, fY.index);
+
+	// Get testSum function and invoke it	
+	RTTIFunction fTestSum = module2.GetFunction("testSum");
+	int (*pfTestSum)(int a, int b) = fTestSum.address;
+	int result = pfTestSum(30, 3);
+	println("testSum(30,3) is %d", result);
+
+	// Get TestClass info and create an instance
+	RTTIClassType cTest = RTTIType.GetType("TestClass") as RTTIClassType;
+	object* (*testCreator)() = cTest.GetCreator().address;
+	object* test = testCreator();
+
+	println("TestClass name: %s", cTest.name);
+	println("TestClass base: %s", cTest.baseClass.name);
+
+	// Get foo method and invoke it
+	RTTIMethod mFoo = cTest.GetMethod("foo");
+	RTTIFunction fFoo = mFoo.function;
+	void (*pfFoo)(TestClass _this) = fFoo.address;
+
+	pfFoo(test);
+
+	// Get property A and set its value
+	RTTIProperty pA = cTest.GetProperty("A");
+	pA.SetIntValue(test, 7);
+
+	// Get field b and set its value
+	RTTIField fB = cTest.GetField("b");
+	fB.SetIntValue(test, 3);
+
+	// Invoke the method again
+	pfFoo(test);
+
+	return 0;
+}

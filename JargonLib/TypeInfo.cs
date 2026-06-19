@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 
 namespace Jargon
@@ -45,7 +46,8 @@ namespace Jargon
         {
             BinaryWriter bw = new BinaryWriter(ms);
             bw.Write((byte)SymbolType.Module);
-            bw.Write((int)0x01000000);
+            //bw.Write((int)0x01000000);
+            bw.Write((int)0x01010000);
             WriteString(bw, name);
         }
 
@@ -60,6 +62,18 @@ namespace Jargon
                 WriteString(bw, u.Name);
             }
             WriteString(bw, "");
+
+            // Forward declarations
+            for (int i = 0; i < m.Children.Count; ++i)
+            {
+                Symbol c = m.Children[i];
+                if (c is ClassType)
+                {
+                    bw.Write((byte)SymbolType.Class);
+                    WriteString(bw, c.Name);
+                }
+            }
+            bw.Write((byte)0);
 
             ConstantExpression cexpr = null;
 
@@ -417,7 +431,7 @@ namespace Jargon
             if (st != SymbolType.Module)
                 return null;
             uint version = (uint)br.ReadInt32();
-            if (version != 0x01000000)
+            if (version != 0x01000000 && version != 0x01010000U)
                 return null;
             string name = ReadString(br);
 
@@ -430,6 +444,25 @@ namespace Jargon
                 mu.Module = ParseModule(mu.Name + ".dll");
                 module.Usings.Add(mu);
                 un = ReadString(br);
+            }
+
+            if (version == 0x01010000U)
+            {
+                // Forward declarations
+                st = (SymbolType)br.ReadByte();
+                while (st != SymbolType.None)
+                {
+                    if (st == SymbolType.Class)
+                    {
+                        name = ReadString(br);
+                        ClassType cls = new ClassType(module, name);
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.Assert(false);
+                    }
+                    st = (SymbolType)br.ReadByte();
+                }
             }
 
             int flags = 0;
@@ -571,7 +604,12 @@ namespace Jargon
                             ClassType baseType = ReadType(br, module) as ClassType;
                             var sz = br.ReadUInt16();
                             var fcnt = br.ReadUInt16();
-                            var cls = new ClassType(module, name);
+                            ClassType cls;
+                            //= new ClassType(module, name);
+                            if (version == 0x01010000)
+                                cls = module.Find(name) as ClassType;
+                            else
+                                cls = new ClassType(module, name);
                             cls.Flags = (SymbolFlags)flags;
                             //cls.Flags |= SymbolFlags.External;
                             cls.BaseClass = baseType;

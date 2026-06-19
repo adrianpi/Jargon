@@ -54,7 +54,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PreBuildEvent>
-      <Command>..\x64\Debug\jlc2.exe -g FreeImage.jr Main.jr -o $(OutputPath)$(TargetFileName) -luser32.lib -lgdi32.lib -lFreeImage.lib -IC:\2026\FreeImage-master\Dist\x64 -SUBSYSTEM:WINDOWS</Command>
+      <Command>..\x64\Debug\jlc2.exe -g FreeImage.jr Main.jr -o $(OutputPath)$(TargetFileName) -luser32.lib -lgdi32.lib -lFreeImage.lib -IC:\2026\FreeImage-master\Dist\x64 -SUBSYSTEM:WINDOWS -NoExports</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -71,7 +71,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PreBuildEvent>
-      <Command>..\x64\Release\jlc2.exe -Ox FreeImage.jr Main.jr -o $(OutputPath)$(TargetFileName) -luser32.lib -lgdi32.lib -lFreeImage.lib -IC:\2026\FreeImage-master\Dist\x64 -SUBSYSTEM:WINDOWS</Command>
+      <Command>..\x64\Release\jlc2.exe -Ox FreeImage.jr Main.jr -o $(OutputPath)$(TargetFileName) -luser32.lib -lgdi32.lib -lFreeImage.lib -IC:\2026\FreeImage-master\Dist\x64 -SUBSYSTEM:WINDOWS -NoExports</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

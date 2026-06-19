@@ -7,31 +7,6 @@ using jargon;
 // associated helper types. The symbol tree represents program declarations and
 // is used throughout parsing, semantic analysis, and codegen.
 
-// SymbolType: identifies the kind of a symbol node in the symbol tree.
-// Used by serialization, type checks and visitor dispatch.
-enum SymbolType
-{
-    None = 0,
-    Primitive = 1,
-    LocalVar,
-    GlobalVar,
-    Function,
-    Module,
-    Root,
-    Array,
-    Pointer,
-    Field,
-    Struct,
-    BlockScope,
-    Class,
-    Method,
-    Property,
-    Enum,
-    EnumValue,
-    Template,
-    Constant,
-}
-
 // TypeCode: low-level type classification and ordering used by type system.
 // Includes primitive codes and compound kinds (Function/Array/Pointer/Struct).
 enum TypeCode
@@ -54,25 +29,6 @@ enum TypeCode
     Pointer,
     Struct,
     CStr,
-}
-
-// SymbolFlags: bitflags that modify symbol semantics (visibility, behavior).
-// Consumers should treat these as attributes on symbols (e.g. Variadic, Static).
-enum SymbolFlags
-{
-    Variadic = 0x01,
-    External = 0x02,
-    Internal = 0x04,
-    Virtual = 0x08,
-    NoDebug = 0x10,
-    Static = 0x20,
-    ByRef = 0x40,
-    Weak = 0x80,
-    Verbatim = 0x100,
-    Union = 0x200,
-    Private = 0x400,
-    Protected = 0x800,
-    VisibilityMask = 0xc04, // (Internal|Private|Protected)
 }
 
 // Base Symbol class

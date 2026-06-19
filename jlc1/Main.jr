@@ -48,6 +48,7 @@ int start(array<string> args)
             println("  -l<library>       Link with specified library");
             println("  -SUBSYSTEM:<type> Set subsystem type (CONSOLE, WINDOWS)");
             println("  -NoStartup        Do not link with startup code");
+            println("  -NoExports        Do not export functions");
             println("  -V                Verbose output");
             return 0;
         }
@@ -77,6 +78,10 @@ int start(array<string> args)
         else if(args[i] == "-NoStartup")
         {
             options.NoStartup = true;
+        }
+        else if(args[i] == "-NoExports")
+        {
+            options.NoExports = true;
         }
         else if (!op)
         {

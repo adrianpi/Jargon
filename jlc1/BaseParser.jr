@@ -252,6 +252,7 @@ class CompilerOptions
     string OptimizationLevel = "Og";
     string Subsystem = "CONSOLE";
     bool NoStartup = false;
+    bool NoExports = false;
 
     array<string> InputFiles = new array<string>();
     array<string> AdditionalLibraries = new array<string>();

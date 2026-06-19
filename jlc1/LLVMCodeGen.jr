@@ -1483,8 +1483,8 @@ class CodeGenVisitor : CodeVisitor
 		function = s;
 		//tag = 1;
 
-		bool isDLL = options.OutputFileName.toLower().endsWith(".dll");
-		string linkage = (s.Flags & SymbolFlags.Internal) != 0 ? "internal " : (isDLL ? "dllexport " : "");
+		bool export = options.OutputFileName.toLower().endsWith(".dll") || !options.NoExports;
+		string linkage = (s.Flags & SymbolFlags.Internal) != 0 ? "internal " : (export ? "dllexport " : "");
 		bool inOtherUnit = unit != null && s.Unit != unit;
 
 		if((s.Flags & SymbolFlags.External) != 0 || inOtherUnit)

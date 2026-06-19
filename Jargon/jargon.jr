@@ -31,6 +31,8 @@ int _mkdir(byte *dir) external;
 int _rmdir(byte *dir) external;
 int _access(byte *dir, int mode) external;
 int __getcwd(byte *buffer, int maxLen) external;
+int GetModuleFileNameA(ulong hModule, byte *buffer, int maxLen) external;
+void* GetProcAddress(ulong hModule, byte *procName) external;
 
 struct _finddata_t
 {
@@ -261,6 +263,11 @@ class object
 	virtual long getHash() { return ((long) this) & 0x7fffffff; }
 
 	virtual string* toString() => new string(getClassName());
+
+	RTTIClassType getClassType()
+	{
+		return RTTIType.GetType(getClassName());
+	}
 }
 
 object* newObj(int sz, void **vtab)
@@ -1763,6 +1770,24 @@ enum TypeCode
     CStr,
 }
 
+enum SymbolFlags
+{
+	None = 0x00,
+    Variadic = 0x01,
+    External = 0x02,
+    Internal = 0x04,
+    Virtual = 0x08,
+    NoDebug = 0x10,
+    Static = 0x20,
+    ByRef = 0x40,
+    Weak = 0x80,
+    Verbatim = 0x100,
+    Union = 0x200,
+    Private = 0x400,
+    Protected = 0x800,
+    VisibilityMask = 0xc04, // (Internal|Private|Protected)
+}
+
 byte *__bptr = null;
 
 void __initBinaryRead(byte* ptr)
@@ -1823,71 +1848,18 @@ double __readDouble()
 	return value;
 }
 
-int ReadType()
-{
-	int tc = __readByte();
-	if(tc == TypeCode.Pointer)
-	{
-		tc = 0x1000 + ReadType();
-	}
-	else if(tc == TypeCode.Array)
-	{
-		int sz = __readInt();
-		tc = 0x10000 + ReadType();
-	}
-	else if(tc == TypeCode.Struct)
-	{
-		byte name[256];
-		__readString(name);
-	}
-	else if(tc == TypeCode.Function)
-	{
-		int returnType = ReadType();
-		int paramCount = __readInt();
-		for(int i = 0; i < paramCount; ++i)
-		{
-			ReadType();
-		}
-	}
-	return tc;
-}
-
-struct ClassInfo
-{
-	byte name[256];
-	ClassInfo *baseClass;
-	ClassInfo *next;
-}
-
-ClassInfo* _classes = null;
-
-void _addClassInfo(ClassInfo *info)
-{
-	info.next = _classes;
-	_classes = info;
-}
-
-ClassInfo *_getClassInfo(byte *name)
-{
-	ClassInfo *ci = _classes;
-	while(ci != null) {
-		if(!strcmp(&ci.name[0], name))
-			return ci;
-		ci = ci.next;
-	}
-	return null;
-}
-
 bool _isClassOf(object *obj, byte *clsName)
 {
 	if(obj == null)
 		return false;
 
-	ClassInfo *ci = _getClassInfo(obj.getClassName());
-	while(ci) {
-		if(!strcmp(&ci.name[0], clsName))
+	RTTIClassType ct = obj.getClassType();
+	string scn = clsName;
+	while(ct)
+	{
+		if(ct.name == scn)
 			return true;
-		ci = ci.baseClass;
+		ct = ct.baseClass;
 	}
 	return false;
 }
@@ -1897,11 +1869,924 @@ object* _dynamicCast(object *obj, byte *clsName)
 	if(obj == null)
 		return null;
 
-	ClassInfo *ci = _getClassInfo(obj.getClassName());
-	while(ci) {
-		if(!strcmp(&ci.name[0], clsName))
+	RTTIClassType ct = obj.getClassType();
+	string scn = clsName;
+	while(ct)
+	{
+		if(ct.name == scn)
 			return obj;
-		ci = ci.baseClass;
+		ct = ct.baseClass;
+	}
+	return null;
+}
+
+union RTTIConstValue
+{
+	long l;
+	ulong ul;
+	int i;
+	uint ui;
+	short s;
+	ushort us;
+	byte b;
+	ubyte ub;
+	float f;
+	double d;
+}
+
+class RTTISymbol
+{
+	SymbolType stype;
+	SymbolFlags flags;
+	string name;
+	array<RTTIType> children = new array<RTTIType>();
+	weak RTTISymbol parent = null;
+
+	virtual bool IsType() => false;
+	virtual bool IsFunction() => false;
+
+	RTTISymbol constructor(SymbolType stype, SymbolFlags flags, string name)
+	{
+		base();
+		this.stype = stype;
+		this.flags = flags;
+		this.name = name;
+		return this;
+	}
+
+	void addChild(RTTISymbol child)
+	{
+		children.add(child);
+		child.parent = this;
+	}
+
+	RTTISymbol Find(string name)
+	{
+		for(int i = 0; i < children.count; ++i)
+		{
+			RTTISymbol child = children[i];
+			if(child.name == name)
+				return child;
+		}
+		return null;
+	}
+
+	array<string> EnumChildren(string className)
+	{
+		array<string> result = new array<string>();
+		for(int i = 0; i < children.count; ++i)
+		{
+			RTTISymbol child = children[i];
+			if(!strcmp(child.getClassName(), className.c_str()))
+				result.add(child.name);
+		}
+		return result;
+	}
+}
+
+class RTTIType : RTTISymbol
+{
+	static dictionary<string, RTTIType> allTypes = new dictionary<string, RTTIType>();
+	RTTIPointerType pointerType;
+
+	bool IsType() => true;
+	virtual bool IsPrimitive() => false;
+	virtual bool IsPointer() => false;
+	virtual bool IsArray() => false;
+	virtual bool IsEnum() => false;
+	virtual bool IsStruct() => false;
+	virtual bool IsClass() => false;
+
+	RTTIModule get ParentModule() => _dynamicCast(this.parent, "RTTIModule");
+
+	static RTTIType Void = new RTTIPrimitiveType("void", 0);
+	static RTTIType Bool = new RTTIPrimitiveType("bool", 1);
+	static RTTIType Byte = new RTTIPrimitiveType("byte", 1);
+	static RTTIType UByte = new RTTIPrimitiveType("ubyte", 1);
+	static RTTIType Short = new RTTIPrimitiveType("short", 2);
+	static RTTIType UShort = new RTTIPrimitiveType("ushort", 2);
+	static RTTIType Int = new RTTIPrimitiveType("int", 4);
+	static RTTIType UInt = new RTTIPrimitiveType("uint", 4);
+	static RTTIType Long = new RTTIPrimitiveType("long", 8);
+	static RTTIType ULong = new RTTIPrimitiveType("ulong", 8);
+	static RTTIType Float = new RTTIPrimitiveType("float", 4);
+	static RTTIType Double = new RTTIPrimitiveType("double", 8);
+
+	RTTIType constructor(SymbolType stype, SymbolFlags flags, string name)
+	{
+		base(stype, flags, name);
+		allTypes[name] = this;
+		return this;
+	}
+
+	RTTIPointerType GetPointerType()
+	{
+		if(pointerType == null)
+		{
+			pointerType = new RTTIPointerType(this);
+		}
+		return pointerType;		
+	}
+
+	RTTIArrayType GetArrayType(int sz)
+	{
+		return new RTTIArrayType(this, sz);
+	}
+
+	static RTTIType GetType(string name)
+	{
+		return allTypes[name];
+	}
+}
+
+class RTTIPrimitiveType : RTTIType
+{
+	int size;
+
+	bool IsPrimitive() => true;
+
+	RTTIPrimitiveType constructor(string name, int size)
+	{
+		base(SymbolType.Primitive, SymbolFlags.None, name);
+		this.size = size;
+		return this;
+	}
+}
+
+class RTTIPointerType : RTTIType
+{
+	RTTIType elementType;
+
+	bool IsPointer() => true;
+
+	RTTIPointerType constructor(RTTIType elemType)
+	{
+		base(SymbolType.Pointer, SymbolFlags.None, string.format("%s*", elemType.name));
+		this.elementType = elemType;
+		return this;
+	}
+}
+
+class RTTIArrayType : RTTIType
+{
+	RTTIType elementType;
+	int size;
+
+	bool IsArray() => true;
+
+	RTTIArrayType constructor(RTTIType elemType, int sz)
+	{
+		base(SymbolType.Array, SymbolFlags.None, string.format("%s[%d]", elemType.name, sz));
+		this.elementType = elemType;
+		this.size = sz;
+		return this;
+	}
+}
+
+class RTTIEnumValue : RTTISymbol
+{
+	long value;
+
+	RTTIEnumType get ParentEnum() => _dynamicCast(this.parent, "RTTIEnumType");
+
+	RTTIEnumValue constructor(string name, SymbolFlags flags, long value)
+	{
+		base(SymbolType.EnumValue, flags, name);
+		this.value = value;
+		return this;
+	}
+}
+
+class RTTIEnumType : RTTIType
+{
+	RTTIType enumType;
+
+	bool IsEnum() => true;
+
+	RTTIEnumType constructor(string name, RTTIType etype, SymbolFlags flags)
+	{
+		base(SymbolType.Enum, flags, name);
+		this.enumType = etype;
+		return this;
+	}
+
+	RTTIEnumValue GetValue(string name)
+	{
+		return _dynamicCast(Find(name), "RTTIEnumValue");
+	}
+
+	array<string> EnumValues()
+	{
+		return EnumChildren("RTTIEnumValue");
+	}
+}
+
+class RTTIParameter : RTTISymbol
+{
+	RTTIType parameterType;
+	int offset;
+
+	RTTIFunction get ParentFunction() => _dynamicCast(this.parent, "RTTIFunction");
+
+	RTTIParameter constructor(string name, SymbolFlags flags, RTTIType ptype)
+	{
+		base(SymbolType.LocalVar, flags, name);
+		this.parameterType = ptype;
+		return this;
+	}
+}
+
+class RTTIFunction : RTTIType
+{
+	RTTIType returnType;
+	array<RTTIParameter> parameters = new array<RTTIParameter>();
+	string verbatimString;
+	void* address;
+
+	bool IsFunction() => true;
+
+	RTTIFunction constructor(string name, SymbolFlags flags, RTTIType rtype)
+	{
+		base(SymbolType.Function, flags, name);
+		this.returnType = rtype;
+		return this;
+	}
+
+	array<string> EnumParameters()
+	{
+		return EnumChildren("RTTIParameter");
+	}
+}
+
+class RTTIConstant : RTTISymbol
+{
+	RTTIConstValue value;
+	RTTIType type;
+
+	RTTIClassType get ParentClass() => _dynamicCast(this.parent, "RTTIClassType");
+
+	RTTIConstant constructor(SymbolFlags flags, string name, RTTIType type, RTTIConstValue value)
+	{
+		base(SymbolType.Constant, flags, name);
+		this.type = type;
+		this.value = value;
+		return this;
+	}
+}
+
+class RTTIField : RTTISymbol
+{
+	RTTIType fieldType;
+	int offset;
+	int index;
+
+	RTTIType get ParentType() => _dynamicCast(this.parent, "RTTIType");
+
+	RTTIField constructor(string name, SymbolFlags flags, RTTIType ftype)
+	{
+		base(SymbolType.Field, flags, name);
+		this.fieldType = ftype;
+		return this;
+	}
+
+	void SetBoolValue(void* obj, bool value)
+	{
+		if(fieldType != RTTIType.Bool)
+			return;
+		byte* ptr = (byte*)obj + offset;
+		*((bool*)ptr) = value ? 1 : 0;
+	}
+
+	bool GetBoolValue(void* obj)
+	{
+		if(fieldType != RTTIType.Bool)
+			return false;
+		byte* ptr = (byte*)obj + offset;
+		return *((bool*)ptr) != 0;
+	}
+
+	void SetByteValue(void* obj, byte value)
+	{
+		if(fieldType != RTTIType.Byte && fieldType != RTTIType.UByte)
+			return;
+		byte* ptr = (byte*)obj + offset;
+		*((byte*)ptr) = value;
+	}
+
+	byte GetByteValue(void* obj)
+	{
+		if(fieldType != RTTIType.Byte && fieldType != RTTIType.UByte)
+			return 0;
+		byte* ptr = (byte*)obj + offset;
+		return *((byte*)ptr);
+	}
+
+	void SetShortValue(void* obj, short value)
+	{
+		if(fieldType != RTTIType.Short && fieldType != RTTIType.UShort)
+			return;
+		byte* ptr = (byte*)obj + offset;
+		*((short*)ptr) = value;
+	}
+
+	short GetShortValue(void* obj)
+	{
+		if(fieldType != RTTIType.Short && fieldType != RTTIType.UShort)
+			return 0;
+		byte* ptr = (byte*)obj + offset;
+		return *((short*)ptr);
+	}
+
+	void SetIntValue(void* obj, int value)
+	{
+		if(fieldType != RTTIType.Int && fieldType != RTTIType.UInt)
+			return;
+		byte* ptr = (byte*)obj + offset;
+		*((int*)ptr) = value;
+	}
+
+	int GetIntValue(void* obj)
+	{
+		if(fieldType != RTTIType.Int && fieldType != RTTIType.UInt)
+			return 0;
+		byte* ptr = (byte*)obj + offset;
+		return *((int*)ptr);
+	}
+
+	void SetLongValue(void* obj, long value)
+	{
+		if(fieldType != RTTIType.Long && fieldType != RTTIType.ULong)
+			return;
+		byte* ptr = (byte*)obj + offset;
+		*((long*)ptr) = value;
+	}
+
+	long GetLongValue(void* obj)
+	{
+		if(fieldType != RTTIType.Long && fieldType != RTTIType.ULong)
+			return 0;
+		byte* ptr = (byte*)obj + offset;
+		return *((long*)ptr);
+	}
+
+	void SetFloatValue(void* obj, float value)
+	{
+		if(fieldType != RTTIType.Float)
+			return;
+		byte* ptr = (byte*)obj + offset;
+		*((float*)ptr) = value;
+	}
+
+	float GetFloatValue(void* obj)
+	{
+		if(fieldType != RTTIType.Float)
+			return 0;
+		byte* ptr = (byte*)obj + offset;
+		return *((float*)ptr);
+	}
+
+	void SetDoubleValue(void* obj, double value)
+	{
+		if(fieldType != RTTIType.Double)
+			return;
+		byte* ptr = (byte*)obj + offset;
+		*((double*)ptr) = value;
+	}
+
+	double GetDoubleValue(void* obj)
+	{
+		if(fieldType != RTTIType.Double)
+			return 0;
+		byte* ptr = (byte*)obj + offset;
+		return *((double*)ptr);
+	}
+
+	void SetPointerValue(void* obj, void *value)
+	{
+		if(!fieldType.IsPointer())
+			return;
+		byte *ptr = (byte*)obj + offset;
+		*((void**)ptr) = value;
+	}
+
+	void* GetPointerValue(void* obj)
+	{
+		if(!fieldType.IsPointer())
+			return null;
+		byte *ptr = (byte*)obj + offset;
+		return *((void**)ptr);
+	}
+
+	void SetObjectValue(void* obj, object value)
+	{
+		if(fieldType.IsClass())
+		{
+			byte *ptr = (byte*)obj + offset;
+			*((object**)ptr) = value;
+		}
+	}
+
+	object GetObjectValue(void* obj)
+	{
+		if(!fieldType.IsClass())
+			return null;		
+		byte *ptr = (byte*)obj + offset;
+		return *((object**)ptr);
+	}
+}
+
+class RTTIStructType : RTTIType
+{
+	int size;
+	int alignment;
+
+	bool IsStruct() => true;
+
+	RTTIStructType constructor(string name, SymbolFlags flags)
+	{
+		base(SymbolType.Struct, flags, name);
+		return this;
+	}
+
+	RTTIField GetField(string name)
+	{
+		return _dynamicCast(Find(name), "RTTIField");
+	}
+
+	array<string> EnumFields()
+	{
+		return EnumChildren("RTTIField");
+	}
+}
+
+class RTTIMethod : RTTISymbol
+{
+	RTTIFunction function;
+	string functionName;
+	short VSlot;
+
+	RTTIClassType get ParentClass() => _dynamicCast(this.parent, "RTTIClassType");
+
+	RTTIMethod constructor(string name, SymbolFlags flags)
+	{
+		base(SymbolType.Method, flags, name);
+		return this;
+	}
+}
+
+class RTTIProperty : RTTISymbol
+{
+	RTTIType propertyType;
+	RTTIMethod getter;
+	RTTIMethod setter;
+	weak RTTIClassType Class;
+	string getterName;
+	string setterName;
+
+	RTTIClassType get ParentClass() => _dynamicCast(this.parent, "RTTIClassType");
+
+	RTTIProperty constructor(string name, SymbolFlags flags, RTTIType ptype)
+	{
+		base(SymbolType.Property, flags, name);
+		this.propertyType = ptype;
+		return this;
+	}
+
+	void SetBoolValue(object obj, bool value)
+	{
+		if(propertyType != RTTIType.Bool)
+			return;
+		RTTIFunction fSet = setter.function;
+		void (*pfSet)(object* _this, bool value) = fSet.address;
+		(*pfSet)(obj, value);
+	}
+
+	bool GetBoolValue(object obj)
+	{
+		if(propertyType != RTTIType.Bool)
+			return false;
+		RTTIFunction fGet = getter.function;
+		bool (*pfGet)(object* _this) = fGet.address;
+		return (*pfGet)(obj);
+	}
+
+	void SetByteValue(object obj, byte value)
+	{
+		if(propertyType != RTTIType.Byte && propertyType != RTTIType.UByte)
+			return;
+		RTTIFunction fSet = setter.function;
+		void (*pfSet)(object* _this, byte value) = fSet.address;
+		(*pfSet)(obj, value);
+	}
+
+	byte GetByteValue(object obj)
+	{
+		if(propertyType != RTTIType.Byte && propertyType != RTTIType.UByte)
+			return 0;
+		RTTIFunction fGet = getter.function;
+		byte (*pfGet)(object* _this) = fGet.address;
+		return (*pfGet)(obj);
+	}
+
+	void SetShortValue(object obj, short value)
+	{
+		if(propertyType != RTTIType.Short && propertyType != RTTIType.UShort)
+			return;
+		RTTIFunction fSet = setter.function;
+		void (*pfSet)(object* _this, short value) = fSet.address;
+		(*pfSet)(obj, value);
+	}
+
+	short GetShortValue(object obj)
+	{
+		if(propertyType != RTTIType.Short && propertyType != RTTIType.UShort)
+			return 0;
+		RTTIFunction fGet = getter.function;
+		short (*pfGet)(object* _this) = fGet.address;
+		return (*pfGet)(obj);
+	}
+
+	void SetIntValue(object obj, int value)
+	{
+		if(propertyType != RTTIType.Int && propertyType != RTTIType.UInt)
+			return;
+		RTTIFunction fSet = setter.function;
+		void (*pfSet)(object* _this, int value) = fSet.address;
+		(*pfSet)(obj, value);
+	}
+
+	int GetIntValue(object obj)
+	{
+		if(propertyType != RTTIType.Int && propertyType != RTTIType.UInt)
+			return 0;
+		RTTIFunction fGet = getter.function;
+		int (*pfGet)(object* _this) = fGet.address;
+		return (*pfGet)(obj);
+	}
+
+	void SetLongValue(object obj, long value)
+	{
+		if(propertyType != RTTIType.Long && propertyType != RTTIType.ULong)
+			return;
+		RTTIFunction fSet = setter.function;
+		void (*pfSet)(object* _this, long value) = fSet.address;
+		(*pfSet)(obj, value);
+	}
+
+	long GetLongValue(object obj)
+	{
+		if(propertyType != RTTIType.Long && propertyType != RTTIType.ULong)
+			return 0;
+		RTTIFunction fGet = getter.function;
+		long (*pfGet)(object* _this) = fGet.address;
+		return (*pfGet)(obj);
+	}
+
+	void SetFloatValue(object obj, float value)
+	{
+		if(propertyType != RTTIType.Float)
+			return;
+		RTTIFunction fSet = setter.function;
+		void (*pfSet)(object* _this, float value) = fSet.address;
+		(*pfSet)(obj, value);
+	}
+
+	float GetFloatValue(object obj)
+	{
+		if(propertyType != RTTIType.Float)
+			return 0;
+		RTTIFunction fGet = getter.function;
+		float (*pfGet)(object* _this) = fGet.address;
+		return (*pfGet)(obj);
+	}
+
+	void SetDoubleValue(object obj, double value)
+	{
+		if(propertyType != RTTIType.Double)
+			return;
+		RTTIFunction fSet = setter.function;
+		void (*pfSet)(object* _this, double value) = fSet.address;
+		(*pfSet)(obj, value);
+	}
+
+	double GetDoubleValue(object obj)
+	{
+		if(propertyType != RTTIType.Double)
+			return 0;
+		RTTIFunction fGet = getter.function;
+		double (*pfGet)(object* _this) = fGet.address;
+		return (*pfGet)(obj);
+	}
+
+	void SetPointerValue(object obj, void *value)
+	{
+		if(!propertyType.IsPointer())
+			return;
+		RTTIFunction fSet = setter.function;
+		void (*pfSet)(object* _this, void* value) = fSet.address;
+		(*pfSet)(obj, value);
+	}
+
+	void* GetPointerValue(object obj)
+	{
+		if(!propertyType.IsPointer())
+			return null;
+		RTTIFunction fGet = getter.function;
+		void* (*pfGet)(object* _this) = fGet.address;
+		return (*pfGet)(obj);
+	}
+
+	void SetObjectValue(object obj, object value)
+	{
+		if(propertyType.IsClass())
+		{
+			RTTIFunction fSet = setter.function;
+			void (*pfSet)(object* _this, object value) = fSet.address;
+			(*pfSet)(obj, value);
+		}
+	}
+
+	object GetObjectValue(object obj)
+	{
+		if(!propertyType.IsClass())
+			return null;
+		RTTIFunction fGet = getter.function;
+		object (*pfGet)(object* _this) = fGet.address;
+		return (*pfGet)(obj);
+	}
+}
+
+class RTTIClassType : RTTIType
+{
+	RTTIClassType baseClass;
+	int size;
+	//int alignment;
+
+	bool IsClass() => true;
+
+	RTTIClassType constructor(string name, SymbolFlags flags)
+	{
+		base(SymbolType.Class, flags, name);
+		return this;
+	}
+
+	RTTIConstant GetConstant(string name)
+	{
+		return _dynamicCast(Find(name), "RTTIConstant");
+	}
+
+	RTTIField GetField(string name)
+	{
+		return _dynamicCast(Find(name), "RTTIField");
+	}
+
+	RTTIProperty GetProperty(string name)
+	{
+		return _dynamicCast(Find(name), "RTTIProperty");
+	}
+
+	RTTIMethod GetMethod(string name)
+	{
+		return _dynamicCast(Find(name), "RTTIMethod");
+	}
+
+	RTTIFunction GetCreator()
+	{
+		RTTIModule parentModule = ParentModule;
+		return parentModule.GetFunction(string.format("%s__new", name));
+	}
+
+	array<string> EnumConstants()
+	{
+		return EnumChildren("RTTIConstant");
+	}
+
+	array<string> EnumFields()
+	{
+		return EnumChildren("RTTIField");
+	}
+
+	array<string> EnumMethods()
+	{
+		return EnumChildren("RTTIMethod");
+	}
+
+	array<string> EnumProperties()
+	{
+		return EnumChildren("RTTIProperty");
+	}
+}
+
+class RTTIModuleUsing
+{
+	string name;
+	weak RTTIModule module;
+}
+
+class RTTIModule : RTTISymbol
+{
+	ulong handle;
+	array<RTTIModuleUsing> usings = new array<RTTIModuleUsing>();
+
+	RTTIModule constructor(string name, ulong handle)
+	{
+		base(SymbolType.Module, SymbolFlags.None, name);
+		this.handle = handle;
+		return this;
+	}
+
+	static RTTIModule GetModule(string name)
+	{
+		return _dynamicCast(RTTIRoot.Instance.Find(name), "RTTIModule");
+	}
+
+	RTTIConstant GetConstant(string name)
+	{
+		return _dynamicCast(Find(name), "RTTIConstant");
+	}
+
+	RTTIEnumType GetEnum(string name)
+	{
+		return _dynamicCast(Find(name), "RTTIEnumType");
+	}
+
+	RTTIFunction GetFunction(string name)
+	{
+		return _dynamicCast(Find(name), "RTTIFunction");
+	}
+
+	RTTIStructType GetStruct(string name)
+	{
+		return _dynamicCast(Find(name), "RTTIStructType");
+	}
+
+	RTTIClassType GetClass(string name)
+	{
+		return _dynamicCast(Find(name), "RTTIClassType");
+	}
+
+	array<string> EnumConstants()
+	{
+		return EnumChildren("RTTIConstant");
+	}
+
+	array<string> EnumEnums()
+	{
+		return EnumChildren("RTTIEnumType");
+	}
+
+	array<string> EnumFunctions()
+	{
+		return EnumChildren("RTTIFunction");
+	}
+
+	array<string> EnumStructs()
+	{
+		return EnumChildren("RTTIStructType");
+	}
+
+	array<string> EnumClasses()
+	{
+		return EnumChildren("RTTIClassType");
+	}
+
+}
+
+class RTTIRoot : RTTISymbol
+{
+	static RTTIRoot instance = null;
+
+	static RTTIRoot get Instance() => instance;
+
+	RTTIRoot constructor()
+	{
+		base(SymbolType.Root, SymbolFlags.None, "root");
+		return this;
+	}
+}
+
+int ReadType0(RTTIModule module)
+{
+	int tc = __readByte();
+	if(tc == TypeCode.Pointer)
+	{
+		tc = 0x1000 + ReadType0(module);
+	}
+	else if(tc == TypeCode.Array)
+	{
+		int sz = __readInt();
+		tc = 0x10000 + ReadType0(module);
+	}
+	else if(tc == TypeCode.Struct)
+	{
+		byte name[256];
+		__readString(name);
+	}
+	else if(tc == TypeCode.Function)
+	{
+		int returnType = ReadType0(module);
+		int paramCount = __readInt();
+		for(int i = 0; i < paramCount; ++i)
+		{
+			ReadType0(module);
+		}
+	}
+	return tc;
+}
+
+
+RTTIType ReadType(RTTIModule module)
+{
+	int tc = __readByte();
+
+	if (tc == TypeCode.None)
+        return null;
+    // Return built-in primitive type symbols
+    else if (tc == TypeCode.Void)
+        return RTTIType.Void;
+    else if (tc == TypeCode.Bool)
+        return RTTIType.Bool;
+    else if (tc == TypeCode.Byte)
+        return RTTIType.Byte;
+    else if (tc == TypeCode.UByte)
+        return RTTIType.UByte;
+    else if (tc == TypeCode.Short)
+        return RTTIType.Short;
+    else if (tc == TypeCode.UShort)
+        return RTTIType.UShort;
+    else if (tc == TypeCode.Int)
+        return RTTIType.Int;
+    else if (tc == TypeCode.UInt)
+        return RTTIType.UInt;
+    else if (tc == TypeCode.Long)
+        return RTTIType.Long;
+    else if (tc == TypeCode.ULong)
+        return RTTIType.ULong;
+    else if (tc == TypeCode.Float)
+        return RTTIType.Float;
+    else if (tc == TypeCode.Double)
+        return RTTIType.Double;
+	else if(tc == TypeCode.Pointer)
+	{
+		RTTIType t = ReadType(module);
+		if(t == null)
+			return null;
+        RTTIPointerType ptrt = t.GetPointerType();
+        return ptrt;
+	}
+	else if(tc == TypeCode.Array)
+	{
+		int sz = __readInt();
+        RTTIType t = ReadType(module);
+		if(t == null)
+			return null;
+        return t.GetArrayType(sz);
+	}
+	else if(tc == TypeCode.Struct)
+	{
+		byte name[256];
+		__readString(name);
+
+		RTTIType ts = module.Find(name) as RTTIType;
+        if(ts == null)
+        {
+            for(int i = 0; i < module.usings.count; ++i)
+            {
+                RTTIModuleUsing u = module.usings[i];
+				if(u.module != null)
+				{
+					ts = u.module.Find(name) as RTTIType;
+					if (ts != null)
+						return ts;
+				}
+            }
+            //assert(false);
+            return null;
+        }
+        return ts;
+	}
+	else if(tc == TypeCode.Function)
+	{
+		RTTIType retType = ReadType(module);
+		if(retType == null)
+			return null;
+        int paramCount = __readInt();
+        array<RTTIType> paramTypes = new array<RTTIType>();
+        for(int i = 0; i < paramCount; ++i)
+		{
+			RTTIType pType = ReadType(module);
+			if(pType == null)
+				return null;        
+            paramTypes.add(pType);
+		}
+        RTTIFunction fn = new RTTIFunction("", 0, retType);
+        for(int i = 0; i < paramTypes.count; ++i)
+		{
+			RTTIParameter param = new RTTIParameter(string.format("p%d", i), 0, paramTypes[i]);
+			fn.addChild(param);
+            fn.parameters.add(param);
+		}
+        return fn;
 	}
 	return null;
 }
@@ -1913,8 +2798,26 @@ void _setReadTypeLog(bool value)
 	_readTypeLog = value;
 }
 
+string GetModuleName(ulong hModule)
+{
+	byte modulePath[256];
+	GetModuleFileNameA(hModule, modulePath, 256);
+	string result = path.getFileNameWithoutExtension(modulePath);
+	if(result == "Jargon")
+		result = "jargon";
+	return result;
+}
+
 bool _readTypeInfo(byte *address)
 {
+	if(RTTIRoot.instance == null)
+	{
+		RTTIRoot.instance = new RTTIRoot();
+	}
+
+	RTTIModule module = new RTTIModule(GetModuleName((ulong)address), (ulong)address);
+	RTTIRoot.instance.addChild(module);
+
 	byte *ptr = address;
 	short dosHeader = *(short*)ptr;
 	ptr += 2;
@@ -1999,6 +2902,14 @@ bool _readTypeInfo(byte *address)
 			// usings
 			__readString(name);
 			while(strcmp(name, "")) {
+				RTTIModuleUsing mu = new RTTIModuleUsing();
+				mu.name = name;
+				mu.module = RTTIRoot.Instance.Find(mu.name);
+				if(mu.module == null)
+				{
+					println("WARNING! Module %s not loaded", name);
+				}
+				module.usings.add(mu);
 				__readString(name);
 			}
 
@@ -2009,6 +2920,8 @@ bool _readTypeInfo(byte *address)
 				while(st != 0)
 				{
 					__readString(name);
+					RTTIClassType cfwd = new RTTIClassType(name, 0);
+					module.addChild(cfwd);
 					st = __readByte();
 				}
 			}
@@ -2021,40 +2934,54 @@ bool _readTypeInfo(byte *address)
 				if(st == SymbolType.Constant)
 				{
 					flags = __readShort();
-					int t = ReadType();
+					RTTIType t = ReadType(module);
 					__readString(name);
 					if(_readTypeLog) printf("constant %s\n", (byte*)name);
-					if(t == TypeCode.Bool || t == TypeCode.Byte || t == TypeCode.UByte) {
+					RTTIConstValue cv = {};
+					if(t == RTTIType.Bool || t == RTTIType.Byte || t == RTTIType.UByte) {
 						byte value = __readByte();
+						cv.b = value;
 						if(_readTypeLog) printf("\tvalue %d\n", value);
 					}
-					if(t == TypeCode.Short || t == TypeCode.UShort) {
+					if(t == RTTIType.Short || t == RTTIType.UShort) {
 						int value = __readShort();
+						cv.s = value;
 						if(_readTypeLog) printf("\tvalue %d\n", value);
 					}
-					if(t == TypeCode.Int || t == TypeCode.UInt) {
+					if(t == RTTIType.Int || t == RTTIType.UInt) {
 						int value = __readInt();
+						cv.i = value;
 						if(_readTypeLog) printf("\tvalue %d\n", value);
 					}
-					if(t == TypeCode.Long || t == TypeCode.ULong) {
+					if(t == RTTIType.Long || t == RTTIType.ULong) {
 						long value = __readInt();
+						cv.l = value;
 						if(_readTypeLog) printf("\tvalue %lld\n", value);
 					}
-					else if(t == TypeCode.Float) {
+					else if(t == RTTIType.Float) {
 						float value = __readFloat();
+						cv.f = value;
 						if(_readTypeLog) printf("\tvalue %f\n", value);
 					}
-					else if(t == TypeCode.Double) {
+					else if(t == RTTIType.Double) {
 						double value = __readDouble();
+						cv.d = value;
 						if(_readTypeLog) printf("\tvalue %f\n", value);
 					}
+					RTTIConstant c = new RTTIConstant(flags, name, t, cv);
+					module.addChild(c);
 				}
 				else if(st == SymbolType.Enum)
 				{
 					flags = __readShort();
-					int et = ReadType();
+					RTTIType et = ReadType(module);
 					__readString(name);
 					if(_readTypeLog) printf("enum %s\n", (byte*)name);
+
+					RTTIEnumType etype = new RTTIEnumType(name, et, flags);
+					module.addChild(etype);
+					RTTIType.allTypes[name] = etype;
+
 					int st2 = __readByte();
 					while(st2 != 0) 
 					{
@@ -2062,24 +2989,41 @@ bool _readTypeInfo(byte *address)
 						__readString(name);
 						long value = __readLong();
 						if(_readTypeLog) printf("\tvalue %s=%d\n", (byte*)name, value);
+						RTTIEnumValue ev = new RTTIEnumValue(name, flags, value);
+						etype.addChild(ev);
 						st2 = __readByte();
 					}
 				}
 				else if(st == SymbolType.Function)
 				{
 					flags = __readShort();
-					int t = ReadType();
+					RTTIType t = ReadType(module);
 					__readString(name);
 					if(_readTypeLog) printf("function %s\n", (byte*)name);
+
+					RTTIFunction fn = new RTTIFunction(name, flags, t);
+					module.addChild(fn);
+
 					__readString(name); // verbatim
+					if(strcmp(name, "") != 0)
+						fn.verbatimString = name;
+					else
+						fn.address = GetProcAddress(module.handle, fn.name.c_str());
+
 					int st2 = __readByte();
 					while(st2 != 0)
 					{
 						flags = __readShort();
-						int pt = ReadType();
+						RTTIType pt = ReadType(module);
 						__readString(name);
 						int offs = __readByte();
 						if(_readTypeLog) printf("\targ %d %s\n", offs, (byte*)name);
+
+						RTTIParameter param = new RTTIParameter(name, flags, pt);
+						param.offset = offs;
+						fn.addChild(param);
+						fn.parameters.add(param);
+
 						st2 = __readByte();
 					}
 				}
@@ -2090,15 +3034,27 @@ bool _readTypeInfo(byte *address)
 					int sz = __readShort();
 					int align = __readShort();
 					if(_readTypeLog) printf("struct %s\n", (byte*)name);
+
+					RTTIStructType stype = new RTTIStructType(name, flags);
+					stype.size = sz;
+					stype.alignment = align;
+					module.addChild(stype);
+
 					int st2 = __readByte();
 					while(st2 != 0)
 					{
 						flags = __readShort();
-						int ft = ReadType();
+						RTTIType ft = ReadType(module);
 						__readString(name);
 						int offs = __readShort();
 						int idx = __readShort();
 						if(_readTypeLog) printf("\tfield %s\n", (byte*)name);
+
+						RTTIField field = new RTTIField(name, flags, ft);
+						field.offset = offs;
+						field.index = idx;
+						stype.addChild(field);
+
 						st2 = __readByte();
 					}
 				}
@@ -2116,57 +3072,76 @@ bool _readTypeInfo(byte *address)
 					int sz = __readShort();
 					int fcnt = __readShort();
 					if(_readTypeLog) printf("class %s : %s\n", (byte*)name, (byte*)baseName);
-					
-					ClassInfo *ci = malloc(sizeof(ClassInfo));
-					strcpy(&ci.name[0], name);
-					ci.baseClass = null;
-					if(strcmp(baseName, "")) {
-						ci.baseClass = _getClassInfo(baseName);
+
+					RTTIClassType classType;
+					if(version == 0x01010000)
+					{
+						classType = module.Find(name);
+						classType.flags = flags;
 					}
-					_addClassInfo(ci);
-					
+					else
+					{
+						classType = new RTTIClassType(name, flags);
+					}
+					classType.baseClass = RTTIType.GetType(baseName) as RTTIClassType;
+					module.addChild(classType);
+
 					int st2 = __readByte();
 					while(st2 != 0)
 					{
 						if(st2 == SymbolType.Constant)
 						{
 							flags = __readShort();
-							int t = ReadType();
+							RTTIType t = ReadType(module);
 							__readString(name);
+							RTTIConstValue cv = {};
 							if(_readTypeLog) printf("constant %s\n", (byte*)name);
-							if(t == TypeCode.Bool || t == TypeCode.Byte || t == TypeCode.UByte) {
+							if(t == RTTIType.Bool || t == RTTIType.Byte || t == RTTIType.UByte) {
 								byte value = __readByte();
+								cv.b = value;
 								if(_readTypeLog) printf("\tvalue %d\n", value);
 							}
-							if(t == TypeCode.Short || t == TypeCode.UShort) {
+							if(t == RTTIType.Short || t == RTTIType.UShort) {
 								int value = __readShort();
+								cv.s = value;
 								if(_readTypeLog) printf("\tvalue %d\n", value);
 							}
-							if(t == TypeCode.Int || t == TypeCode.UInt) {
+							if(t == RTTIType.Int || t == RTTIType.UInt) {
 								int value = __readInt();
+								cv.i = value;
 								if(_readTypeLog) printf("\tvalue %d\n", value);
 							}
-							if(t == TypeCode.Long || t == TypeCode.ULong) {
+							if(t == RTTIType.Long || t == RTTIType.ULong) {
 								long value = __readInt();
+								cv.l = value;
 								if(_readTypeLog) printf("\tvalue %lld\n", value);
 							}
-							else if(t == TypeCode.Float) {
+							else if(t == RTTIType.Float) {
 								float value = __readFloat();
+								cv.f = value;
 								if(_readTypeLog) printf("\tvalue %f\n", value);
 							}
-							else if(t == TypeCode.Double) {
+							else if(t == RTTIType.Double) {
 								double value = __readDouble();
+								cv.d = value;
 								if(_readTypeLog) printf("\tvalue %f\n", value);
 							}
+							RTTIConstant ck = new RTTIConstant(flags, name, t, cv);
+							classType.addChild(ck);
 						}
 						else if(st2 == SymbolType.Field)
 						{
 							flags = __readShort();
-							int ft = ReadType();
+							RTTIType ft = ReadType(module);
 							__readString(name);
 							int offs = __readShort();
 							int idx = __readShort();
-							if(_readTypeLog) printf("\tfield %s\n", (byte*)name);						
+							if(_readTypeLog) printf("\tfield %s\n", (byte*)name);
+
+							RTTIField field = new RTTIField(name, flags, ft);
+							field.offset = offs;
+							field.index = idx;
+							classType.addChild(field);
 						}
 						else if(st2 == SymbolType.Method) 
 						{
@@ -2174,15 +3149,36 @@ bool _readTypeInfo(byte *address)
 							__readString(name);
 							byte fname[256];
 							__readString(fname);
+							if(strcmp(fname, "") == 0)
+							{
+								strcpy(fname, classType.name.c_str());
+								strcat(fname, "__");
+								strcat(fname, name);
+							}
+
 							int vslot = __readShort();
 							if(_readTypeLog) printf("\tmethod %s -> %s [%d]\n", (byte*)name, (byte*)fname, vslot);
+							
+							RTTIMethod method = new RTTIMethod(name, flags);
+							method.VSlot = vslot;
+							classType.addChild(method);
+							method.functionName = fname;
 						}
 						else if(st2 == SymbolType.Property) 
 						{
 							flags = __readShort();
-							int pt = ReadType();
+							RTTIType pt = ReadType(module);
 							__readString(name);
-							__readByte();
+							byte getset = __readByte();
+
+							RTTIProperty prop = new RTTIProperty(name, flags, pt);
+							prop.Class = classType;
+							classType.addChild(prop);
+
+							if((getset & 1) != 0)
+								prop.getterName = string.format("get_%s", name);
+							if((getset & 2) != 0)
+								prop.setterName = string.format("set_%s", name);
 						}
 						st2 = __readByte();
 					}
@@ -2204,9 +3200,36 @@ bool _readTypeInfo(byte *address)
 				}
 				st = __readByte();
 			}
+
+			for(int i = 0; i < module.children.count; ++i)
+			{
+				RTTIClassType ctype = module.children[i] as RTTIClassType;
+				if(ctype != null)
+				{
+					for(int j = 0; j < ctype.children.count; ++j)
+					{
+						RTTIMethod cm = ctype.children[j] as RTTIMethod;
+						if(cm != null)
+						{
+							cm.function = module.Find(cm.functionName);
+						}
+						else
+						{
+							RTTIProperty cp = ctype.children[j] as RTTIProperty;
+							if(cp != null)
+							{
+								if(cp.getterName != null)
+									cp.getter = ctype.Find(cp.getterName);
+								if(cp.setterName != null)
+									cp.setter = ctype.Find(cp.setterName);							
+							}
+						}
+					}
+				}
+			}
 			
 			return true;
-		}		
+		}
 	}
 	
 	return false;
