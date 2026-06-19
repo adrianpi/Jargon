@@ -19,6 +19,7 @@
 - **Automatic Reference Counting** — automatic memory management via reference-counted objects
 - **Debug support** — generates debug information compatible with standard debuggers (`-g` flag)
 - **Interop with C** — direct declaration of external C functions
+- **Reflection** — RTTI API to inspect type info, properties, methods, enums and constants
 
 ## Project Structure
 
@@ -34,6 +35,7 @@
 - **FImage** - FreeImage library integration example
 - **PAudio** - PortAudio library integration example
 - **VulkanApp** - Vulkan bindings example
+- **Reflection** - Reflection example
 - **Raytracer** - Simple raytracer example
 - **RaytraceMT** - Multi-threaded raytracer example
 
@@ -50,6 +52,8 @@
 | `-I<dir>` | Add directory to library search path |
 | `-l<library>` | Link with specified library |
 | `-V` | Verbose output |
+| `-NoStartup` | Do not link with startup code |
+| `-NoExports` | Do not export functions |
 | `-h`, `--help` | Show help |
 
 ### Quick Taste
