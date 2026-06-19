@@ -23,21 +23,26 @@
 
 ## Project Structure
 
-- **JargonLib** - Jargon Compiler library implemented in C#
-- **jlc0** - Jargon Compiler implemented in C#
-- **Jargon** - Jargon Runtime implemented in Jargon
-- **jlc1** - Jargon Compiler implemented in Jargon, compiled with jlc0
-- **jlc2** - Jargon Compiler implemented in Jargon, compiled with jlc1, to check for no degradation
-- **Test** - Test project
-- **HelloWorld** - Simple Hello World example
-- **ComTest** - Exampe of using COM
-- **WinApp** - Example minimal Windows application
-- **FImage** - FreeImage library integration example
-- **PAudio** - PortAudio library integration example
-- **VulkanApp** - Vulkan bindings example
-- **Reflection** - Reflection example
-- **Raytracer** - Simple raytracer example
-- **RaytraceMT** - Multi-threaded raytracer example
+- **Bootstrap**
+  - **JargonLib** - Jargon Compiler library implemented in C#
+  - **jlc0** - Jargon Compiler implemented in C#
+- **Compiler**
+  - **jlc1** - Jargon Compiler implemented in Jargon, compiled with jlc0
+  - **jlc2** - Jargon Compiler implemented in Jargon, compiled with jlc1, to check for no degradation
+ - **Examples**
+    - **ComTest** - Exampe of using COM
+    - **FImage** - FreeImage library integration example
+    - **HelloWorld** - Simple Hello World example
+    - **PAudio** - PortAudio library integration example
+    - **Raytracer** - Simple raytracer example
+    - **RaytraceMT** - Multi-threaded raytracer example
+    - **Reflection** - Reflection example
+    - **VulkanApp** - Vulkan bindings example
+    - **WinApp** - Example minimal Windows application
+- **Runtime**
+  - **Jargon** - Jargon runtime library implemented in Jargon
+- **Tests**
+  - **Test** - Test project
 
 ## Usage
 
