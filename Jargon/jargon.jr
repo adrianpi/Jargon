@@ -1975,7 +1975,8 @@ class RTTIType : RTTISymbol
 	RTTIType constructor(SymbolType stype, SymbolFlags flags, string name)
 	{
 		base(stype, flags, name);
-		allTypes[name] = this;
+		if(stype != SymbolType.Function)
+			allTypes[name] = this;
 		return this;
 	}
 
@@ -3239,11 +3240,32 @@ bool _readTypeInfo(byte *address)
 	return false;
 }
 
+void _freeTypeInfo(byte *address)
+{
+	string moduleName = GetModuleName((ulong)address);
+
+	RTTIModule module = _dynamicCast(RTTIRoot.Instance.Find(moduleName), "RTTIModule");
+	for(int i = 0; i < module.children.count; ++i)
+	{
+		RTTIType type = _dynamicCast(module.children[i], "RTTIType");
+		if(type != null && !type.IsFunction())
+		{
+			RTTIType.allTypes.remove(type.name);
+		}
+	}
+
+	RTTIRoot.Instance.children.remove(module);
+}
+
 int DllMain(long hModule, int dwReason, void *pReserved)
 {
 	if(dwReason == 1)
 	{
 		_readTypeInfo((byte*)hModule);
+	}
+	else if(dwReason == 0)
+	{
+		_freeTypeInfo((byte*)hModule);
 	}
 	return 1;
 }

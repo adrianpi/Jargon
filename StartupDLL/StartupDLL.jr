@@ -13,5 +13,9 @@ int DllMain(long hModule, int dwReason, void *pReserved)
 	{
 		_readTypeInfo((byte*)hModule);
 	}
+	else if(dwReason == 0)
+	{
+		_freeTypeInfo((byte*)hModule);
+	}
 	return DllStart(hModule, dwReason, pReserved);
 }
