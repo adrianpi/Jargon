@@ -40,6 +40,14 @@ namespace Jargon
             {
                 WriteString(bw, type.Name);
             }
+            else if (type.TypeCode == TypeCode.Function)
+            {
+                WriteType(bw, (type as Function).ReturnType);
+                bw.Write((int)type.Flags);
+                bw.Write((short)(type as Function).Parameters.Count);
+                for (int i = 0; i < (type as Function).Parameters.Count; ++i)
+                    WriteType(bw, ((type as Function).Parameters[i] as LocalVariable).DataType);
+            }
         }
 
         public static void WriteHeader(MemoryStream ms, string name)
@@ -413,6 +421,20 @@ namespace Jargon
                     System.Diagnostics.Debug.Assert(false);
                 }
                 return t;
+            }
+            else if (tc == TypeCode.Function)
+            {
+                TypeSymbol retType = ReadType(br, module);
+                int flags = br.ReadInt32();
+                int paramCount = br.ReadInt16();
+                List<TypeSymbol> paramTypes = new List<TypeSymbol>();
+                for (int i = 0; i < paramCount; ++i)
+                    paramTypes.Add(ReadType(br, module));
+                Function fn = new Function(null, "", retType);
+                fn.Flags = (SymbolFlags)flags;
+                for (int i = 0; i < paramTypes.Count; ++i)
+                    fn.Parameters.Add(new LocalVariable(fn, "p" +  i, paramTypes[i], null));
+                return fn;
             }
             else
             {

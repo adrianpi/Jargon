@@ -2102,6 +2102,7 @@ class RTTIFunction : RTTIType
 	array<RTTIParameter> parameters = new array<RTTIParameter>();
 	string verbatimString;
 	void* address;
+	long (*Call)(...);
 
 	bool IsFunction() => true;
 
@@ -2770,7 +2771,8 @@ RTTIType ReadType(RTTIModule module)
 		RTTIType retType = ReadType(module);
 		if(retType == null)
 			return null;
-        int paramCount = __readInt();
+		int flags = __readInt();
+        int paramCount = __readShort();
         array<RTTIType> paramTypes = new array<RTTIType>();
         for(int i = 0; i < paramCount; ++i)
 		{
@@ -2779,7 +2781,7 @@ RTTIType ReadType(RTTIModule module)
 				return null;        
             paramTypes.add(pType);
 		}
-        RTTIFunction fn = new RTTIFunction("", 0, retType);
+        RTTIFunction fn = new RTTIFunction("", flags, retType);
         for(int i = 0; i < paramTypes.count; ++i)
 		{
 			RTTIParameter param = new RTTIParameter(string.format("p%d", i), 0, paramTypes[i]);
@@ -3009,6 +3011,8 @@ bool _readTypeInfo(byte *address)
 						fn.verbatimString = name;
 					else
 						fn.address = GetProcAddress(module.handle, fn.name.c_str());
+
+					fn.Call = fn.address;
 
 					int st2 = __readByte();
 					while(st2 != 0)

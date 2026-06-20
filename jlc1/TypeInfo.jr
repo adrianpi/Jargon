@@ -201,7 +201,8 @@ class TypeInfo
         else if(type.TypeCode == TypeCode.Function)
         {
             WriteType(bw, (type as Function).ReturnType);
-            bw.writeInt((type as Function).Parameters.count);
+            bw.writeInt((int)type.Flags);
+            bw.writeShort((short)(type as Function).Parameters.count);
             for(int i = 0; i < (type as Function).Parameters.count; ++i)
                 WriteType(bw, ((type as Function).Parameters[i] as LocalVariable).DataType);
         }
@@ -608,11 +609,13 @@ class TypeInfo
         else if(tc == TypeCode.Function)
         {
             TypeSymbol retType = ReadType(br, module);
-            int paramCount = br.readInt();
+            int flags = br.readInt();
+            int paramCount = br.readShort();
             array<TypeSymbol> paramTypes = new array<TypeSymbol>();
             for(int i = 0; i < paramCount; ++i)
                 paramTypes.add(ReadType(br, module));
             Function fn = new Function(null, "", retType);
+            fn.Flags = flags;
             for(int i = 0; i < paramTypes.count; ++i)
                 fn.Parameters.add(new LocalVariable(fn, string.format("p%d", i), paramTypes[i], null));
             return fn;

@@ -111,7 +111,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PostBuildEvent>
-      <Command>..\x64\Debug\jlc2.exe -g main.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib -lole32.lib -loleaut32.lib -lkernel32.lib -luser32.lib -lgdi32.lib -lwinmm.lib  -SUBSYSTEM:CONSOLE</Command>
+      <Command>..\x64\Debug\jlc2.exe -k -g main.jr -o $(OutputPath)$(TargetFileName) -ladvapi32.lib -lole32.lib -loleaut32.lib -lkernel32.lib -luser32.lib -lgdi32.lib -lwinmm.lib  -SUBSYSTEM:CONSOLE</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">

@@ -18,6 +18,11 @@ int testSum(int a, int b)
 	return a + b;
 }
 
+float testSum2(float a, float b)
+{
+	return a + b;
+}
+
 class TestClass
 {
 	int a = 5;
@@ -67,9 +72,17 @@ int start()
 
 	// Get testSum function and invoke it	
 	RTTIFunction fTestSum = module2.GetFunction("testSum");
-	int (*pfTestSum)(int a, int b) = fTestSum.address;
-	int result = pfTestSum(30, 3);
+	//int (*pfTestSum)(int a, int b) = fTestSum.address;
+	//int result = pfTestSum(30, 3);
+	//NOTE: For simple arguments we can use the variadic call
+	int result = fTestSum.Call(30, 3);
 	println("testSum(30,3) is %d", result);
+
+	RTTIFunction fTestSum2 = module2.GetFunction("testSum2");
+	// For float args we need the proper signature
+	float (*pfTestSum2)(float a, float b) = fTestSum2.address;
+	float result2 = pfTestSum2(30.0f, 3.0f);
+	println("testSum2(30.0, 3.0) is %f", result2);
 
 	// Get TestClass info and create an instance
 	RTTIClassType cTest = RTTIType.GetType("TestClass") as RTTIClassType;
@@ -94,8 +107,8 @@ int start()
 	RTTIField fB = cTest.GetField("b");
 	fB.SetIntValue(test, 3);
 
-	// Invoke the method again
-	pfFoo(test);
+	// Invoke the method again using variadic form
+	mFoo.function.Call(test);
 
 	return 0;
 }
