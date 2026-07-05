@@ -73,6 +73,18 @@ class Parser4 : StageParser
             scanner.NextToken();
             while (scanner.Token != Token.RBrace && scanner.Token != Token.EOF)
             {
+                if(scanner.Token == Token.LBracket)
+                {
+                    do
+                    {
+                        scanner.NextToken();
+                        if(!ParseAttribute())
+                            return false;
+                    } while(scanner.Token == Token.LBracket);
+                }
+
+                attributes = null;
+
                 bool _static = false;
                 bool _const = false;
 

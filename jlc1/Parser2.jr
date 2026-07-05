@@ -74,11 +74,24 @@ class Parser2 : StageParser
         string name = scanner.TokenString;
         scanner.NextToken();
         StructType st = module.Find(name) as StructType;
+        
+        attributes = null;
+
         if(scanner.Token == Token.LBrace)
         {
             scanner.NextToken();
             while(scanner.Token != Token.RBrace && scanner.Token != Token.EOF)
             {
+                if(scanner.Token == Token.LBracket)
+                {
+                    do
+                    {
+                        scanner.NextToken();
+                        if(!ParseAttribute())
+                            return false;
+                    } while(scanner.Token == Token.LBracket);
+                }
+
                 Declaration decl = new Declaration();
 
                 if (!ParseDeclaration(decl, true, null, false, false))
@@ -96,6 +109,10 @@ class Parser2 : StageParser
                 FieldSymbol fs = new FieldSymbol(st, decl.name, decl.type);
                 fs.Index = st.Children.count - 1;
                 fs.Unit = unit;
+                fs.attributes = attributes;
+                if(fs.attributes != null)
+                    fs.Flags += SymbolFlags.HasAttributes;
+                attributes = null;
                 TypeSymbol dt = fs.DataType;
                 if(dt.IsClassRef())
                     fs.Flags += SymbolFlags.Weak;   // references in a struct are always weak
@@ -161,7 +178,7 @@ class Parser2 : StageParser
         string name = scanner.TokenString;
         scanner.NextToken();
         ClassType cls = module.Find(name) as ClassType;
-
+        attributes = null;
         // Optional base class specification following a ':' token
         if(scanner.Token == Token.Colon)
         {
@@ -206,6 +223,16 @@ class Parser2 : StageParser
 
             while (scanner.Token != Token.RBrace && scanner.Token != Token.EOF)
             {
+                if(scanner.Token == Token.LBracket)
+                {
+                    do
+                    {
+                        scanner.NextToken();
+                        if(!ParseAttribute())
+                            return false;
+                    } while(scanner.Token == Token.LBracket);
+                }
+
                 bool _virtual = false;
                 bool _static = false;
                 bool _weak = false;
@@ -225,6 +252,12 @@ class Parser2 : StageParser
                 if(IsKeyword("const"))
                 {
                     _const = true;
+
+                    if(attributes != null)
+                    {
+                        Error("Invalid attribute on const member");
+                        return false;
+                    }
                 }
                 else
                 {
@@ -325,6 +358,10 @@ class Parser2 : StageParser
                             p = new PropertySymbol(cls, decl.name, fn.ReturnType);
                             if(_static)
                                 p.Flags |= SymbolFlags.Static;
+                            p.attributes = attributes;
+                            if(p.attributes != null)
+                                p.Flags += SymbolFlags.HasAttributes;
+                            attributes = null;
                         }
                         p.Getter = ms;
                     }
@@ -336,10 +373,20 @@ class Parser2 : StageParser
                             p = new PropertySymbol(cls, decl.name, fn.Parameters[1].DataType);
                             if(_static)
                                 p.Flags |= SymbolFlags.Static;
+                            p.attributes = attributes;
+                            if(p.attributes != null)
+                                p.Flags += SymbolFlags.HasAttributes;
+                            attributes = null;
                         }
                         p.Setter = ms;
                     }
-
+                    else
+                    {
+                        ms.attributes = attributes;
+                        if(ms.attributes != null)
+                            ms.Flags += SymbolFlags.HasAttributes;
+                        attributes = null;
+                    }
                     // Mark static/virtual flags on the method symbol and
                     // adjust vtable slot assignment when necessary.
                     if (_static)
@@ -455,6 +502,10 @@ class Parser2 : StageParser
                         // Field declaration: create FieldSymbol and compute layout
                         FieldSymbol fs = new FieldSymbol(cls, decl.name, decl.type);
                         fs.Unit = unit;
+                        fs.attributes = attributes;
+                        if(fs.attributes != null)
+                            fs.Flags += SymbolFlags.HasAttributes;
+                        attributes = null;
                         if (!_static)
                         {
                             int alignment = GetAlignment(decl.type);
@@ -805,6 +856,11 @@ class Parser2 : StageParser
                 // later passes can resolve method bodies and generate code.
                 unit.AddSymbol(decl.type);
                 decl.type.line = line;
+
+                decl.type.attributes = attributes;
+                if(decl.type.attributes != null)
+                    decl.type.Flags += SymbolFlags.HasAttributes;
+                attributes = null;
 
                 if(scanner.Token == Token.LBrace)
                 {

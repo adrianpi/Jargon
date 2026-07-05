@@ -64,12 +64,14 @@ class StageParser : ExpressionParser
     virtual bool ParseEnum()
     {
         SkipBraces();
+        attributes = null;
         return Expect(Token.RBrace);
     }
     
     virtual bool ParseStructure(bool isUnion)
     {
         SkipBraces();
+        attributes = null;
         return Expect(Token.RBrace);
     }
 
@@ -82,6 +84,7 @@ class StageParser : ExpressionParser
         if (!IsKeyword("class"))
             return false;
         SkipBraces();
+        attributes = null;
         return Expect(Token.RBrace);
     }
 
@@ -132,6 +135,16 @@ class StageParser : ExpressionParser
         // Top-level parsing loop: dispatch based on the current token.
         while (scanner.Token != Token.EOF)
         {
+            if(scanner.Token == Token.LBracket)
+            {
+                do
+                {
+                    scanner.NextToken();
+                    if(!ParseAttribute())
+                        return false;
+                } while(scanner.Token == Token.LBracket);
+            }
+
             if(IsKeyword("using"))
             {
                 if (!ParseUsing())

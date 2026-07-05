@@ -208,6 +208,19 @@ class TypeInfo
         }
     }
 
+    static void WriteAttributes(BinaryWriter bw, Symbol s)
+    {
+        if((s.Flags & SymbolFlags.HasAttributes) != 0)
+        {
+            for(int i = 0; i < s.attributes.count; ++i)
+            {
+                string attr = s.attributes[i];
+                bw.writeString(attr);
+            }
+            bw.writeString("");
+        }
+    }
+
     // Serializes a module and all its symbols to binary format
     // Writes constants, enums, functions, structs, classes, and templates
     static void Write(array<byte> buffer, Module m)
@@ -280,6 +293,7 @@ class TypeInfo
                 {
                     bw.writeByte(c.SymbolType);
                     bw.writeShort(c.Flags);
+                    WriteAttributes(bw, c);
                     WriteType(bw, (c as EnumType).ElementType);
                     bw.writeString(c.Name);
                     // Write all enum values
@@ -302,6 +316,7 @@ class TypeInfo
                 {
                     bw.writeByte(c.SymbolType);
                     bw.writeShort(c.Flags);
+                    WriteAttributes(bw, c);
                     WriteType(bw, (c as Function).ReturnType);
                     bw.writeString(c.Name);
                     // Write verbatim code if present (for external functions)
@@ -326,6 +341,7 @@ class TypeInfo
                 {
                     bw.writeByte(c.SymbolType);
                     bw.writeShort(c.Flags);
+                    WriteAttributes(bw, c);
                     bw.writeString(c.Name);
                     bw.writeShort((c as StructType).Size);
                     bw.writeShort((c as StructType).Alignment);
@@ -337,6 +353,7 @@ class TypeInfo
                         {
                             bw.writeByte(fs.SymbolType);
                             bw.writeShort(fs.Flags);
+                            WriteAttributes(bw, fs);
                             WriteType(bw, fs.DataType);
                             bw.writeString(fs.Name);
                             bw.writeShort(fs.Offset);
@@ -351,6 +368,7 @@ class TypeInfo
                     ClassType cls = (ClassType)c;
                     bw.writeByte(c.SymbolType);
                     bw.writeShort(c.Flags);
+                    WriteAttributes(bw, c);
                     bw.writeString(c.Name);
                     WriteType(bw, cls.BaseClass);
                     bw.writeShort(cls.Size);
@@ -395,6 +413,7 @@ class TypeInfo
                         {
                             bw.writeByte(cc.SymbolType);
                             bw.writeShort(cc.Flags);
+                            WriteAttributes(bw, cc);
                             WriteType(bw, fs.DataType);
                             bw.writeString(cc.Name);
                             bw.writeShort(fs.Offset);
@@ -405,6 +424,7 @@ class TypeInfo
                         {
                             bw.writeByte(cc.SymbolType);
                             bw.writeShort(cc.Flags);
+                            WriteAttributes(bw, cc);
                             bw.writeString(cc.Name);
                             Function fn = mthd.GetFunction();
                             string tname = string.format("%s__%s", cls.Name, mthd.Name);
@@ -420,6 +440,7 @@ class TypeInfo
                         {
                             bw.writeByte(cc.SymbolType);
                             bw.writeShort(cc.Flags);
+                            WriteAttributes(bw, cc);
                             WriteType(bw, ps.DataType);
                             bw.writeString(cc.Name);
                             byte getset = 0;
@@ -446,6 +467,7 @@ class TypeInfo
                 {
                     bw.writeByte(c.SymbolType);
                     bw.writeShort(c.Flags);
+                    WriteAttributes(bw, c);
                     bw.writeString(c.Name);
                     // Write template parameter names
                     for(int j = 0; j < (c as Template).TemplateParams.count; ++j)
@@ -647,6 +669,22 @@ class TypeInfo
         return null;
     }
 
+    static array<string> ReadAttributes(BinaryReader br, int flags)
+    {
+        if((flags & SymbolFlags.HasAttributes) != 0)
+        {
+            array<string> attrs = new array<string>();
+            string attr = br.readString();
+            while(attr != "")
+            {
+                attrs.add(attr);
+                attr = br.readString();
+            }
+            return attrs;
+        }
+        return null;
+    }
+
     // Parses a module from a compiled DLL file by reading the .module PE section
     // Deserializes all symbols and reconstructs the module's symbol table
     static Module ParseModule(string filePath)
@@ -727,6 +765,7 @@ class TypeInfo
         dictionary<MethodSymbol, string> methodMap = new dictionary<MethodSymbol, string>();
         dictionary<PropertySymbol, string> getterMap = new dictionary<PropertySymbol, string>();
         dictionary<PropertySymbol, string> setterMap = new dictionary<PropertySymbol, string>();
+        array<string> attribs = null;
 
         // Parse all module symbols
         while(st != SymbolType.None)
@@ -769,10 +808,12 @@ class TypeInfo
             else if(st == SymbolType.Enum)
             {
                 flags = br.readShort();
+                attribs = ReadAttributes(br, flags);
                 TypeSymbol et = ReadType(br, module);
                 name = br.readString();
                 EnumType enu = new EnumType(module, name, et);
                 enu.Flags = (SymbolFlags)flags;
+                enu.attributes = attribs;
                 // Read all enum values
                 SymbolType st2 = (SymbolType)br.readByte();
                 while(st2 != 0)
@@ -789,10 +830,12 @@ class TypeInfo
             else if(st == SymbolType.Function)
             {
                 flags = br.readShort();
+                attribs = ReadAttributes(br, flags);
                 TypeSymbol t = ReadType(br, module);
                 name = br.readString();
                 Function fn = new Function(module, name, t);
                 fn.Flags = (SymbolFlags)flags;
+                fn.attributes = attribs;
                 fn.Verbatim = br.readString();
                 if (fn.Verbatim == strEmpty)
                     fn.Verbatim = null;
@@ -815,11 +858,13 @@ class TypeInfo
             else if(st == SymbolType.Struct)
             {
                 flags = br.readShort();
+                attribs = ReadAttributes(br, flags);
                 name = br.readString();
                 int sz = br.readShort();
                 int align = br.readShort();
                 StructType struc = new StructType(module, name);
                 struc.Flags = (SymbolFlags)flags;
+                struc.attributes = attribs;
                 struc.SetSize(sz);
                 struc.Alignment = align;
                 // Read all struct fields
@@ -827,6 +872,7 @@ class TypeInfo
                 while (st2 != 0)
                 {
                     flags = br.readShort();
+                    attribs = ReadAttributes(br, flags);
                     TypeSymbol ft = ReadType(br, module);
                     name = br.readString();
                     int offs = br.readShort();
@@ -835,6 +881,7 @@ class TypeInfo
                     f.Flags = (SymbolFlags)flags;
                     f.Offset = offs;
                     f.Index = idx;
+                    f.attributes = attribs;
                     st2 = (SymbolType)br.readByte();
                 }
             }
@@ -842,6 +889,7 @@ class TypeInfo
             else if(st == SymbolType.Class)
             {
                 flags = br.readShort();
+                attribs = ReadAttributes(br, flags);
                 name = br.readString();
                 ClassType baseType = ReadType(br, module) as ClassType;
                 int csz = br.readShort();
@@ -853,6 +901,7 @@ class TypeInfo
                     cls = new ClassType(module, name);
                 assert(cls != null);
                 cls.Flags = (SymbolFlags)flags;
+                cls.attributes = attribs;
                 cls.BaseClass = baseType;
                 cls.SetSize(csz);
                 cls.FieldCount = fcnt;
@@ -894,6 +943,7 @@ class TypeInfo
                     if(st2 == SymbolType.Field)
                     {
                         flags = br.readShort();
+                        attribs = ReadAttributes(br, flags);
                         TypeSymbol ft = ReadType(br, module);
                         name = br.readString();
                         int offs = br.readShort();
@@ -905,10 +955,12 @@ class TypeInfo
                             field.Flags += SymbolFlags.External;                
                         field.Offset = offs;
                         field.Index = idx;
+                        field.attributes = attribs;
                     }
                     else if(st2 == SymbolType.Method)                    
                     {
                         flags = br.readShort();
+                        attribs = ReadAttributes(br, flags);
                         name = br.readString();
                         string fname = br.readString();
                         if(fname.length == 0) // If empty, use default naming
@@ -918,10 +970,12 @@ class TypeInfo
                         mi.Flags = (SymbolFlags)flags;
                         mi.VSlot = vslot;
                         methodMap[mi] = fname;
+                        mi.attributes = attribs;
                     }
                     else if(st2 == SymbolType.Property)
                     {
                         flags = br.readShort();
+                        attribs = ReadAttributes(br, flags);
                         TypeSymbol pt = ReadType(br, module);
                         name = br.readString();
                         PropertySymbol prop = new PropertySymbol(cls, name, pt);
@@ -930,6 +984,7 @@ class TypeInfo
                             getterMap[prop] = string.format("get_%s", name);
                         if((getset & 2) != 0)
                             setterMap[prop] = string.format("set_%s", name);
+                        prop.attributes = attribs;
                     }                            
                     st2 = (SymbolType)br.readByte();
                 }
@@ -947,9 +1002,11 @@ class TypeInfo
             else if(st == SymbolType.Template)
             {
                 flags = br.readShort();
+                attribs = ReadAttributes(br, flags);
                 name = br.readString();
                 Template tmpl = new Template(module, name);
                 tmpl.Flags = (SymbolFlags)flags;
+                tmpl.attributes = attribs;
                 string tp = br.readString();
                 while(tp != strEmpty)
                 {

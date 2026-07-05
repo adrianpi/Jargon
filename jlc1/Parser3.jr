@@ -32,6 +32,8 @@ class Parser3 : StageParser
         ClassType cls = module.Find(name) as ClassType;
         _class = cls;            
 
+        attributes = null;
+
         if (scanner.Token == Token.Colon)
         {
             // Accept optional base class token here; detailed linking was
@@ -187,6 +189,8 @@ class Parser3 : StageParser
 
             if (decl.type.IsFunction())
             {
+                attributes = null;
+
                 // Function declarations/definitions are skipped or here,
                 // bodies are not parsed in detail at this stage yet.
                 if (scanner.Token == Token.LBrace)

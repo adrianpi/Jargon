@@ -5,6 +5,7 @@ using jargon;
 
 struct Point
 {
+	[Internal]
 	int x;
 	int y;
 }
@@ -13,28 +14,42 @@ const int TRUE = 1;
 const int FALSE = 0;
 const float PI = 3.141592f;
 
+[Description("Returns int")]
 int testSum(int a, int b)
 {
 	return a + b;
 }
 
+[Description("Returns float")]
 float testSum2(float a, float b)
 {
 	return a + b;
 }
 
+[Serializable]
+[Reflectable(true)]
+[Description("This is a test class for reflection")]
 class TestClass
 {
 	int a = 5;
+	[Order(100)]
 	int b = 2;
 
+	[Serializable]
 	int get A() => a;
 	void set A(int value) { a = value; }
 
+	[Command("Do Foo")]
 	void foo()
 	{
 		println("foo(): %d", a + b);
 	}
+}
+
+[TestAttrib]
+template class Templ<T>
+{
+	T field;
 }
 
 int start()
@@ -50,6 +65,8 @@ int start()
 	println("SeekPos.Start is %d", evStart.value);
 	println("SeekPos.Current is %d", evCurrent.value);
 	println("SeekPos.End is %d", evEnd.value);
+	println("SeekPos.End Parse: %d", eSeekPos.Parse("End"));
+	println("SeekPos.End Stringify: %s", eSeekPos.Stringify(evEnd.value));
 
 	// Get this module
 	RTTIModule module2 = RTTIModule.GetModule("Reflection");
@@ -109,6 +126,24 @@ int start()
 
 	// Invoke the method again using variadic form
 	mFoo.function.Call(test);
+
+	// Custom Attributes - There are for illustration purposes only, 
+	// they don't do anything in this example nor have special meaning.
+
+	println("TestClass attributes: %s", cTest.GetAttributes().join(", "));
+	println("TestClass has Serializable: %d", cTest.HasAttribute("Serializable"));
+	println("TestClass Reflectable: %d", cTest.GetAttributeBool("Reflectable"));
+	println("TestClass Description: \'%s\'", cTest.GetAttributeString("Description"));
+	println("TestClass::foo Command: \'%s\'", mFoo.GetAttributeString("Command"));
+	println("TestClass Property A Serializable %d", pA.GetAttributeBool("Serializable"));
+	println("TestClass Field b Order %d", fB.GetAttributeInt("Order"));
+	println("testSum Description: \'%s\'", fTestSum.GetAttributeString("Description"));
+	println("testSum2 Description: \'%s\'", fTestSum2.GetAttributeString("Description"));
+
+	Templ<int> intT = new Templ<int>();
+
+	RTTIClassType cTempl = RTTIType.GetType("Templ_int") as RTTIClassType;
+	println("Templ<int> TestAttrib: %d", cTempl.GetAttributeBool("TestAttrib"));
 
 	return 0;
 }

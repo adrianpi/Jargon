@@ -33,6 +33,7 @@ int _access(byte *dir, int mode) external;
 int __getcwd(byte *buffer, int maxLen) external;
 int GetModuleFileNameA(ulong hModule, byte *buffer, int maxLen) external;
 void* GetProcAddress(ulong hModule, byte *procName) external;
+int atoi(byte *str) external;
 
 struct _finddata_t
 {
@@ -477,7 +478,9 @@ class string
 
 	bool endsWith(string *other)
 	{
-		return indexOf(other) == length - other.length;
+		if(other.length > length)
+			return false;
+		return strcmp(str + length - other.length, other.str) == 0;
 	}
 
 	string* reverse()
@@ -1785,6 +1788,7 @@ enum SymbolFlags
     Union = 0x200,
     Private = 0x400,
     Protected = 0x800,
+	HasAttributes = 0x1000,
     VisibilityMask = 0xc04, // (Internal|Private|Protected)
 }
 
@@ -1901,6 +1905,7 @@ class RTTISymbol
 	string name;
 	array<RTTIType> children = new array<RTTIType>();
 	weak RTTISymbol parent = null;
+	array<string> attributes = new array<string>();
 
 	virtual bool IsType() => false;
 	virtual bool IsFunction() => false;
@@ -1941,6 +1946,109 @@ class RTTISymbol
 				result.add(child.name);
 		}
 		return result;
+	}
+
+	bool HasAttribute(string name)
+	{
+		if(attributes == null)
+			return false;
+
+		string key = name + "(";
+		for(int i = 0; i < attributes.count; ++i)
+		{
+			string attr = attributes[i];
+			if(attr.startsWith(key))
+				return true;
+		}
+		return false;
+	}
+
+	array<string> GetAttributes()
+	{
+		array<string> result = new array<string>();
+		if(attributes != null)
+		{
+			for(int i = 0; i < attributes.count; ++i)
+			{
+				string attr = attributes[i];
+				int pos = attr.indexOfChar('(');
+				if(pos != -1)
+					attr = attr.substr(0, pos);
+				result.add(attr);
+			}
+		}
+		return result;
+	}
+
+	bool GetAttributeBool(string name)
+	{
+		if(attributes == null)
+			return false;
+
+		string key = name + "(";
+		for(int i = 0; i < attributes.count; ++i)
+		{
+			string attr = attributes[i];
+			if(attr.startsWith(key))
+			{
+				int pos = attr.indexOfChar(')');
+				if(pos != -1)
+				{
+					string value = attr.substr(key.length, pos-key.length);
+					return value == "true";
+				}
+			}
+		}
+		return false;
+	}
+
+	int GetAttributeInt(string name)
+	{
+		if(attributes == null)
+			return 0;
+
+		string key = name + "(";
+		for(int i = 0; i < attributes.count; ++i)
+		{
+			string attr = attributes[i];
+			if(attr.startsWith(key))
+			{
+				int pos = attr.indexOfChar(')');
+				if(pos != -1)
+				{
+					string value = attr.substr(key.length, pos-key.length);
+					return atoi(value.c_str());
+				}
+			}
+		}
+		return 0;
+	}
+
+	string GetAttributeString(string name)
+	{
+		if(attributes == null)
+			return null;
+
+		string key = name + "(";
+		for(int i = 0; i < attributes.count; ++i)
+		{
+			string attr = attributes[i];
+			if(attr.startsWith(key))
+			{
+				int pos = attr.indexOfChar(')');
+				if(pos != -1)
+				{
+					string value = attr.substr(key.length, pos-key.length);
+					if(value.startsWith("\"") && value.endsWith("\""))
+					{
+						value = value.substr(1, value.length-2);
+						return value;
+					}
+					return null;
+				}
+			}
+		}
+		return null;
 	}
 }
 
@@ -2079,6 +2187,33 @@ class RTTIEnumType : RTTIType
 	array<string> EnumValues()
 	{
 		return EnumChildren("RTTIEnumValue");
+	}
+
+	long Parse(string value)
+	{
+		for(int i = 0; i < children.count; ++i)
+		{
+			RTTISymbol child = children[i];
+			if(child.name == value)
+			{
+				RTTIEnumValue ev = _dynamicCast(child, "RTTIEnumValue");
+				if(ev)
+					return ev.value;
+			}
+		}
+		return 0;
+	}
+
+	string Stringify(long value)
+	{
+		for(int i = 0; i < children.count; ++i)
+		{
+			RTTISymbol child = children[i];
+			RTTIEnumValue ev = _dynamicCast(child, "RTTIEnumValue");
+			if(ev && ev.value == value)
+				return ev.name;
+		}
+		return string.format("%lld", value);
 	}
 }
 
@@ -2794,6 +2929,22 @@ RTTIType ReadType(RTTIModule module)
 	return null;
 }
 
+array<string> _ReadAttributes(int flags)
+{
+	if((flags & SymbolFlags.HasAttributes) == 0)
+		return null;
+
+	array<string> result = new array<string>();
+	byte name[4096];
+	__readString(name);
+	while(strcmp(name, ""))
+	{
+		result.add(name);
+		__readString(name);
+	}
+	return result;
+}
+
 bool _readTypeLog = false;
 
 void _setReadTypeLog(bool value)
@@ -2931,6 +3082,7 @@ bool _readTypeInfo(byte *address)
 
 			int flags = 0;
 			st = __readByte();
+			array<string> attribs = null;
 
 			while(st != SymbolType.None)
 			{
@@ -2977,11 +3129,13 @@ bool _readTypeInfo(byte *address)
 				else if(st == SymbolType.Enum)
 				{
 					flags = __readShort();
+					attribs = _ReadAttributes(flags);
 					RTTIType et = ReadType(module);
 					__readString(name);
 					if(_readTypeLog) printf("enum %s\n", (byte*)name);
 
 					RTTIEnumType etype = new RTTIEnumType(name, et, flags);
+					etype.attributes = attribs;
 					module.addChild(etype);
 					RTTIType.allTypes[name] = etype;
 
@@ -3000,12 +3154,15 @@ bool _readTypeInfo(byte *address)
 				else if(st == SymbolType.Function)
 				{
 					flags = __readShort();
+					attribs = _ReadAttributes(flags);
 					RTTIType t = ReadType(module);
 					__readString(name);
 					if(_readTypeLog) printf("function %s\n", (byte*)name);
 
 					RTTIFunction fn = new RTTIFunction(name, flags, t);
 					module.addChild(fn);
+
+					fn.attributes = attribs;
 
 					__readString(name); // verbatim
 					if(strcmp(name, "") != 0)
@@ -3035,12 +3192,14 @@ bool _readTypeInfo(byte *address)
 				else if(st == SymbolType.Struct)
 				{
 					flags = __readShort();
+					attribs = _ReadAttributes(flags);
 					__readString(name);
 					int sz = __readShort();
 					int align = __readShort();
 					if(_readTypeLog) printf("struct %s\n", (byte*)name);
 
 					RTTIStructType stype = new RTTIStructType(name, flags);
+					stype.attributes = attribs;
 					stype.size = sz;
 					stype.alignment = align;
 					module.addChild(stype);
@@ -3049,6 +3208,7 @@ bool _readTypeInfo(byte *address)
 					while(st2 != 0)
 					{
 						flags = __readShort();
+						attribs = _ReadAttributes(flags);
 						RTTIType ft = ReadType(module);
 						__readString(name);
 						int offs = __readShort();
@@ -3058,6 +3218,7 @@ bool _readTypeInfo(byte *address)
 						RTTIField field = new RTTIField(name, flags, ft);
 						field.offset = offs;
 						field.index = idx;
+						field.attributes = attribs;
 						stype.addChild(field);
 
 						st2 = __readByte();
@@ -3066,6 +3227,7 @@ bool _readTypeInfo(byte *address)
 				else if(st == SymbolType.Class)
 				{
 					flags = __readShort();
+					attribs = _ReadAttributes(flags);
 					__readString(name);
 					byte baseName[256];
 					strcpy(baseName, "");
@@ -3088,6 +3250,7 @@ bool _readTypeInfo(byte *address)
 					{
 						classType = new RTTIClassType(name, flags);
 					}
+					classType.attributes = attribs;
 					classType.baseClass = RTTIType.GetType(baseName) as RTTIClassType;
 					module.addChild(classType);
 
@@ -3137,6 +3300,7 @@ bool _readTypeInfo(byte *address)
 						else if(st2 == SymbolType.Field)
 						{
 							flags = __readShort();
+							attribs = _ReadAttributes(flags);
 							RTTIType ft = ReadType(module);
 							__readString(name);
 							int offs = __readShort();
@@ -3146,11 +3310,13 @@ bool _readTypeInfo(byte *address)
 							RTTIField field = new RTTIField(name, flags, ft);
 							field.offset = offs;
 							field.index = idx;
+							field.attributes = attribs;
 							classType.addChild(field);
 						}
 						else if(st2 == SymbolType.Method) 
 						{
 							flags = __readShort();
+							attribs = _ReadAttributes(flags);
 							__readString(name);
 							byte fname[256];
 							__readString(fname);
@@ -3166,18 +3332,21 @@ bool _readTypeInfo(byte *address)
 							
 							RTTIMethod method = new RTTIMethod(name, flags);
 							method.VSlot = vslot;
+							method.attributes = attribs;
 							classType.addChild(method);
 							method.functionName = fname;
 						}
 						else if(st2 == SymbolType.Property) 
 						{
 							flags = __readShort();
+							attribs = _ReadAttributes(flags);
 							RTTIType pt = ReadType(module);
 							__readString(name);
 							byte getset = __readByte();
 
 							RTTIProperty prop = new RTTIProperty(name, flags, pt);
 							prop.Class = classType;
+							prop.attributes = attribs;
 							classType.addChild(prop);
 
 							if((getset & 1) != 0)
@@ -3195,6 +3364,7 @@ bool _readTypeInfo(byte *address)
 				else if(st == SymbolType.Template)
 				{
 					flags = __readShort();
+					attribs = _ReadAttributes(flags);
 					__readString(name);
 					__readString(name);
 					while(strcmp(name, ""))

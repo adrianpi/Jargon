@@ -292,6 +292,7 @@ class BaseParser
     string fileName;
     CompilerErrorListener errorListener;
     CompilerOptions options;
+    array<string> attributes;
 
     // StartParse - initialize parser state for a given compile unit.
     void StartParse(CompileUnit cu)
@@ -921,7 +922,18 @@ class BaseParser
                         src = replaceWord(src, ((Template)item.type).TemplateParams[i], templateArgs[i].Name);
                     }
 
-                    string text = new string("class ") + tname + src;
+                    // pass template attributes down to the instantiated class
+                    string attribs = "";
+                    if(item.type.attributes != null)
+                    {
+                        for(int i = 0; i < item.type.attributes.count; ++i)
+                        {
+                            string a = item.type.attributes[i];
+                            attribs += string.format("[%s]\n", a);
+                        }
+                    }
+
+                    string text = attribs + new string("class ") + tname + src;
 
                     if(!directory.exists("jrt"))
                         directory.create("jrt");
@@ -1293,6 +1305,83 @@ class BaseParser
                 return false;
             }
         }
+    }
+
+    bool ParseAttribute()
+    {
+        string attrib;
+
+        if (scanner.Token == Token.Ident)
+        {
+            attrib = scanner.TokenString;
+            scanner.NextToken();
+        }
+        else
+        {
+            Error("Identifier expected");
+            return false;
+        }
+
+        if(scanner.Token == Token.LPar)
+        {
+            attrib += "(";
+            scanner.NextToken();
+
+            if(scanner.Token == Token.Bool)
+            {
+                attrib += scanner.TokenInt != 0 ? "true" : "false";
+                scanner.NextToken();
+            }
+            else if(scanner.Token == Token.Int)
+            {
+                attrib += string.format("%d", scanner.TokenInt);
+                scanner.NextToken();
+            }
+            else if(scanner.Token == Token.String)
+            {
+                attrib += "\"";
+                attrib += scanner.TokenString;
+                attrib += "\"";
+                scanner.NextToken();
+            }
+            else
+            {
+                Error("Attribute value expected");
+                return false;
+            }
+
+            if(!Expect(Token.RPar))
+            {
+                return false;
+            }
+
+            attrib += ")";
+
+        }
+        else
+        {
+            attrib += "(true)";
+        }
+
+        if(!Expect(Token.RBracket))
+        {
+            return false;
+        }
+
+        if(attributes == null)
+        {
+            attributes = new array<string>();
+        }
+
+        if(attrib.length > 4096)
+        {
+            Error("Attribute too long");
+            return false;
+        }
+
+        attributes.add(attrib);
+
+        return true;
     }
 
     virtual ConstantExpression ParseConstantExpression() => null;

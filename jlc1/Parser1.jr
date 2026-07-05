@@ -48,6 +48,12 @@ class Parser1 : StageParser
     //   is called to pre-import commonly used runtime helpers.
     bool ParseUsing()
     {
+        if(attributes != null)
+        {
+            Error("Using directive cannot have attributes");
+            return false;
+        }
+
         if (scanner.Token != Token.Ident)
         {
             Error("Identifier expected");
@@ -181,6 +187,11 @@ class Parser1 : StageParser
         EnumType enu = new EnumType(module, name, type);
         unit.AddSymbol(enu);
 
+        enu.attributes = attributes;
+        if(enu.attributes != null)
+            enu.Flags += SymbolFlags.HasAttributes;
+        attributes = null;
+
         if (!Expect(Token.LBrace))
             return false;
 
@@ -252,12 +263,19 @@ class Parser1 : StageParser
             unit.AddSymbol(st);
             if (isUnion) 
                 st.Flags += SymbolFlags.Union;
+            existing = st;
         }
         else if(existing.SymbolType != SymbolType.Struct)
         {
             Error("Duplicate definition");
             return false;
         }
+        
+        existing.attributes = attributes;
+        if(existing.attributes != null)
+            existing.Flags += SymbolFlags.HasAttributes;
+        attributes = null;
+
         if (scanner.Token == Token.Semicolon)
         {
             // Forward declaration or typedef-like declaration: done
@@ -331,6 +349,12 @@ class Parser1 : StageParser
             Error("Duplicate definition");
             return false;
         }
+
+        existing.attributes = attributes;
+        if(existing.attributes != null)
+            existing.Flags += SymbolFlags.HasAttributes;
+        attributes = null;
+
         ClassType ct = (ClassType)existing;
         // Create a factory function symbol used by the runtime to construct
         // instances. The function signature is ClassName* (pointer to class)
@@ -407,6 +431,10 @@ class Parser1 : StageParser
         for(int i = 0; i < templateParams.count; ++i)
             ts.TemplateParams.add(templateParams[i]);
         ts.Source = templateSrc;
+        ts.attributes = attributes;
+        if(ts.attributes != null)
+            ts.Flags += SymbolFlags.HasAttributes;
+        attributes = null; 
         return Expect(Token.RBrace);
     }
 
@@ -429,6 +457,12 @@ class Parser1 : StageParser
         {
             if(_const)
             {
+                if(attributes != null)
+                {
+                    Error("Attributes not allowed on const declaration");
+                    return false;
+                }
+
                 Declaration item = new Declaration();
                 if(!ParseDeclaration(item, true, null, false, true))
                     return false;
@@ -454,6 +488,11 @@ class Parser1 : StageParser
                 }
                 if(scanner.Token == Token.Semicolon)
                 {
+                    if(attributes != null)
+                    {
+                        Error("Attributes not allowed on global variable declaration");
+                        return false;
+                    }
                     // Simple declaration: consume ';'
                     scanner.NextToken();
                     return true;
@@ -462,10 +501,17 @@ class Parser1 : StageParser
                 {
                     // Function or initializer body - skip the block for now
                     SkipBraces();
+                    attributes = null;
                     return Expect(Token.RBrace);                        
                 }
                 else if(scanner.Token == Token.Assign)
                 {
+                    if(attributes != null)
+                    {
+                        Error("Attributes not allowed on global variable declaration");
+                        return false;
+                    }
+
                     // Initialized global variable: skip until semicolon
                     while (scanner.Token != Token.Semicolon && scanner.Token != Token.EOF)
                         scanner.NextToken();
@@ -473,6 +519,7 @@ class Parser1 : StageParser
                 }
                 else if (scanner.Token == Token.DoubleArrow)
                 {
+                    attributes = null;
                     // Language-specific double arrow operator handling: skip until ';'
                     scanner.NextToken();
                     while (scanner.Token != Token.Semicolon && scanner.Token != Token.EOF)
@@ -487,6 +534,12 @@ class Parser1 : StageParser
 
     bool ParseResource()
     {
+        if(attributes != null)
+        {
+            Error("Attributes not allowed on resource declaration");
+            return false;
+        }
+
         if (scanner.Token != Token.Ident)
         {
             Error("Identifier expected");
