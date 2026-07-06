@@ -39,6 +39,8 @@ class TestClass
 	int get A() => a;
 	void set A(int value) { a = value; }
 
+	static int get VAL() => 99;
+
 	[Command("Do Foo")]
 	void foo()
 	{
@@ -126,6 +128,8 @@ int start()
 
 	// Invoke the method again using variadic form
 	mFoo.function.Call(test);
+
+	println("TestClass.VAL %d", cTest.GetProperty("VAL").GetIntValue(null));
 
 	// Custom Attributes - There are for illustration purposes only, 
 	// they don't do anything in this example nor have special meaning.
