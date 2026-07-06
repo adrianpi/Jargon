@@ -184,6 +184,13 @@ class TypeInfo
             return;
         }
 
+        if(type.IsEnum())
+        {
+            bw.writeByte((byte)99);
+            bw.writeString(type.Name);
+            return;
+        }
+
         bw.writeByte((byte)type.TypeCode);
         if(type.TypeCode == TypeCode.Pointer)
         {
@@ -564,6 +571,24 @@ class TypeInfo
     static TypeSymbol ReadType(BinaryReader br, Module module)
     {
         TypeCode tc = (TypeCode)br.readByte();
+        if(tc == 99)
+        {
+            string name = br.readString();
+            TypeSymbol ts = module.Find(name) as TypeSymbol;
+            if(ts == null)
+            {
+                for(int i = 0; i < module.Usings.count; ++i)
+                {
+                    ModuleUsing u = module.Usings[i];
+                    ts = u.Module.Find(name) as TypeSymbol;
+                    if (ts != null)
+                        return ts;
+                }
+                assert(false);
+                return null;
+            }
+            return ts;
+        }
         if (tc == TypeCode.None)
             return null;
         // Return built-in primitive type symbols

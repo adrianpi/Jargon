@@ -2064,21 +2064,35 @@ class RTTIType : RTTISymbol
 	virtual bool IsEnum() => false;
 	virtual bool IsStruct() => false;
 	virtual bool IsClass() => false;
+	virtual bool IsClassRef() => false;
 
 	RTTIModule get ParentModule() => _dynamicCast(this.parent, "RTTIModule");
 
-	static RTTIType Void = new RTTIPrimitiveType("void", 0);
-	static RTTIType Bool = new RTTIPrimitiveType("bool", 1);
-	static RTTIType Byte = new RTTIPrimitiveType("byte", 1);
-	static RTTIType UByte = new RTTIPrimitiveType("ubyte", 1);
-	static RTTIType Short = new RTTIPrimitiveType("short", 2);
-	static RTTIType UShort = new RTTIPrimitiveType("ushort", 2);
-	static RTTIType Int = new RTTIPrimitiveType("int", 4);
-	static RTTIType UInt = new RTTIPrimitiveType("uint", 4);
-	static RTTIType Long = new RTTIPrimitiveType("long", 8);
-	static RTTIType ULong = new RTTIPrimitiveType("ulong", 8);
-	static RTTIType Float = new RTTIPrimitiveType("float", 4);
-	static RTTIType Double = new RTTIPrimitiveType("double", 8);
+	static RTTIType _Void = new RTTIPrimitiveType("void", 0);
+	static RTTIType _Bool = new RTTIPrimitiveType("bool", 1);
+	static RTTIType _Byte = new RTTIPrimitiveType("byte", 1);
+	static RTTIType _UByte = new RTTIPrimitiveType("ubyte", 1);
+	static RTTIType _Short = new RTTIPrimitiveType("short", 2);
+	static RTTIType _UShort = new RTTIPrimitiveType("ushort", 2);
+	static RTTIType _Int = new RTTIPrimitiveType("int", 4);
+	static RTTIType _UInt = new RTTIPrimitiveType("uint", 4);
+	static RTTIType _Long = new RTTIPrimitiveType("long", 8);
+	static RTTIType _ULong = new RTTIPrimitiveType("ulong", 8);
+	static RTTIType _Float = new RTTIPrimitiveType("float", 4);
+	static RTTIType _Double = new RTTIPrimitiveType("double", 8);
+
+	static RTTIType get Void() => _Void;
+	static RTTIType get Bool() => _Bool;
+	static RTTIType get Byte() => _Byte;
+	static RTTIType get UByte() => _UByte;
+	static RTTIType get Short() => _Short;
+	static RTTIType get UShort() => _UShort;
+	static RTTIType get Int() => _Int;
+	static RTTIType get UInt() => _UInt;
+	static RTTIType get Long() => _Long;
+	static RTTIType get ULong() => _ULong;
+	static RTTIType get Float() => _Float;
+	static RTTIType get Double() => _Double;
 
 	RTTIType constructor(SymbolType stype, SymbolFlags flags, string name)
 	{
@@ -2127,6 +2141,7 @@ class RTTIPointerType : RTTIType
 	RTTIType elementType;
 
 	bool IsPointer() => true;
+	bool IsClassRef() => elementType.IsClass();
 
 	RTTIPointerType constructor(RTTIType elemType)
 	{
@@ -2525,7 +2540,10 @@ class RTTIProperty : RTTISymbol
 
 	void SetByteValue(object obj, byte value)
 	{
-		if(propertyType != RTTIType.Byte && propertyType != RTTIType.UByte)
+		RTTIType propType = propertyType;
+		if(propertyType.IsEnum())
+			propType = ((RTTIEnumType)propertyType).enumType;
+		if(propType != RTTIType.Byte && propType != RTTIType.UByte)
 			return;
 		RTTIFunction fSet = setter.function;
 		if((flags & SymbolFlags.Static) != 0)
@@ -2542,7 +2560,10 @@ class RTTIProperty : RTTISymbol
 
 	byte GetByteValue(object obj)
 	{
-		if(propertyType != RTTIType.Byte && propertyType != RTTIType.UByte)
+		RTTIType propType = propertyType;
+		if(propertyType.IsEnum())
+			propType = ((RTTIEnumType)propertyType).enumType;
+		if(propType != RTTIType.Byte && propType != RTTIType.UByte)
 			return 0;
 		RTTIFunction fGet = getter.function;
 		if((flags & SymbolFlags.Static) != 0)
@@ -2559,7 +2580,10 @@ class RTTIProperty : RTTISymbol
 
 	void SetShortValue(object obj, short value)
 	{
-		if(propertyType != RTTIType.Short && propertyType != RTTIType.UShort)
+		RTTIType propType = propertyType;
+		if(propertyType.IsEnum())
+			propType = ((RTTIEnumType)propertyType).enumType;
+		if(propType != RTTIType.Short && propType != RTTIType.UShort)
 			return;
 		RTTIFunction fSet = setter.function;
 		if((flags & SymbolFlags.Static) != 0)
@@ -2576,7 +2600,10 @@ class RTTIProperty : RTTISymbol
 
 	short GetShortValue(object obj)
 	{
-		if(propertyType != RTTIType.Short && propertyType != RTTIType.UShort)
+		RTTIType propType = propertyType;
+		if(propertyType.IsEnum())
+			propType = ((RTTIEnumType)propertyType).enumType;
+		if(propType != RTTIType.Short && propType != RTTIType.UShort)
 			return 0;
 		RTTIFunction fGet = getter.function;
 		if((flags & SymbolFlags.Static) != 0)
@@ -2593,7 +2620,10 @@ class RTTIProperty : RTTISymbol
 
 	void SetIntValue(object obj, int value)
 	{
-		if(propertyType != RTTIType.Int && propertyType != RTTIType.UInt)
+		RTTIType propType = propertyType;
+		if(propertyType.IsEnum())
+			propType = ((RTTIEnumType)propertyType).enumType;
+		if(propType != RTTIType.Int && propType != RTTIType.UInt)
 			return;
 		RTTIFunction fSet = setter.function;
 		if((flags & SymbolFlags.Static) != 0)
@@ -2610,7 +2640,10 @@ class RTTIProperty : RTTISymbol
 
 	int GetIntValue(object obj)
 	{
-		if(propertyType != RTTIType.Int && propertyType != RTTIType.UInt)
+		RTTIType propType = propertyType;
+		if(propertyType.IsEnum())
+			propType = ((RTTIEnumType)propertyType).enumType;
+		if(propType != RTTIType.Int && propType != RTTIType.UInt)
 			return 0;
 		RTTIFunction fGet = getter.function;
 		if((flags & SymbolFlags.Static) != 0)
@@ -2627,7 +2660,10 @@ class RTTIProperty : RTTISymbol
 
 	void SetLongValue(object obj, long value)
 	{
-		if(propertyType != RTTIType.Long && propertyType != RTTIType.ULong)
+		RTTIType propType = propertyType;
+		if(propertyType.IsEnum())
+			propType = ((RTTIEnumType)propertyType).enumType;
+		if(propType != RTTIType.Long && propType != RTTIType.ULong)
 			return;
 		RTTIFunction fSet = setter.function;
 		if((flags & SymbolFlags.Static) != 0)
@@ -2644,7 +2680,10 @@ class RTTIProperty : RTTISymbol
 
 	long GetLongValue(object obj)
 	{
-		if(propertyType != RTTIType.Long && propertyType != RTTIType.ULong)
+		RTTIType propType = propertyType;
+		if(propertyType.IsEnum())
+			propType = ((RTTIEnumType)propertyType).enumType;
+		if(propType != RTTIType.Long && propType != RTTIType.ULong)
 			return 0;
 		RTTIFunction fGet = getter.function;
 		if((flags & SymbolFlags.Static) != 0)
@@ -2763,7 +2802,7 @@ class RTTIProperty : RTTISymbol
 
 	void SetObjectValue(object obj, object value)
 	{
-		if(propertyType.IsClass())
+		if(propertyType.IsClassRef())
 		{
 			RTTIFunction fSet = setter.function;
 			if((flags & SymbolFlags.Static) != 0)
@@ -2781,7 +2820,7 @@ class RTTIProperty : RTTISymbol
 
 	object GetObjectValue(object obj)
 	{
-		if(!propertyType.IsClass())
+		if(!propertyType.IsClassRef())
 			return null;
 		RTTIFunction fGet = getter.function;
 		if((flags & SymbolFlags.Static) != 0)
@@ -2979,6 +3018,30 @@ int ReadType0(RTTIModule module)
 RTTIType ReadType(RTTIModule module)
 {
 	int tc = __readByte();
+
+	if(tc == 99)
+	{
+		byte name[256];
+		__readString(name);
+
+		RTTIType ts = module.Find(name);
+        if(ts == null)
+        {
+            for(int i = 0; i < module.usings.count; ++i)
+            {
+                RTTIModuleUsing u = module.usings[i];
+				if(u.module != null)
+				{
+					ts = u.module.Find(name);
+					if (ts != null)
+						return ts;
+				}
+            }
+            //assert(false);
+            return null;
+        }
+        return ts;
+	}
 
 	if (tc == TypeCode.None)
         return null;
