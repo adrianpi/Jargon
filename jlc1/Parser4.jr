@@ -20,6 +20,10 @@ class Parser4 : StageParser
     // we emit a call to 'object__release' in the static deinit function.
     void OnEndParse()
     {
+        // do only for main compilation (not for templates)
+        if(fileName != unit.Path)
+            return;
+
         Function deinit = unit.staticDeInit;
         Function releaseFn = FindOrImport("object__release");
 
