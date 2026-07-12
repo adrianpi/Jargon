@@ -186,7 +186,7 @@ class TypeInfo
 
         if(type.IsEnum())
         {
-            bw.writeByte((byte)99);
+            bw.writeByte((byte)TypeCode.Enum);
             bw.writeString(type.Name);
             return;
         }
@@ -571,7 +571,7 @@ class TypeInfo
     static TypeSymbol ReadType(BinaryReader br, Module module)
     {
         TypeCode tc = (TypeCode)br.readByte();
-        if(tc == 99)
+        if(tc == TypeCode.Enum)
         {
             string name = br.readString();
             TypeSymbol ts = module.Find(name) as TypeSymbol;

@@ -426,6 +426,35 @@ class CodeGenVisitor : CodeVisitor
 
 			sb.appendLine(string.format("\t%s = %s %s %s, %s%s", e.Tag, op, IRType(lt, false), e.Left.Tag, e.Right.Tag, sdbg));
 		}
+		else if(lt.IsBool())
+		{
+			e.Left.Visit(this, mode);
+			e.Right.Visit(this, mode);
+
+			e.Tag = NewTag();
+
+			string op = "";
+
+			if(e.op == BinOp.And)
+				op = "and";
+			else if(e.op == BinOp.Or)
+				op = "or";
+			else if(e.op == BinOp.Xor)
+				op = "xor";
+			else if(e.op == BinOp.Equal)
+				op = "icmp eq";
+			else if(e.op == BinOp.NEqual)
+				op = "icmp ne";
+
+			if(op == "")
+			{
+				Error("Invalid operation", e.file, e.line);
+			}
+			else
+			{
+				sb.appendLine(string.format("\t%s = %s %s %s, %s%s", e.Tag, op, IRType(lt, false), e.Left.Tag, e.Right.Tag, sdbg));
+			}
+		}
 		else
 		{
 			Error("Invalid operation", e.file, e.line);

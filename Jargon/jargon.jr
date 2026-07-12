@@ -1771,6 +1771,7 @@ enum TypeCode
     Pointer,
     Struct,
     CStr,
+	Enum,	// Used only during serialization
 }
 
 enum SymbolFlags
@@ -3019,7 +3020,7 @@ RTTIType ReadType(RTTIModule module)
 {
 	int tc = __readByte();
 
-	if(tc == 99)
+	if(tc == TypeCode.Enum)
 	{
 		byte name[256];
 		__readString(name);

@@ -29,6 +29,7 @@ enum TypeCode
     Pointer,
     Struct,
     CStr,
+    Enum, // Used only during serialization
 }
 
 // Base Symbol class
