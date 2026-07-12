@@ -162,6 +162,40 @@ class Parser2 : StageParser
         }
     }
 
+    int FixPropertyVisibility(int existingFlags, int newVisibility)
+    {
+        // A property visibility is the less restrictive of setter and getter visibility.
+        int existing = 0;
+        if((existingFlags & SymbolFlags.Internal) != 0)
+            existing = 1;
+        else if((existingFlags & SymbolFlags.Protected) != 0)
+            existing = 2;
+        else if((existingFlags & SymbolFlags.Private) != 0)
+            existing = 3;
+
+        int newVis = 0;
+        if((newVisibility & SymbolFlags.Internal) != 0)
+            newVis = 1;
+        else if((newVisibility & SymbolFlags.Protected) != 0)
+            newVis = 2;
+        else if((newVisibility & SymbolFlags.Private) != 0)
+            newVis = 3;
+
+        int vis = existing <? newVis;
+        
+        int mask = SymbolFlags.Internal | SymbolFlags.Protected | SymbolFlags.Private;
+        int result = existingFlags & ~mask;
+
+        if(vis == 1)
+            result += SymbolFlags.Internal;
+        else if(vis == 2)
+            result += SymbolFlags.Protected;
+        else if(vis == 3)
+            result += SymbolFlags.Private;
+
+        return result;
+    }
+
     // ParseClass - complete class layout and register methods/fields. This
     // phase wires up base classes, inherits virtual methods, creates a
     // factory function placeholder and processes member declarations. The
@@ -356,12 +390,17 @@ class Parser2 : StageParser
                         if (p == null)
                         {
                             p = new PropertySymbol(cls, decl.name, fn.ReturnType);
+                            p.Flags |= visibility;
                             if(_static)
                                 p.Flags |= SymbolFlags.Static;
                             p.attributes = attributes;
                             if(p.attributes != null)
                                 p.Flags += SymbolFlags.HasAttributes;
                             attributes = null;
+                        }
+                        else
+                        {
+                            p.Flags = FixPropertyVisibility(p.Flags, visibility);
                         }
                         p.Getter = ms;
                     }
@@ -371,12 +410,17 @@ class Parser2 : StageParser
                         if (p == null)
                         {
                             p = new PropertySymbol(cls, decl.name, fn.Parameters[1].DataType);
+                            p.Flags |= visibility;
                             if(_static)
                                 p.Flags |= SymbolFlags.Static;
                             p.attributes = attributes;
                             if(p.attributes != null)
                                 p.Flags += SymbolFlags.HasAttributes;
                             attributes = null;
+                        }
+                        else
+                        {
+                            p.Flags = FixPropertyVisibility(p.Flags, visibility);
                         }
                         p.Setter = ms;
                     }

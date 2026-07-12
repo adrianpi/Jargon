@@ -1787,8 +1787,8 @@ enum SymbolFlags
     Weak = 0x80,
     Verbatim = 0x100,
     Union = 0x200,
-    Private = 0x400,
-    Protected = 0x800,
+    Protected = 0x400,
+    Private = 0x800,
 	HasAttributes = 0x1000,
     VisibilityMask = 0xc04, // (Internal|Private|Protected)
 }

@@ -35,6 +35,10 @@ class CodeTransform : CodeVisitor
 	weak CompileUnit Unit;
 	// Error listener for reporting errors encountered during transformation.
 	CompilerErrorListener errorListener;
+	// Curremt class
+	ClassType currentClass;
+	// Current module being compiled
+	Module module;
 
 	// Error helper - report errors encountered during transformation. This
 	// simple implementation prints the message. In a fuller implementation
@@ -188,6 +192,13 @@ class CodeTransform : CodeVisitor
 
 				if (ps.Setter != null)
 				{
+					if(((ps.Setter.Flags & SymbolFlags.Private) != 0 && currentClass != ps.Parent)
+					|| ((ps.Setter.Flags & SymbolFlags.Protected) != 0 && (currentClass == null || !currentClass.IsClassOf(ps.Parent)))
+					|| ((ps.Setter.Flags & SymbolFlags.Internal) != 0 && ps.Parent.Parent != module))
+					{
+						Error(string.format("Property '%s' setter is inaccessible", ps.Name), "", 0);
+					}
+
 					// Ensure setter function is referenced if it belongs to another unit
 					if(ps.Setter.GetFunction().Unit != Unit)
 						Unit.AddSymbolRef(ps.Setter.GetFunction());
@@ -257,6 +268,13 @@ class CodeTransform : CodeVisitor
 
             if (ps.Getter != null)
             {
+				if(((ps.Getter.Flags & SymbolFlags.Private) != 0 && currentClass != ps.Parent)
+				|| ((ps.Getter.Flags & SymbolFlags.Protected) != 0 && (currentClass == null || !currentClass.IsClassOf(ps.Parent)))
+				|| ((ps.Getter.Flags & SymbolFlags.Internal) != 0 && ps.Parent.Parent != module))
+				{
+					Error(string.format("Property '%s' getter is inaccessible", ps.Name), "", 0);
+				}
+
                 // Evaluate receiver first (this or an expression) and ensure
                 // the getter function symbol is available as a dependency.
                 e.Expression.Visit(this, VisitMode.Load);
@@ -401,8 +419,12 @@ class CodeTransform : CodeVisitor
 	
 	void VisitFunction(Function s)
 	{
+		currentClass = s.declaringClass;
+
 		if (s.Body != null)
 			s.Body.Visit(this);
+
+		currentClass = null;
 	}
 	
 	void VisitStruct(StructType s)

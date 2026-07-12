@@ -410,6 +410,7 @@ class Compiler : CompilerErrorListener
 			cx.Parser = parser4; // pass final parser context to transformer
 			cx.Unit = cu;
 			cx.errorListener = this;
+			cx.module = module;
 
 			for(int j = 0; j < cu.Symbols.count; ++j)
 			{
