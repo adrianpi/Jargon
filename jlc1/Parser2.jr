@@ -196,6 +196,114 @@ class Parser2 : StageParser
         return result;
     }
 
+    void CreateRawGetter(ClassType cls, Function fn, bool _static, bool _virtual, int visibility)
+    {
+        string rawName = string.format("%s__rawPtr", fn.Name);
+        Function rawFn = new Function(module, string.format("%s__%s", cls.Name, rawName), TypeSymbol.Void.GetPointerType());
+        rawFn.Flags += SymbolFlags.NoDebug;
+        int offset = 1;
+        LocalVariable _this = null;
+        if(fn.Parameters.count > 0)
+        {
+            _this = new LocalVariable(rawFn, "_this", cls.GetPointerType(), null);
+            _this.Offset = offset++;
+            rawFn.Parameters.add(_this);
+        }
+        LocalVariable pValue = new LocalVariable(rawFn, "pValue", fn.ReturnType.GetPointerType(), null);
+        pValue.Offset = offset++;
+        rawFn.Parameters.add(pValue);
+        unit.AddSymbol(rawFn);
+
+        StatementBlock sb = new StatementBlock();
+
+        FunctionCallExpression fcall = new FunctionCallExpression(new SymbolExpression(fn));
+        if(fn.Parameters.count > 0)
+            fcall.Arguments.add(new SymbolExpression(_this));
+        AssignmentExpression assign = new AssignmentExpression(new DerefExpression(new SymbolExpression(pValue)), fcall);
+        sb.Statements.add(new ExpressionStatement(assign));
+        
+        rawFn.Body = sb;
+
+        MethodSymbol ms = new MethodSymbol(cls, rawName, rawFn);
+        ms.Flags += visibility;
+
+        if (_static)
+        {
+            ms.Flags += SymbolFlags.Static;
+            rawFn.Flags += SymbolFlags.Static;
+        }
+
+        VirtualizeMethod(ms, rawFn, cls, _static, _virtual);
+    }
+
+    void CreateRawSetter(ClassType cls, Function fn, bool _static, bool _virtual, int visibility)
+    {
+        string rawName = string.format("%s__rawPtr", fn.Name);
+        Function rawFn = new Function(module, string.format("%s__%s", cls.Name, rawName), TypeSymbol.Void.GetPointerType());
+        rawFn.Flags += SymbolFlags.NoDebug;
+        int offset = 1;
+        LocalVariable _this = null;
+        if(fn.Parameters.count > 1)
+        {
+            _this = new LocalVariable(rawFn, "_this", cls.GetPointerType(), null);
+            _this.Offset = offset++;
+            rawFn.Parameters.add(_this);
+        }
+        LocalVariable pValue = new LocalVariable(rawFn, "pValue", fn.Parameters[1].DataType.GetPointerType(), null);
+        pValue.Offset = offset++;
+        rawFn.Parameters.add(pValue);
+        unit.AddSymbol(rawFn);
+
+        StatementBlock sb = new StatementBlock();
+
+        FunctionCallExpression fcall = new FunctionCallExpression(new SymbolExpression(fn));
+        if(fn.Parameters.count > 1)
+            fcall.Arguments.add(new SymbolExpression(_this));
+        fcall.Arguments.add(new DerefExpression(new SymbolExpression(pValue)));
+        sb.Statements.add(new ExpressionStatement(fcall));
+        
+        rawFn.Body = sb;
+
+        MethodSymbol ms = new MethodSymbol(cls, rawName, rawFn);
+        ms.Flags += visibility;
+
+        if (_static)
+        {
+            ms.Flags += SymbolFlags.Static;
+            rawFn.Flags += SymbolFlags.Static;
+        }
+
+        VirtualizeMethod(ms, rawFn, cls, _static, _virtual);
+    }
+
+    void VirtualizeMethod(MethodSymbol ms, Function fn, ClassType cls, bool _static, bool _virtual)
+    {
+        // Check if this method overrides a base class virtual method
+        bool overridesBaseMethod = false;
+        if (cls.BaseClass != null && !_static)
+        {
+            // Attempt to locate an overridden virtual method in the
+            // base class; if found inherit its vslot index.
+            MethodSymbol vm = cls.BaseClass.FindChild(fn.Name) as MethodSymbol;
+            if (vm != null && (vm.Flags & SymbolFlags.Virtual) != 0)
+            {
+                ms.VSlot = vm.VSlot;
+                cls.VirtualMethods[ms.VSlot] = ms;
+                ms.Flags += SymbolFlags.Virtual;
+                overridesBaseMethod = true;
+            }
+        }
+
+        // If marked as virtual but doesn't override a base method,
+        // assign a new VSlot
+        if (_virtual && !overridesBaseMethod)
+        {
+            ms.Flags += SymbolFlags.Virtual;
+            ms.VSlot = cls.VirtualMethods.count;
+            cls.VirtualMethods.add(ms);
+        }
+    }
+
     // ParseClass - complete class layout and register methods/fields. This
     // phase wires up base classes, inherits virtual methods, creates a
     // factory function placeholder and processes member declarations. The
@@ -374,8 +482,6 @@ class Parser2 : StageParser
                         }
                         _this.Offset = 1;
                         fn.Parameters.insert(0, _this);
-                        //fn.RemoveChild(_this);
-                        //fn.InsertChild(0, _this);
                     }
 
                     // Create the method symbol that references the underlying function
@@ -403,13 +509,18 @@ class Parser2 : StageParser
                             p.Flags = FixPropertyVisibility(p.Flags, visibility);
                         }
                         p.Getter = ms;
+
+                        if(fn.ReturnType.IsStruct())
+                        {
+                            CreateRawGetter(cls, fn, _static, _virtual, visibility);
+                        }
                     }
                     else if (decl.isSetter)
                     {
                         PropertySymbol p = cls.FindChild(decl.name) as PropertySymbol;
                         if (p == null)
                         {
-                            p = new PropertySymbol(cls, decl.name, fn.Parameters[1].DataType);
+                            p = new PropertySymbol(cls, decl.name, fn.Parameters[_static?0:1].DataType);
                             p.Flags |= visibility;
                             if(_static)
                                 p.Flags |= SymbolFlags.Static;
@@ -423,6 +534,11 @@ class Parser2 : StageParser
                             p.Flags = FixPropertyVisibility(p.Flags, visibility);
                         }
                         p.Setter = ms;
+
+                        if(fn.Parameters[_static?0:1].DataType.IsStruct())
+                        {
+                            CreateRawSetter(cls, fn, _static, _virtual, visibility);
+                        }
                     }
                     else
                     {
@@ -439,30 +555,9 @@ class Parser2 : StageParser
                         fn.Flags += SymbolFlags.Static;
                     }
 
-                    // Check if this method overrides a base class virtual method
-                    bool overridesBaseMethod = false;
-                    if (cls.BaseClass != null && !_static)
-                    {
-                        // Attempt to locate an overridden virtual method in the
-                        // base class; if found inherit its vslot index.
-                        MethodSymbol vm = cls.BaseClass.FindChild(fn.Name) as MethodSymbol;
-                        if (vm != null && (vm.Flags & SymbolFlags.Virtual) != 0)
-                        {
-                            ms.VSlot = vm.VSlot;
-                            cls.VirtualMethods[ms.VSlot] = ms;
-                            ms.Flags += SymbolFlags.Virtual;
-                            overridesBaseMethod = true;
-                        }
-                    }
+                    VirtualizeMethod(ms, fn, cls, _static, _virtual);
 
-                    // If marked as virtual but doesn't override a base method,
-                    // assign a new VSlot
-                    if (_virtual && !overridesBaseMethod)
-                    {
-                        ms.Flags += SymbolFlags.Virtual;
-                        ms.VSlot = cls.VirtualMethods.count;
-                        cls.VirtualMethods.add(ms);
-                    }
+                    
 
                     // Static method extension: a static method whose first
                     // parameter is named 'this' is treated as an extension method

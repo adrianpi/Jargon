@@ -2446,6 +2446,28 @@ class RTTIField : RTTISymbol
 		byte *ptr = (byte*)obj + offset;
 		return *((object**)ptr);
 	}
+
+	void SetStructValue(void* obj, int sz, void *value)
+	{
+		if(fieldType.IsStruct() || (flags & SymbolFlags.Static) != 0)
+		{
+			if(((RTTIStructType)fieldType).size != sz)
+				return;
+
+			byte *ptr = (byte*)obj + offset;
+			memory.copy(ptr, value, sz);
+		}
+	}
+
+	void GetStructValue(void* obj, int sz, void *value)
+	{
+		if(!fieldType.IsStruct() || (flags & SymbolFlags.Static) != 0)
+			return;
+		if(((RTTIStructType)fieldType).size != sz)
+			return;
+		byte *ptr = (byte*)obj + offset;
+		memory.copy(value, ptr, sz);
+	}
 }
 
 class RTTIStructType : RTTIType
@@ -2495,6 +2517,8 @@ class RTTIProperty : RTTISymbol
 	weak RTTIClassType Class;
 	string getterName;
 	string setterName;
+	RTTIMethod rawGetter;
+	RTTIMethod rawSetter;
 
 	RTTIClassType get ParentClass() => _dynamicCast(this.parent, "RTTIClassType");
 
@@ -2835,6 +2859,54 @@ class RTTIProperty : RTTISymbol
 			return (*pfGet)(obj);
 		}
 	}
+
+	void SetStructValue(object obj, int sz, void* pValue)
+	{
+		if(propertyType.IsStruct())
+		{
+			RTTIStructType stype = propertyType;
+
+			if(stype.size != sz)
+				return;
+
+			RTTIFunction fSet = rawSetter.function;
+
+			if((flags & SymbolFlags.Static) != 0)
+			{
+				void (*pfSet)(void* value) = fSet.address;
+				(*pfSet)(pValue);
+			}
+			else
+			{
+				void (*pfSet)(object* _this, void* value) = fSet.address;
+				(*pfSet)(obj, pValue);
+			}
+		}
+	}
+
+	void GetStructValue(object obj, int sz, void* pValue)
+	{
+		if(!propertyType.IsStruct())
+			return;
+
+		RTTIStructType stype = propertyType;
+
+		if(stype.size != sz)
+			return;
+
+		RTTIFunction fGet = rawGetter.function;
+
+		if((flags & SymbolFlags.Static) != 0)
+		{
+			void (*pfGet)(void* value) = fGet.address;
+			(*pfGet)(pValue);
+		}
+		else
+		{
+			void (*pfGet)(object* _this, void* value) = fGet.address;
+			(*pfGet)(obj, pValue);
+		}
+	}
 }
 
 class RTTIClassType : RTTIType
@@ -3092,7 +3164,7 @@ RTTIType ReadType(RTTIModule module)
 		byte name[256];
 		__readString(name);
 
-		RTTIType ts = module.Find(name) as RTTIType;
+		RTTIType ts = module.Find(name);
         if(ts == null)
         {
             for(int i = 0; i < module.usings.count; ++i)
@@ -3100,7 +3172,7 @@ RTTIType ReadType(RTTIModule module)
                 RTTIModuleUsing u = module.usings[i];
 				if(u.module != null)
 				{
-					ts = u.module.Find(name) as RTTIType;
+					ts = u.module.Find(name);
 					if (ts != null)
 						return ts;
 				}
@@ -3549,6 +3621,8 @@ bool _readTypeInfo(byte *address)
 							flags = __readShort();
 							attribs = _ReadAttributes(flags);
 							RTTIType pt = ReadType(module);
+							if(pt == null)
+								Log("Property type is null");
 							__readString(name);
 							byte getset = __readByte();
 
@@ -3601,10 +3675,25 @@ bool _readTypeInfo(byte *address)
 							RTTIProperty cp = ctype.children[j] as RTTIProperty;
 							if(cp != null)
 							{
+								RTTIType cpt = cp.propertyType;
 								if(cp.getterName != null)
+								{
 									cp.getter = ctype.Find(cp.getterName);
+									if(cpt.IsStruct())
+									{
+										string rawName = string.format("%s__rawPtr", cp.getterName);
+										cp.rawGetter = ctype.Find(rawName);
+									}
+								}
 								if(cp.setterName != null)
-									cp.setter = ctype.Find(cp.setterName);							
+								{
+									cp.setter = ctype.Find(cp.setterName);
+									if(cpt.IsStruct())
+									{
+										string rawName = string.format("%s__rawPtr", cp.setterName);
+										cp.rawSetter = ctype.Find(rawName);
+									}
+								}
 							}
 						}
 					}
