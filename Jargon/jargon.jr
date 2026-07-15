@@ -734,9 +734,39 @@ class DoubleExtensions
 	static string* toString(double this) => string.format("%f", this);
 }
 
+class ext_ptr
+{
+	static long getHash(void* p)
+	{
+		return ((long)p) & 0x7fffffff;
+	}
+	static string* toString(void *p) => string.format("%p", p);
+}
+
 //-----------------------------------------------------------------------------
 
-template class array<T>
+object __typeof(byte *typeName)
+{
+	string tname = new string(typeName);
+	return RTTIType.GetType(tname);
+}
+
+class iarray
+{
+	virtual int getElementSize() => 0;
+	virtual RTTIType getElementType() => null;
+	virtual void getElement(int index, void *pElem) {}
+	virtual void setElement(int index, void *pElem) {}
+	virtual int getElementCount() => 0;
+	virtual void addElement(void *pElem) {}
+	virtual void insertElement(int index, void *pElem) {}
+	virtual void clearElements() {}
+	virtual void indexOfElement(void *pElem) {}
+	virtual void removeElementAt(int index) {}
+
+}
+
+template class array<T> : iarray
 {
 	T *data;
 	int _size;
@@ -1008,6 +1038,47 @@ template class array<T>
 			result += data[i].toString();
 		}
 		return result;
+	}
+
+	int getElementSize() => sizeof(T);
+
+	RTTIType getElementType() => typeof(T);
+
+	void getElement(int index, void *pElem)
+	{
+		*(T*)pElem = get_item(index);
+	}
+
+	void setElement(int index, void *pElem)
+	{
+		set_item(index, *(T*)pElem);
+	}
+
+	int getElementCount() => count;
+
+	void addElement(void *pElem)
+	{
+		add(*(T*)pElem);
+	}
+
+	void insertElement(int index, void *pElem)
+	{
+		insert(index, *(T*)pElem);
+	}
+
+	void clearElements()
+	{
+		clear();
+	}
+
+	void indexOfElement(void *pElem)
+	{
+		indexOf(*(T*)pElem);
+	}
+
+	void removeElementAt(int index)
+	{
+		removeAt(index);
 	}
 }
 
@@ -2121,12 +2192,6 @@ class RTTIType : RTTISymbol
 	{
 		return allTypes[name];
 	}
-}
-
-RTTIType __typeof(byte *typeName)
-{
-	string tname = new string(typeName);
-	return RTTIType.GetType(tname);
 }
 
 class RTTIPrimitiveType : RTTIType

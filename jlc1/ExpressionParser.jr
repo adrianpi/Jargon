@@ -602,20 +602,36 @@ class ExpressionParser : BaseParser
                     if(ct != null)
                         stype = ct;
                 }
+                TypeSymbol otype = stype;
                 if(stype.IsPointer())
                     stype = stype.ElementType;
                 Symbol field = stype.FindChild(name);
                 if(field == null)
                 {
-                    // Try extension classes (ext_TypeName) for external members
-                    string extName = string.format("ext_%s", TypeToFName(stype));
-                    ClassType extCls = FindType(extName) as ClassType;
-                    if(extCls != null)
-                        field = extCls.FindChild(name);
-                    if(field == null)
+                    if(otype.IsPointer() && !otype.IsClassRef())
                     {
-                        Error(string.format("Invalid field '%s'", name));
-                        return null;
+                        ClassType extCls = FindType("ext_ptr") as ClassType;
+                        if(extCls != null)
+                            field = extCls.FindChild(name);
+                        if(field == null)
+                        {
+                            Error(string.format("3 Invalid field '%s'", name));
+                            return null;
+                        }
+                        field.Flags &= ~SymbolFlags.Static; // treat as instance method
+                    }
+                    else
+                    {
+                        // Try extension classes (ext_TypeName) for external members
+                        string extName = string.format("ext_%s", TypeToFName(stype));
+                        ClassType extCls = FindType(extName) as ClassType;
+                        if(extCls != null)
+                            field = extCls.FindChild(name);
+                        if(field == null)
+                        {
+                            Error(string.format("Invalid field '%s'", name));
+                            return null;
+                        }
                     }
                 }
 
