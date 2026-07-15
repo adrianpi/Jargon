@@ -196,6 +196,38 @@ namespace Jargon
                     return null;
                 return new SizeOfExpression(type);
             }
+            else if (IsKeyword("typeof"))
+            {
+                if (!Expect(Token.LPar))
+                    return null;
+                TypeSymbol type = null;
+                if (IsType())
+                {
+                    Declaration decl = new Declaration();
+                    if (!ParseDeclaration(ref decl, false, null, true))
+                        return null;
+                    type = decl.type;
+                }
+                else
+                {
+                    Expression e = ParseExpression();
+                    if (e == null)
+                        return null;
+                    type = e.DataType;
+                }
+                if (!Expect(Token.RPar))
+                    return null;
+
+                if (type.IsClassRef())
+                    type = type.ElementType;
+
+                var fn = FindOrImport("__typeof");
+                var fc = new FunctionCallExpression(new SymbolExpression(fn));
+                var cname = module.AddString(type.Name);
+                unit.Strings.Add(cname);
+                fc.Arguments.Add(new ConstantExpression(cname));
+                return fc;
+            }
             else if (IsKeyword("base"))
             {
                 MethodSymbol m = null;

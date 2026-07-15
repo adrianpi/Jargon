@@ -172,6 +172,7 @@ namespace Jargon
             "static",
             "struct",
             "template",
+            "typeof",
             "union",
             "using",
             "verbatim",
