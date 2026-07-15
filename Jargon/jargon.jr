@@ -2123,6 +2123,12 @@ class RTTIType : RTTISymbol
 	}
 }
 
+RTTIType __typeof(byte *typeName)
+{
+	string tname = new string(typeName);
+	return RTTIType.GetType(tname);
+}
+
 class RTTIPrimitiveType : RTTIType
 {
 	int size;

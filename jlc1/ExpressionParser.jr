@@ -297,6 +297,45 @@ class ExpressionParser : BaseParser
                 return null;
             return ConstantExpression.FromInt(ts.Size);
         }
+        else if(IsKeyword("typeof"))
+        {
+            if(!Expect(Token.LPar))
+                return null;
+            TypeSymbol ts = null;
+            if(IsType())
+            {
+                Declaration decl = new Declaration();
+                if(!ParseDeclaration(decl, false, null, true, true))
+                    return null;
+                ts = decl.type;
+            }
+            else
+            {
+                // sizeof(expression) -> compute size from expression type
+                Expression *e = ParseExpression();
+                if(e == null)
+                    return null;
+                ts = e.DataType;
+            }
+            if(!Expect(Token.RPar))
+                return null;
+            
+            Function fn = FindOrImport("__typeof");
+            if(fn == null)
+            {
+                Error("Internal error: Function '__typeof' not found");
+                return null;
+            }
+
+            if(ts.IsClassRef())
+                ts = ts.ElementType;
+
+            FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(fn));
+            string cname = module.AddString(ts.Name);
+            unit.Strings.add(cname);
+            fc.Arguments.add(ConstantExpression.FromString(cname));
+            return fc;
+        }
         // base - access to base class method in instance methods
         else if (IsKeyword("base"))
         {

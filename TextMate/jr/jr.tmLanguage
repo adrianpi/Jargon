@@ -44,7 +44,7 @@
         <!-- C Keywords -->
         <dict>
             <key>match</key>
-            <string>\b(as|base|break|class|const|continue|delete|do|else|enum|external|for|get|internal|if|is|new|null|operator|private|protected|public|return|set|sizeof|static|struct|template|union|using|verbatim|virtual|weak|while)\b</string>
+            <string>\b(as|base|break|class|const|continue|delete|do|else|enum|external|for|get|internal|if|is|new|null|operator|private|protected|public|return|set|sizeof|static|struct|template|typeof|union|using|verbatim|virtual|weak|while)\b</string>
             <key>name</key>
             <string>keyword.control.jr</string>
         </dict>

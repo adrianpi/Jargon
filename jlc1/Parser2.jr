@@ -557,8 +557,6 @@ class Parser2 : StageParser
 
                     VirtualizeMethod(ms, fn, cls, _static, _virtual);
 
-                    
-
                     // Static method extension: a static method whose first
                     // parameter is named 'this' is treated as an extension method
                     // for that type. The parser synthesizes an 'ext_<TypeName>'

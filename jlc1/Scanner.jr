@@ -101,7 +101,7 @@ enum Token
 // The fixed list of language keywords. The scanner recognizes these strings
 // and returns Token.Keyword; the parser then tests TokenString to decide which
 // keyword was seen (e.g. "class", "if", "return").
-string keywords[36] = 
+string keywords[37] = 
 {
     "as",
     "base",
@@ -133,6 +133,7 @@ string keywords[36] =
     "static",
     "struct",
     "template",
+    "typeof",
     "union",
     "using",
     "verbatim",
