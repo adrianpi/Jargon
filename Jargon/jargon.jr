@@ -2005,7 +2005,7 @@ class RTTISymbol
 		child.parent = this;
 	}
 
-	RTTISymbol Find(string name)
+	virtual RTTISymbol Find(string name)
 	{
 		for(int i = 0; i < children.count; ++i)
 		{
@@ -3004,6 +3004,18 @@ class RTTIClassType : RTTIType
 		return this;
 	}
 
+	RTTISymbol Find(string name)
+	{
+		RTTISymbol found = base(name);
+		if(found != null)
+			return found;
+
+		if(baseClass != null)
+			return baseClass.Find(name);
+		else
+			return null;
+	}
+
 	RTTIConstant GetConstant(string name)
 	{
 		return _dynamicCast(Find(name), "RTTIConstant");
@@ -3050,6 +3062,46 @@ class RTTIClassType : RTTIType
 		return EnumChildren("RTTIProperty");
 	}
 
+	void EnumRecurse(string type, RTTIClassType cls, array<string> names)
+	{
+		if(cls.baseClass != null)
+			EnumRecurse(type, cls.baseClass, names);
+
+		array<string> temp = cls.EnumChildren(type);
+		for(int i = 0; i < temp.count; ++i)
+		{
+			if(!names.contains(temp[i]))
+				names.add(temp[i]);
+		}
+	}
+
+	array<string> EnumAllConstants()
+	{
+		array<string> names = new array<string>();
+		EnumRecurse("RTTIConstant", this, names);
+		return names;
+	}
+
+	array<string> EnumAllFields()
+	{
+		array<string> names = new array<string>();
+		EnumRecurse("RTTIField", this, names);
+		return names;
+	}
+
+	array<string> EnumAllMethods()
+	{
+		array<string> names = new array<string>();
+		EnumRecurse("RTTIMethod", this, names);
+		return names;
+	}
+
+	array<string> EnumAllProperties()
+	{
+		array<string> names = new array<string>();
+		EnumRecurse("RTTIProperty", this, names);
+		return names;
+	}
 
 	bool IsClassOf(RTTIClassType cls)
 	{
