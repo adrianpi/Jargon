@@ -610,6 +610,367 @@ class Json
 	}
 }
 
+class JsonSerializer
+{
+    public string Serialize(object obj)
+    {
+        JsonValue value = SerializeObject(obj);
+        return Json.Stringify(value);
+    }
+
+    private static array<RTTIProperty> GetAllProperties(RTTIClassType cls)
+    {
+        array<RTTIProperty> properties = new array<RTTIProperty>();
+        RTTIClassType c = cls;
+        while(c != null)
+        {
+            array<string> clsProperties = c.EnumProperties();
+            array<string> skip = new array<string>();
+            if(c.HasAttribute("SerializeSkip"))
+                skip = c.GetAttributeString("SerializeSkip").split(",");
+            for(int i = 0; i < clsProperties.count; ++i)
+            {
+                string propName = clsProperties[i];
+                bool found = false;
+                for(int j = 0; j < properties.count; ++j)
+                {
+                    if(properties[j].name == propName)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if(!found)
+                {
+                    RTTIProperty prop = c.GetProperty(propName);
+                    if(prop != null)
+                    {
+                        RTTIType ptype = prop.propertyType;
+                        if(prop.getter == null || 
+                            (prop.setter == null && !(ptype.IsClassRef()
+                            && ((RTTIClassType)((RTTIPointerType)ptype).elementType).IsClassOf(typeof(iarray)))
+                            || skip.contains(prop.name))
+                        )
+                        {
+                            continue;
+                        }
+                        properties.add(prop);
+                    }
+                }
+            }
+            c = c.baseClass;
+        }
+        return properties;
+    }
+
+    protected JsonValue SerializeObject(object obj)
+    {
+        JsonObject jsonObj = new JsonObject();
+        RTTIClassType cls = obj.getClassType();
+        jsonObj["@ClassName"] = new JsonString(cls.name);
+        array<RTTIProperty> properties = GetAllProperties(cls);
+        array<string> skip = new array<string>();
+        if(cls.HasAttribute("SerializeSkip"))
+            skip = cls.GetAttributeString("SerializeSkip").split(",");
+        for(int i = 0; i < properties.count; ++i)
+        {
+            RTTIProperty prop = properties[i];
+            if(skip.indexOf(prop.name) != -1)
+                continue;
+            JsonValue propValue = SerializeProperty(obj, prop);
+            if(propValue != null)
+                jsonObj[prop.name] = propValue;
+        }
+        return jsonObj;
+    }
+
+    protected JsonValue SerializeProperty(object obj, RTTIProperty prop)
+    {
+        RTTIType ptype = prop.propertyType;
+
+        if(ptype.IsEnum())
+            ptype = ((RTTIEnumType)ptype).enumType;
+
+        if(ptype == RTTIType.Byte)
+        {
+            byte value = prop.GetByteValue(obj);
+            return new JsonNumber(value);
+        }
+        else if(ptype == RTTIType.UByte)
+        {
+            ubyte value = prop.GetByteValue(obj);
+            return new JsonNumber(value);
+        }
+        else if(ptype == RTTIType.Short)
+        {
+            short value = prop.GetShortValue(obj);
+            return new JsonNumber(value);
+        }
+        else if(ptype == RTTIType.UShort)
+        {
+            ushort value = prop.GetShortValue(obj);
+            return new JsonNumber(value);
+        }
+        else if(ptype == RTTIType.Int)
+        {
+            int value = prop.GetIntValue(obj);
+            return new JsonNumber(value);
+        }
+        else if(ptype == RTTIType.UInt)
+        {
+            uint value = prop.GetIntValue(obj);
+            return new JsonNumber(value);
+        }
+        else if(ptype == RTTIType.Long)
+        {
+            long value = prop.GetLongValue(obj);
+            return new JsonNumber(value);
+        }
+        else if(ptype == RTTIType.ULong)
+        {
+            ulong value = prop.GetLongValue(obj);
+            return new JsonNumber(value);
+        }
+        else if(ptype == RTTIType.Float)
+        {
+            float value = prop.GetFloatValue(obj);
+            return new JsonNumber(value);
+        }
+        else if(ptype == RTTIType.Double)
+        {
+            double value = prop.GetDoubleValue(obj);
+            return new JsonNumber(value);
+        }
+        else if(ptype == RTTIType.Bool)
+        {
+            bool value = prop.GetBoolValue(obj);
+            return new JsonBoolean(value);
+        }
+        else if(ptype.name == "string*")
+        {
+            string value = prop.GetObjectValue(obj) as string;
+            return new JsonString(value);
+        }
+        else if(
+            ptype.IsClassRef()
+            && ((RTTIClassType)((RTTIPointerType)ptype).elementType).IsClassOf(typeof(iarray)))
+        {
+            iarray arr = prop.GetObjectValue(obj) as iarray;
+            if(arr != null)
+            {
+                if(arr.getElementType().IsClass())
+                {
+                    JsonArray jsonArr = new JsonArray();
+                    for(int i = 0; i < arr.getElementCount(); ++i)
+                    {
+                        object item = null;
+                        arr.getElement(i, &item);
+                        if(item != null)
+                            jsonArr.Add(SerializeObject(item));
+                        else
+                            jsonArr.Add(new JsonNull());
+                    }
+                    return jsonArr;
+                }
+                else
+                {
+                    return null;
+                }
+            }
+            else
+            {
+                return new JsonNull();
+            }
+        }
+        else if(ptype.IsClassRef())
+        {
+            object value = prop.GetObjectValue(obj);
+            if(value != null)
+                return SerializeObject(value);
+            else
+                return new JsonNull();
+        }
+        else
+        {
+            return null;
+        }
+    }
+
+    public object Deserialize(string json)
+    {
+        JsonValue value = Json.Parse(json);
+        if(value is JsonObject)
+        {
+            return DeserializeObject(null, value as JsonObject);
+        }
+        return null;
+    }
+
+    protected static RTTIProperty GetClassProperty(RTTIClassType cls, string propName)
+    {
+        RTTIClassType c = cls;
+        while(c != null)
+        {
+            RTTIProperty prop = c.GetProperty(propName);
+            if(prop != null)
+                return prop;
+            c = c.baseClass;
+        }
+        return null;
+    }
+
+    protected virtual object CreateCustomInstance(object parent, string className, JsonObject jobj, array<string> ignoreList)
+    {
+        return null;
+    }
+
+    protected object DeserializeObject(object parent, JsonObject jobj)
+    {
+        JsonString className = jobj["@ClassName"] as JsonString;
+        if(className == null)
+            return null;
+
+        string cname = className.value;
+        array<string> ignoreList = new array<string>();
+        object obj = CreateCustomInstance(parent, cname, jobj, ignoreList);
+        if(obj == null)
+        {
+            RTTIClassType cls = RTTIType.GetType(cname) as RTTIClassType;
+            if(cls == null)
+                return null;
+            object (*ctor)() = cls.GetCreator().address;
+            obj = ctor();
+        }
+
+        RTTIClassType c = obj.getClassType();
+
+        array<string> names = jobj.properties.keys;
+
+        for(int i = 0; i < names.count; ++i)
+        {
+            string propName = names[i];
+            if(propName == "@ClassName")
+                continue;
+            if(ignoreList.contains(propName))
+                continue;
+            RTTIProperty prop = GetClassProperty(c, propName);
+            if(prop == null)
+                continue;
+            JsonValue propValue = jobj[propName];
+            DeserializeProperty(obj, prop, propValue);
+        }
+
+        return obj;
+    }
+
+    protected virtual bool DeserializeCustomProperty(object obj, RTTIProperty prop, JsonValue value)
+    {
+        return false;
+    }
+
+    protected void DeserializeProperty(object obj, RTTIProperty prop, JsonValue value)
+    {
+        if(DeserializeCustomProperty(obj, prop, value))
+            return;
+
+        if(value is JsonNumber)
+        {
+            RTTIType ptype = prop.propertyType;
+
+            if(ptype.IsEnum())
+                ptype = ((RTTIEnumType)ptype).enumType;
+
+            if(ptype == RTTIType.Byte)
+            {
+                byte v = (byte)(value as JsonNumber).value;
+                prop.SetByteValue(obj, v);
+            }
+            else if(ptype == RTTIType.UByte)
+            {
+                ubyte v = (ubyte)(value as JsonNumber).value;
+                prop.SetByteValue(obj, v);
+            }
+            else if(ptype == RTTIType.Short)
+            {
+                short v = (short)(value as JsonNumber).value;
+                prop.SetShortValue(obj, v);
+            }
+            else if(ptype == RTTIType.UShort)
+            {
+                ushort v = (ushort)(value as JsonNumber).value;
+                prop.SetShortValue(obj, v);
+            }
+            else if(ptype == RTTIType.Int)
+            {
+                int v = (int)(value as JsonNumber).value;
+                prop.SetIntValue(obj, v);
+            }
+            else if(ptype == RTTIType.UInt)
+            {
+                uint v = (uint)(value as JsonNumber).value;
+                prop.SetIntValue(obj, v);
+            }
+            else if(ptype == RTTIType.Long)
+            {
+                long v = (long)(value as JsonNumber).value;
+                prop.SetLongValue(obj, v);
+            }
+            else if(ptype == RTTIType.ULong)
+            {
+                ulong v = (ulong)(value as JsonNumber).value;
+                prop.SetLongValue(obj, v);
+            }
+            else if(ptype == RTTIType.Float)
+            {
+                float v = (float)(value as JsonNumber).value;
+                prop.SetFloatValue(obj, v);
+            }
+            else if(ptype == RTTIType.Double)
+            {
+                double v = (value as JsonNumber).value;
+                prop.SetDoubleValue(obj, v);
+            }
+        }
+        else if(value is JsonBoolean)
+        {
+            bool v = (value as JsonBoolean).value;
+            prop.SetBoolValue(obj, v);
+        }
+        else if(value is JsonString)
+        {
+            string v = (value as JsonString).value;
+            prop.SetObjectValue(obj, v);
+        }
+        else if(value is JsonObject)
+        {
+            object subObj = DeserializeObject(obj, value as JsonObject);
+            prop.SetObjectValue(obj, subObj);
+        }
+        else if(value is JsonNull)
+        {
+            prop.SetObjectValue(obj, null);
+        }
+        else if(value is JsonArray)
+        {
+            iarray arr = prop.GetObjectValue(obj) as iarray;
+            if(arr != null)
+            {
+                JsonArray jarr = (JsonArray)value;
+
+                for(int i = 0; i < jarr.count; ++i)
+                {
+                    JsonValue elem = jarr[i];
+                    if(elem is JsonObject)
+                    {
+                        object subObj = DeserializeObject(obj, elem as JsonObject);
+                        arr.addElement(&subObj);
+                    }
+                }
+            }
+        }
+    }
+}
+
 int DllStart(long hModule, int dwReason, void *pReserved)
 {
 	return 1;
