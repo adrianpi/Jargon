@@ -213,10 +213,17 @@ class StageParser : ExpressionParser
             if (scanner.Token == Token.LBrace)
             {
                 // Nested initializer: select appropriate element/field type
-                StructType st = (type as StructType);
-                Symbol fs = st.Children[index];
-                TypeSymbol fdt = fs.DataType;
-                e = ParseInitList(type.IsArray() ? type.ElementType : fdt);
+                if(type.IsArray())
+                {
+                    e = ParseInitList(type.ElementType);
+                }
+                else
+                {
+                    StructType st = (type as StructType);
+                    Symbol fs = st.Children[index];
+                    TypeSymbol fdt = fs.DataType;
+                    e = ParseInitList(fdt);
+                }
             }
             else
             {
