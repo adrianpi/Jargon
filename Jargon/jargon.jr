@@ -1095,18 +1095,26 @@ class StringExtensions
 		int prev = 0;
 		byte *p = strstr(ptr, sep);	
 		int pos = p == null ? -1 : p - ptr;
-		while(pos != -1)
+		if(pos == -1)
 		{
-			result.add(this.substr(prev, pos-prev));
-			prev = pos + separator.length;
-			if(prev == this.length) {
-				result.add("");
-				break;
+			result.add(this);
+			return result;
+		}
+		else
+		{
+			while(pos != -1)
+			{
+				result.add(this.substr(prev, pos-prev));
+				prev = pos + separator.length;
+				if(prev == this.length) {
+					result.add("");
+					break;
+				}
+				p = strstr(ptr + prev, sep);
+				pos = p == null ? -1 : p - ptr;
+				if(pos == -1 && prev < this.length)
+				result.add(this.substr(prev, this.length-prev));
 			}
-			p = strstr(ptr + prev, sep);
-			pos = p == null ? -1 : p - ptr;
-			if(pos == -1 && prev < this.length)
-			result.add(this.substr(prev, this.length-prev));
 		}
 		return result;
 	}
@@ -3038,6 +3046,23 @@ class RTTIClassType : RTTIType
 	array<string> EnumProperties()
 	{
 		return EnumChildren("RTTIProperty");
+	}
+
+
+	bool IsClassOf(RTTIClassType cls)
+	{
+		if(cls == null)
+			return false;
+		if(this == cls)
+			return true;
+		RTTIClassType baseCls = this.baseClass;
+		while(baseCls != null)
+		{
+			if(baseCls == cls)
+				return true;
+			baseCls = baseCls.baseClass;
+		}
+		return false;
 	}
 }
 
