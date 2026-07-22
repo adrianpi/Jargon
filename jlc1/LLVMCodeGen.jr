@@ -105,6 +105,12 @@ string Escape(string s)
 	return result;
 }
 
+class ResourceItem
+{
+	string name;
+	int size;
+}
+
 // CodeGenVisitor - main visitor that emits IR text for expressions,
 // statements and top-level declarations. It maintains state such as
 // current function, SSA tag counter and stacks for nested loops/blocks.
@@ -1439,7 +1445,9 @@ class CodeGenVisitor : CodeVisitor
 		sb.appendLine(string.format("\tbr label %%%s%s", lbl.Name, sdbg));
     }
 
-	array<string> used = new array<string>();
+	array<string> used = new array<string>();	
+
+	array<ResourceItem> resourceItems = new array<ResourceItem>();
 	
 	// VisitGlobalVariable - emit global variable definition. For aggregate
 	// types emit a zeroinitializer; otherwise emit a scalar global initialized
@@ -1485,6 +1493,10 @@ class CodeGenVisitor : CodeVisitor
 				sb.appendLine("\", section \".resrc\"");
 				//sb.appendLine(string.format("@llvm.used = appending global [1 x ptr] [ptr @%s], section \"llvm.metadata\"", s.Name));
 				used.add(s.Name);
+				ResourceItem ritem = new ResourceItem();
+				ritem.name = s.Name;
+				ritem.size = buf.size;
+				resourceItems.add(ritem);
 			}
 			else
 			{
@@ -1899,6 +1911,36 @@ class CodeGenVisitor : CodeVisitor
 			sb.appendLine("\", section \".module\"");
 			//sb.appendLine("@llvm.used = appending global [1 x ptr] [ptr @type_info], section \"llvm.metadata\"");
 			used.add("type_info");
+		}
+
+		if(resourceItems.count > 0)
+		{
+			// The resource table lives in its own section (.rsrctab) so reflection
+			// can access it easily.
+			// It is a null-terminated array of resource records.
+			// Each record holds the resource name, the resource data pointer, 
+			// and the resource size.
+
+			// First the names, they live on .data section
+			for(int i = 0; i < resourceItems.count; ++i)
+			{
+				ResourceItem item = resourceItems[i];
+				sb.appendLine(string.format("@.%s = private constant [%d x i8] c\"%s\\00\"", item.name, item.name.length+1, item.name));
+			}
+
+			// The resource record. Matches RTTIResourceEntry struct in Jargon runtime
+			sb.appendLine("%struct.resRec = type { ptr, ptr, i32 }");
+
+			// And finally the table
+			sb.appendLine(string.format("@__resTab = private constant [%d x %%struct.resRec] [ ", resourceItems.count+1));
+			for(int i = 0; i < resourceItems.count; ++i)
+			{
+				ResourceItem item = resourceItems[i];
+				sb.appendLine(string.format("\t%%struct.resRec { ptr @.%s, ptr @%s, i32 %d },", item.name, item.name, item.size));	
+			}
+			sb.appendLine("\t%struct.resRec { ptr null, ptr null, i32 0 } ], section \".rsrctab\"");
+			// Add it to used var list so the linker doesn't strip it
+			used.add("__resTab");
 		}
 
 		if(used.count > 0)

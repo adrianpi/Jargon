@@ -3072,10 +3072,18 @@ class RTTIModuleUsing
 	weak RTTIModule module;
 }
 
+struct RTTIResourceEntry
+{
+	byte *name;
+	byte *data;
+	int size;
+}
+
 class RTTIModule : RTTISymbol
 {
 	ulong handle;
 	array<RTTIModuleUsing> usings = new array<RTTIModuleUsing>();
+	RTTIResourceEntry* rsrctab = null;
 
 	RTTIModule constructor(string name, ulong handle)
 	{
@@ -3139,6 +3147,32 @@ class RTTIModule : RTTISymbol
 		return EnumChildren("RTTIClassType");
 	}
 
+	array<string> EnumResources()
+	{
+		array<string> names = new array<string>();
+
+		if(rsrctab != null)
+		{
+			for(int i = 0; rsrctab[i].name != null; ++i)
+			{
+				names.add(rsrctab[i].name);
+			}
+		}
+		return names;
+	}
+
+	RTTIResourceEntry* GetResource(string name)
+	{
+		if(rsrctab != null)
+		{
+			for(int i = 0; rsrctab[i].name != null; ++i)
+			{
+				if(!strcmp(rsrctab[i].name, name.c_str()))
+					return &rsrctab[i];
+			}
+		}
+		return null;
+	}
 }
 
 class RTTIRoot : RTTISymbol
@@ -3384,6 +3418,8 @@ bool _readTypeInfo(byte *address)
 
 	if(_readTypeLog) printf("NumSections: %d\n", (int)numSections);
 	
+	bool dataRead = false;
+
 	for(int i = 0; i < numSections; ++i) 
 	{
 		byte secName[9];
@@ -3401,17 +3437,22 @@ bool _readTypeInfo(byte *address)
 		ptr += 4;
 		
 		ptr += 16;
-	
-		if(!strcmp(secName, ".module")) {
+
+		if(!strcmp(secName, ".rsrctab"))
+		{
+			module.rsrctab = address + virtualAddress;
+		}
+		else if(!strcmp(secName, ".module")) 
+		{
 			if(_readTypeLog) printf("Module data:\n");
 			if(_readTypeLog) printf("\tVirtual Size: %x\n", virtualSize);
 			if(_readTypeLog) printf("\tVirtual Address: %x\n", virtualAddress);
 			if(_readTypeLog) printf("\tRaw Data Size: %x\n", sizeOfRawData);
 			if(_readTypeLog) printf("\tRaw Data Pointer: %x\n", pointerToRawData);
 			
-			ptr = address + virtualAddress;
+			byte *ptr2 = address + virtualAddress;
 			
-			__initBinaryRead(ptr);
+			__initBinaryRead(ptr2);
 
 			SymbolType st = __readByte();
 			if(st != SymbolType.Module) {
@@ -3794,13 +3835,12 @@ bool _readTypeInfo(byte *address)
 						}
 					}
 				}
-			}
-			
-			return true;
+			}			
+			dataRead = true;
 		}
 	}
 	
-	return false;
+	return dataRead;
 }
 
 void _freeTypeInfo(byte *address)
