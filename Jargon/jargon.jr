@@ -2147,32 +2147,32 @@ class RTTIType : RTTISymbol
 	virtual bool IsClassRef() => false;
 
 	RTTIModule get ParentModule() => _dynamicCast(this.parent, "RTTIModule");
+	
+	static RTTIType _void = new RTTIPrimitiveType("void", 0);
+	static RTTIType _bool = new RTTIPrimitiveType("bool", 1);
+	static RTTIType _byte = new RTTIPrimitiveType("byte", 1);
+	static RTTIType _ubyte = new RTTIPrimitiveType("ubyte", 1);
+	static RTTIType _short = new RTTIPrimitiveType("short", 2);
+	static RTTIType _ushort = new RTTIPrimitiveType("ushort", 2);
+	static RTTIType _int = new RTTIPrimitiveType("int", 4);
+	static RTTIType _uint = new RTTIPrimitiveType("uint", 4);
+	static RTTIType _long = new RTTIPrimitiveType("long", 8);
+	static RTTIType _ulong = new RTTIPrimitiveType("ulong", 8);
+	static RTTIType _float = new RTTIPrimitiveType("float", 4);
+	static RTTIType _double = new RTTIPrimitiveType("double", 8);
 
-	static RTTIType _Void = new RTTIPrimitiveType("void", 0);
-	static RTTIType _Bool = new RTTIPrimitiveType("bool", 1);
-	static RTTIType _Byte = new RTTIPrimitiveType("byte", 1);
-	static RTTIType _UByte = new RTTIPrimitiveType("ubyte", 1);
-	static RTTIType _Short = new RTTIPrimitiveType("short", 2);
-	static RTTIType _UShort = new RTTIPrimitiveType("ushort", 2);
-	static RTTIType _Int = new RTTIPrimitiveType("int", 4);
-	static RTTIType _UInt = new RTTIPrimitiveType("uint", 4);
-	static RTTIType _Long = new RTTIPrimitiveType("long", 8);
-	static RTTIType _ULong = new RTTIPrimitiveType("ulong", 8);
-	static RTTIType _Float = new RTTIPrimitiveType("float", 4);
-	static RTTIType _Double = new RTTIPrimitiveType("double", 8);
-
-	static RTTIType get Void() => _Void;
-	static RTTIType get Bool() => _Bool;
-	static RTTIType get Byte() => _Byte;
-	static RTTIType get UByte() => _UByte;
-	static RTTIType get Short() => _Short;
-	static RTTIType get UShort() => _UShort;
-	static RTTIType get Int() => _Int;
-	static RTTIType get UInt() => _UInt;
-	static RTTIType get Long() => _Long;
-	static RTTIType get ULong() => _ULong;
-	static RTTIType get Float() => _Float;
-	static RTTIType get Double() => _Double;
+	static RTTIType get Void() => _void;
+	static RTTIType get Bool() => _bool;
+	static RTTIType get Byte() => _byte;
+	static RTTIType get UByte() => _ubyte;
+	static RTTIType get Short() => _short;
+	static RTTIType get UShort() => _ushort;
+	static RTTIType get Int() => _int;
+	static RTTIType get UInt() => _uint;
+	static RTTIType get Long() => _long;
+	static RTTIType get ULong() => _ulong;
+	static RTTIType get Float() => _float;
+	static RTTIType get Double() => _double;
 
 	RTTIType constructor(SymbolType stype, SymbolFlags flags, string name)
 	{
@@ -2356,6 +2356,8 @@ class RTTIConstant : RTTISymbol
 	RTTIType type;
 
 	RTTIClassType get ParentClass() => _dynamicCast(this.parent, "RTTIClassType");
+
+	RTTIModule get ParentModule() => _dynamicCast(this.parent, "RTTIModule");
 
 	RTTIConstant constructor(SymbolFlags flags, string name, RTTIType type, RTTIConstValue value)
 	{
@@ -3187,36 +3189,6 @@ class RTTIRoot : RTTISymbol
 		return this;
 	}
 }
-
-int ReadType0(RTTIModule module)
-{
-	int tc = __readByte();
-	if(tc == TypeCode.Pointer)
-	{
-		tc = 0x1000 + ReadType0(module);
-	}
-	else if(tc == TypeCode.Array)
-	{
-		int sz = __readInt();
-		tc = 0x10000 + ReadType0(module);
-	}
-	else if(tc == TypeCode.Struct)
-	{
-		byte name[256];
-		__readString(name);
-	}
-	else if(tc == TypeCode.Function)
-	{
-		int returnType = ReadType0(module);
-		int paramCount = __readInt();
-		for(int i = 0; i < paramCount; ++i)
-		{
-			ReadType0(module);
-		}
-	}
-	return tc;
-}
-
 
 RTTIType ReadType(RTTIModule module)
 {
