@@ -685,6 +685,15 @@ class TypeInfo
         string dllpath = parentPath + "\\" + dllName + ".dll";
         if(file.exists(dllpath))
             return dllpath;
+
+        string jargonPath = getenv("JARGON_LIB");
+        if(jargonPath != null)
+        {
+            dllpath = jargonPath + "\\" + dllName + ".dll";
+            if(file.exists(dllpath))
+                return dllpath;
+        }
+
         for(int i = 0; i < libSearchPaths.count; ++i)
         {
             dllpath = libSearchPaths[i] + "\\" + dllName + ".dll";
