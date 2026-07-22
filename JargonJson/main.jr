@@ -1,0 +1,616 @@
+using jargon;
+
+double strtod(byte *str, byte **ptr) external;
+
+enum JsonToken
+{
+	EOF,
+	LeftBrace, // {
+	RightBrace, // }
+	LeftBracket, // [
+	RightBracket, // ]
+	Comma, // ,
+	Colon, // :
+	StringLiteral,
+	NumberLiteral,
+	BooleanLiteral,
+	NullLiteral,
+}
+
+class JsonErrorListener
+{
+	virtual void OnError(string message, int line, int column) {}
+}
+
+class JsonScanner
+{
+	string text;
+	int pos = -1;
+	byte c = 0;
+	int line = 1;
+	int column = 0;
+	JsonToken token = JsonToken.EOF;
+	string tokenString;
+	double tokenNumber;
+	bool tokenBool;
+	JsonErrorListener errorListener;
+
+	JsonScanner constructor(string text, JsonErrorListener errorListener)
+	{
+		base();
+		this.text = text;
+		this.errorListener = errorListener;
+		this.NextChar();
+		this.NextToken();
+		return this;
+	}
+
+	void NextChar()
+	{
+		pos++;
+		if (pos < text.length)
+		{
+			c = text[pos];
+			if(c == '\n')
+			{
+				line++;
+				column = 0;
+			}
+			else
+			{
+				column++;
+			}
+		}
+		else
+		{
+			c = 0;
+		}
+	}
+
+	void Error(string msg)
+	{
+		errorListener.OnError(msg, line, column);
+	}
+
+	void NextToken()
+	{
+		while(c == ' ' || c == '\t' || c == '\n' || c == '\r')
+		{
+			NextChar();
+		}
+
+		if(c == 0)
+		{
+			token = JsonToken.EOF;
+		}
+		else if(c == '{')
+		{
+			token = JsonToken.LeftBrace;
+			NextChar();
+		}
+		else if(c == '}')
+		{
+			token = JsonToken.RightBrace;
+			NextChar();
+		}
+		else if(c == '[')
+		{
+			token = JsonToken.LeftBracket;
+			NextChar();
+		}
+		else if(c == ']')
+		{
+			token = JsonToken.RightBracket;
+			NextChar();
+		}
+		else if(c == ',')
+		{
+			token = JsonToken.Comma;
+			NextChar();
+		}
+		else if(c == ':')
+		{
+			token = JsonToken.Colon;
+			NextChar();
+		}
+		else if(c == '"')
+		{
+			token = JsonToken.StringLiteral;
+			tokenString = "";
+			NextChar();
+			while(c != '"' && c != 0)
+			{
+				if(c == '\\')
+				{
+					NextChar();
+					if(c == 'n')
+					{
+						tokenString += '\n';
+					}
+					else if(c == 't')
+					{
+						tokenString += '\t';
+					}
+					else if(c == 'r')
+					{
+						tokenString += '\r';
+					}
+					else
+					{
+						tokenString += c;
+					}
+				}
+				else
+				{
+					tokenString += c;
+				}
+				NextChar();
+			}
+			if(c == '"')
+			{
+				NextChar();
+			}
+		}
+		else if(c == '-' || c == '+' || (c >= '0' && c <= '9'))
+		{
+			token = JsonToken.NumberLiteral;
+			string numberStr = "";
+			if(c == '-' || c == '+')
+			{
+				numberStr += c;
+				NextChar();
+			}
+			while(c >= '0' && c <= '9')
+			{
+				numberStr += c;
+				NextChar();
+			}
+			if(c == '.')
+			{
+				numberStr += '.';
+				NextChar();
+				while(c >= '0' && c <= '9')
+				{
+					numberStr += c;
+					NextChar();
+				}
+			}
+			if(c == 'e' || c == 'E')
+			{
+				numberStr += 'e';
+				NextChar();
+				if(c == '-' || c == '+')
+				{
+					numberStr += c;
+					NextChar();
+				}
+				while(c >= '0' && c <= '9')
+				{
+					numberStr += c;
+					NextChar();
+				}
+			}
+			tokenNumber = strtod(numberStr.c_str(), null);
+		}
+		else if(c >= 'a' && c <= 'z')
+		{
+			string ident = "";
+			while(c >= 'a' && c <= 'z')
+			{
+				ident += c;
+				NextChar();
+			}
+			if(ident == "true")
+			{
+				token = JsonToken.BooleanLiteral;
+				tokenBool = true;
+			}
+			else if(ident == "false")
+			{
+				token = JsonToken.BooleanLiteral;
+				tokenBool = false;
+			}
+			else if(ident == "null")
+			{
+				token = JsonToken.NullLiteral;
+			}
+			else
+			{
+				Error(string.format("Unexpected identifier: '%s'", ident));
+			}
+		}
+		else
+		{
+			Error(string.format("Unexpected character: '%c'", c));
+		}		
+	}
+}
+
+enum JsonClass
+{
+	Number,
+	String,
+	Boolean,
+	Array,
+	Object,
+	Null,
+	Error,
+}
+
+class JsonValue
+{
+	JsonClass valueClass;
+
+	virtual bool IsNumber() => false;
+	virtual bool IsString() => false;
+	virtual bool IsBoolean() => false;
+	virtual bool IsArray() => false;
+	virtual bool IsObject() => false;
+	virtual bool IsNull() => false;
+	virtual bool IsError() => false;
+
+	JsonValue constructor(JsonClass valueClass)
+	{
+		base();
+		this.valueClass = valueClass;
+		return this;
+	}
+}
+
+class JsonNumber : JsonValue
+{
+	double value;
+
+	bool IsNumber() => true;
+
+	JsonNumber constructor(double value)
+	{
+		base(JsonClass.Number);
+		this.value = value;
+		return this;
+	}
+
+	static string ftrim(string str)
+	{
+		string temp = str;
+		if(temp.indexOfChar('.') != -1)
+		{
+			while(temp[temp.length-1] == '0')
+				temp = temp.substr(0, temp.length-1);
+			if(temp[temp.length-1] == '.')
+				temp = temp.substr(0, temp.length-1);
+		}
+		return temp;
+	}
+
+	string toString() => ftrim(string.format("%f", value));
+}
+
+class JsonString : JsonValue
+{
+	string value;
+
+	bool IsString() => true;
+
+	JsonString constructor(string value)
+	{
+		base(JsonClass.String);
+		this.value = value;
+		return this;
+	}
+
+	string toString() => string.format("\"%s\"", value);
+}
+
+class JsonBoolean : JsonValue
+{
+	bool value;
+
+	bool IsBoolean() => true;
+
+	JsonBoolean constructor(bool value)
+	{
+		base(JsonClass.Boolean);
+		this.value = value;
+		return this;
+	}
+
+	string toString() => value ? new string("true") : new string("false");
+}
+
+class JsonArray : JsonValue
+{
+	array<JsonValue> values;
+
+	bool IsArray() => true;
+	int get count() => values.count;
+
+	JsonValue get_item(int index) => values[index];
+	void set_item(int index, JsonValue value) => values[index] = value;
+
+	void Add(JsonValue value)
+	{
+		values.add(value);
+	}
+
+	JsonArray constructor()
+	{
+		base(JsonClass.Array);
+		this.values = new array<JsonValue>();
+		return this;
+	}
+
+	string toString() 
+	{
+		string result = "[";
+		for(int i = 0; i < values.count; i++)
+		{
+			if(i != 0)
+			{
+				result += ", ";
+			}
+			result += values[i].toString();
+		}
+		result += "]";
+		return result;
+	}
+}
+
+class JsonObject : JsonValue
+{
+	dictionary<string, JsonValue> properties;
+
+	bool IsObject() => true;
+
+	JsonValue get_item(string key)
+	{
+		if(properties.contains(key))
+		{
+			return properties[key];
+		}
+		else
+		{
+			return null;
+		}
+	}
+
+	void set_item(string key, JsonValue value)
+	{
+		properties[key] = value;
+	}
+
+	JsonObject constructor()
+	{
+		base(JsonClass.Object);
+		this.properties = new dictionary<string, JsonValue>();
+		return this;
+	}
+
+	string toString()
+	{
+		array<string> keys = properties.keys;
+		string result = "{";
+		for(int i = 0; i < keys.count; i++)
+		{
+			if(i != 0)
+			{
+				result += ", ";
+			}
+			string key = keys[i];
+			JsonValue value = properties[key];
+			string svalue = value.toString();
+			result += string.format("\"%s\": ", key);
+			result += svalue;
+		}
+		result += "}";
+		return result;
+	}
+}
+
+class JsonNull : JsonValue
+{
+	bool IsNull() => true;
+
+	JsonNull constructor()
+	{
+		base(JsonClass.Null);
+		return this;
+	}
+
+	string toString() => new string("null");
+}
+
+class JsonError : JsonValue
+{
+	string message;
+
+	bool IsError() => true;
+
+	JsonError constructor(string message)
+	{
+		base(JsonClass.Error);
+		this.message = message;
+		return this;
+	}
+
+	string toString() => message;
+}
+
+class JsonParser
+{
+	JsonScanner scanner;
+
+	JsonParser constructor(string text, JsonErrorListener errorListener)
+	{
+		base();
+		this.scanner = new JsonScanner(text, errorListener);
+		return this;
+	}
+
+	JsonValue Parse()
+	{
+		return ParseValue();
+	}
+
+	JsonValue ParseValue()
+	{
+		if(scanner.token == JsonToken.NumberLiteral)
+		{
+			double num = scanner.tokenNumber;
+			scanner.NextToken();
+			return new JsonNumber(num);
+		}
+		else if(scanner.token == JsonToken.StringLiteral)
+		{
+			string str = scanner.tokenString;
+			scanner.NextToken();
+			return new JsonString(str);
+		}
+		else if(scanner.token == JsonToken.BooleanLiteral)
+		{
+			bool b = scanner.tokenBool;
+			scanner.NextToken();
+			return new JsonBoolean(b);
+		}
+		else if(scanner.token == JsonToken.NullLiteral)
+		{
+			scanner.NextToken();
+			return new JsonNull();
+		}
+		else if(scanner.token == JsonToken.LeftBracket)
+		{
+			return ParseArray();
+		}
+		else if(scanner.token == JsonToken.LeftBrace)
+		{
+			return ParseObject();
+		}
+		else
+		{
+			scanner.Error("Unexpected token while parsing value");
+			return null;
+		}
+	}
+
+	JsonArray ParseArray()
+	{
+		JsonArray array = new JsonArray();
+		scanner.NextToken(); // skip '['
+		while(scanner.token != JsonToken.RightBracket && scanner.token != JsonToken.EOF)
+		{
+			JsonValue value = ParseValue();
+			if(value != null)
+			{
+				array.values.add(value);
+			}
+			if(scanner.token == JsonToken.Comma)
+			{
+				scanner.NextToken(); // skip ','
+			}
+			else if(scanner.token != JsonToken.RightBracket)
+			{
+				scanner.Error("Expected ',' or ']' in array");
+				break;
+			}
+		}
+		if(scanner.token == JsonToken.RightBracket)
+		{
+			scanner.NextToken(); // skip ']'
+		}
+		else
+		{
+			scanner.Error("Expected ']' at end of array");
+		}
+		return array;
+	}
+
+	JsonObject ParseObject()
+	{
+		JsonObject obj = new JsonObject();
+		scanner.NextToken(); // skip '{'
+		while(scanner.token != JsonToken.RightBrace && scanner.token != JsonToken.EOF)
+		{
+			if(scanner.token == JsonToken.StringLiteral)
+			{
+				string key = scanner.tokenString;
+				scanner.NextToken(); // skip key
+				if(scanner.token == JsonToken.Colon)
+				{
+					scanner.NextToken(); // skip ':'
+					JsonValue value = ParseValue();
+					if(value != null)
+					{
+						obj.properties[key] = value;
+					}
+				}
+				else
+				{
+					scanner.Error("Expected ':' after key in object");
+				}
+			}
+			else
+			{
+				scanner.Error("Expected string key in object");
+			}
+			if(scanner.token == JsonToken.Comma)
+			{
+				scanner.NextToken(); // skip ','
+			}
+			else if(scanner.token != JsonToken.RightBrace)
+			{
+				scanner.Error("Expected ',' or '}' in object");
+				break;
+			}
+		}
+		if(scanner.token == JsonToken.RightBrace)
+		{
+			scanner.NextToken(); // skip '}'
+		}
+		else
+		{
+			scanner.Error("Expected '}' at end of object");
+		}
+		return obj;
+	}
+}
+
+class JsonParserErrorListener : JsonErrorListener
+{
+	string error;
+
+	void OnError(string message, int line, int column)
+	{
+		if(error == null)
+		{
+			error = string.format("Error at line %d, column %d: %s", line, column, message);
+		}
+	}
+}
+
+class Json
+{
+	static JsonValue Parse(string text)
+	{
+		JsonParserErrorListener errorListener = new JsonParserErrorListener();
+		JsonParser parser = new JsonParser(text, errorListener);
+		JsonValue value = parser.Parse();
+		if(errorListener.error != null)
+		{
+			return new JsonError(errorListener.error);
+		}
+		else
+		{
+			return value;
+		}
+	}
+
+	static string Stringify(JsonValue value)
+	{
+		return value.toString();
+	}
+}
+
+int DllStart(long hModule, int dwReason, void *pReserved)
+{
+	return 1;
+}
