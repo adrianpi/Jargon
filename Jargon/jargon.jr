@@ -3062,7 +3062,7 @@ class RTTIClassType : RTTIType
 		return EnumChildren("RTTIProperty");
 	}
 
-	void EnumRecurse(string type, RTTIClassType cls, array<string> names)
+	static void EnumRecurse(string type, RTTIClassType cls, array<string> names)
 	{
 		if(cls.baseClass != null)
 			EnumRecurse(type, cls.baseClass, names);
