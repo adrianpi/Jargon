@@ -1,6 +1,7 @@
 using jargon;
 
 double strtod(byte *str, byte **ptr) external;
+uint strtoul(byte *str, byte *ptr, int _base) external;
 
 enum JsonToken
 {
@@ -135,9 +136,37 @@ class JsonScanner
 					{
 						tokenString += '\r';
 					}
+					else if(c == '\\')
+					{
+						tokenString += '\\';
+					}
+					else if(c == '\"')
+					{
+						tokenString += "\"";
+					}
+					else if(c == 'b')
+					{
+						tokenString += (byte)8;
+					}
+					else if(c == 'f')
+					{
+						tokenString += (byte)12;
+					}
+					else if(c == 'u')
+					{
+						NextChar();
+						string num = "";
+						do
+						{
+							num += c;
+							NextChar();
+						} while((c >= '0' && c <= "9") || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'));
+						// unicode not supported, truncation will occur
+						tokenString += (byte)strtoul(num, null, 16);
+					}
 					else
 					{
-						tokenString += c;
+						Error("Invalid escape sequence");
 					}
 				}
 				else
@@ -299,7 +328,39 @@ class JsonString : JsonValue
 		return this;
 	}
 
-	string toString() => string.format("\"%s\"", value);
+	static string Escape(string value)
+	{
+		string result = "";
+		result += '\"';
+
+		for(int i = 0; i < value.length; ++i)
+		{
+			byte c = value[i];
+
+			if(c == 8)
+				result += "\\t";
+			else if(c == 9)
+				result += "\\b";
+			else if(c == 10)
+				result += "\\n";
+			else if(c == 12)
+				result += "\\f";
+			else if(c == 13)
+				result += "\\r";
+			else if(c == '\\')
+				result += "\\\\";
+			else if(c < ' ' || c > '~')
+				result += string.format("\\u%04x", c);
+			else
+				result += c;
+		}
+
+		result += '\"';
+		return result;
+	}
+
+	//string toString() => string.format("\"%s\"", value);
+	string toString() => Escape(value);
 }
 
 class JsonBoolean : JsonValue
