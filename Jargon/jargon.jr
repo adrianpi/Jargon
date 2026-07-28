@@ -23,8 +23,8 @@ int wcscmp(short *a, short *b) external;
 short* wcscpy(short *dst, short *src) external;
 short* wcscat(short *dst, short *src) external;
 short* wcsncpy(short *dst, short *src, long len) external;
-short wcsstr(short *where, short *what) external;
-short wcschr(short *src, short c) external;
+short* wcsstr(short *where, short *what) external;
+short* wcschr(short *src, short c) external;
 short towlower(short c) external;
 short towupper(short c) external;
 void* fopen(byte *fileName, byte *mode) external;
@@ -35,11 +35,18 @@ long fread(void *buffer, long size, long count, void *fptr) external;
 long fwrite(void *buffer, long size, long count, void *fptr) external;
 int rename(byte *oldFileName, byte *newFileName) external;
 int remove(byte *fileName) external;
+long _wfopen(short *fileName, short *mode) external;
+int _wrename(short *oldFileName, short *newFileName) external;
+int _wremove(short *fileName) external;
 byte* _getcwd(byte *buffer, int maxLen) external;
 int _mkdir(byte *dir) external;
 int _rmdir(byte *dir) external;
 int _access(byte *dir, int mode) external;
 int __getcwd(byte *buffer, int maxLen) external;
+int _wmkdir(short *name) external;
+int _wrmdir(short *name) external;
+int _waccess(short *name, int flags) external;
+int _wgetcwd(short *buffer, int size) external;
 int GetModuleFileNameA(ulong hModule, byte *buffer, int maxLen) external;
 void* GetProcAddress(ulong hModule, byte *procName) external;
 int atoi(byte *str) external;
@@ -54,11 +61,23 @@ struct _finddata_t
     byte    name[260];
 }
 
+struct _wfinddata_t
+{
+	uint    attrib;
+	long    time_create;
+	long    time_access;
+	long    time_write;
+	uint    size;
+	short   name[260];
+}
+
 const int _A_SUBDIR = 0x10;
 
 long _findfirst64i32(byte *path, _finddata_t *file) external;
 int _findnext64i32(long handle,  _finddata_t *file) external;
 void _findclose(long handle) external;
+long _wfindfirst64i32(byte *path, _wfinddata_t *file) external;
+int _wfindnext64i32(long handle,  _wfinddata_t *file) external;
 
 void OutputDebugStringA(byte *str) external;
 void OutputDebugStringW(short *str) external;
@@ -160,6 +179,7 @@ int MultiByteToWideChar(
 ) external;
 
 const int CP_ACP = 0;
+const int CP_UTF8 = 65001;
 
 void print(string *fmt, ...)
 {
@@ -745,6 +765,33 @@ class wstring
 		return new string(ansi);
 	}
 
+	string* toUtf8() 
+	{
+		int size = WideCharToMultiByte(
+			CP_UTF8,
+			0,
+			str,
+			-1,
+			null,
+			0,
+			null,
+			null);
+
+		byte* ansi = memory.alloc(size);
+
+		WideCharToMultiByte(
+			CP_UTF8,
+			0,
+			str,
+			-1,
+			ansi,
+			size,
+			null,
+			null);
+
+		return new string(ansi);
+	}
+
 	static wstring fromString(string str)
 	{
 		int size = MultiByteToWideChar(
@@ -759,6 +806,29 @@ class wstring
 
 		MultiByteToWideChar(
 			CP_ACP,
+			0,
+			str.str,
+			-1,
+			wide,
+			size);
+
+		return new wstring(wide);
+	}
+
+	static wstring fromUtf8(string str)
+	{
+		int size = MultiByteToWideChar(
+			CP_UTF8,
+			0,
+			str.str,
+			-1,
+			null,
+			0);
+
+		short* wide = memory.alloc(size*2);
+
+		MultiByteToWideChar(
+			CP_UTF8,
 			0,
 			str.str,
 			-1,
@@ -1524,6 +1594,42 @@ class StringExtensions
 	}
 }
 
+class WStringExtensions
+{
+	static array<wstring*>* split(wstring *this, wstring *separator)
+	{	
+		array<wstring*> *result = new array<wstring*>();	
+	
+		short *ptr = this.c_str();
+		short *sep = separator.c_str();
+		int prev = 0;
+		short *p = wcsstr(ptr, sep);	
+		int pos = p == null ? -1 : p - ptr;
+		if(pos == -1)
+		{
+			result.add(this);
+			return result;
+		}
+		else
+		{
+			while(pos != -1)
+			{
+				result.add(this.substr(prev, pos-prev));
+				prev = pos + separator.length;
+				if(prev == this.length) {
+					result.add(new wstring(__wcempty));
+					break;
+				}
+				p = wcsstr(ptr + prev, sep);
+				pos = p == null ? -1 : p - ptr;
+				if(pos == -1 && prev < this.length)
+				result.add(this.substr(prev, this.length-prev));
+			}
+		}
+		return result;
+	}
+}
+
 //-----------------------------------------------------------------------------
 
 template class hash_pair<K,T>
@@ -1834,6 +1940,9 @@ enum SeekPos
 	End,
 }
 
+short __wcrb[3] = { 'r', 'b', 0 };
+short __wcwb[3] = { 'w', 'b', 0 };
+
 class file
 {
 	void *fptr;
@@ -1887,6 +1996,16 @@ class file
 			return f;
 	}
 
+	static file* openW(wstring *fileName, wstring *mode)
+	{
+		file *f = new file();
+		f.fptr = _wfopen(fileName.c_str(), mode.c_str());
+		if(f.fptr == null)
+			return null;
+		else
+			return f;
+	}
+
 	static string* readAllText(string *fileName)
 	{
 		file *f = file.open(fileName, "rb");
@@ -1901,7 +2020,23 @@ class file
 		string* result = new string(buffer);
 		memory.free(buffer);
 		return result;
-	}	
+	}
+
+	static wstring* readAllTextW(wstring *fileName)
+	{
+		file *f = file.openW(fileName, __wcrb);
+		if(f == null)
+			return null;
+		f.seek(0, SeekPos.End);
+		long size = f.position;
+		f.seek(0, SeekPos.Start);
+		short *buffer = memory.alloc((size/2)+2);
+		f.read(buffer, size);
+		buffer[(int)(size/2)] = 0;
+		string* result = new string(buffer);
+		memory.free(buffer);
+		return wstring.fromUtf8(result);
+	}
 
 	static bool writeAllText(string *fileName, string *text)
 	{
@@ -1912,14 +2047,34 @@ class file
 		return true;
 	}
 
+	static bool writeAllTextW(wstring *fileName, wstring *text)
+	{
+		file *f = file.openW(fileName, __wcwb);
+		if(f == null)
+			return false;
+		string utf8 = text.toUtf8();
+		f.write(utf8.c_str(), utf8.length);
+		return true;
+	}
+
 	static bool rename(string *oldFileName, string *newFileName)
 	{
 		return rename(oldFileName.c_str(), newFileName.c_str()) == 0;
 	}
 
+	static bool renameW(wstring *oldFileName, wstring *newFileName)
+	{
+		return _wrename(oldFileName.c_str(), newFileName.c_str()) == 0;
+	}
+
 	static bool deleteFile(string *fileName)
 	{
 		return remove(fileName.c_str()) != 0;
+	}
+
+	static bool deleteFileW(wstring *fileName)
+	{
+		return _wremove(fileName.c_str()) != 0;
 	}
 
 	static bool exists(string *fileName)
@@ -1933,9 +2088,23 @@ class file
 			return false;
 		}
 	}
+
+	static bool existsW(wstring *fileName)
+	{
+		void *f = _wfopen(fileName.c_str(), __wcrb);
+		if(f != null) {
+			fclose(f);
+			return true;
+		}
+		else {
+			return false;
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------
+
+short __wcseparator[2] = { '\\', 0 };
 
 class directory
 {
@@ -1944,9 +2113,19 @@ class directory
 		return _mkdir(path.c_str()) == 0;
 	}
 
+	static bool createW(wstring *path)
+	{
+		return _wmkdir(path.c_str()) == 0;
+	}
+
 	static bool remove(string *path)
 	{
 		return _rmdir(path.c_str()) == 0;
+	}
+
+	static bool removeW(wstring *path)
+	{
+		return _wrmdir(path.c_str()) == 0;
 	}
 
 	static bool rename(string *oldPath, string *newPath)
@@ -1954,9 +2133,19 @@ class directory
 		return rename(oldPath.c_str(), newPath.c_str()) == 0;
 	}
 
+	static bool renameW(wstring *oldPath, wstring *newPath)
+	{
+		return _wrename(oldPath.c_str(), newPath.c_str()) == 0;
+	}
+
 	static bool exists(string *path)
 	{
 		return _access(path.c_str(), 0) == 0;
+	}
+
+	static bool existsW(wstring *path)
+	{
+		return _waccess(path.c_str(), 0) == 0;
 	}
 
 	static string current()
@@ -1964,6 +2153,15 @@ class directory
 		byte dir[1024];
 		if(_getcwd(dir, 1024))
 			return new string(dir);
+		else
+			return null;
+	}
+
+	static wstring currentW()
+	{
+		short dir[1024];
+		if(_wgetcwd(dir, 1024))
+			return new wstring(dir);
 		else
 			return null;
 	}
@@ -1988,6 +2186,31 @@ class directory
 		return result;
 	}
 
+	static array<wstring> getFilesW(wstring path, wstring filter)
+	{
+		array<wstring> result = new array<wstring>();
+		short *buff = (short*)memory.alloc(path.length + 1 + filter.length + 1);
+		wcscpy(buff, path.c_str());
+		wcscat(buff, __wcseparator);
+		wcscat(buff, filter.c_str());
+		wstring *searchPath = new wstring(buff);
+		memory.free(buff);
+		_wfinddata_t fileInfo;
+		long handle = _wfindfirst64i32(searchPath.c_str(), &fileInfo);
+		if(handle != -1)
+		{
+			do
+			{
+				if((fileInfo.attrib & _A_SUBDIR) == 0)
+				{
+					result.add(new wstring(&fileInfo.name[0]));
+				}
+			} while(_wfindnext64i32(handle, &fileInfo) == 0);
+			_findclose(handle);
+		}
+		return result;
+	}
+
 	static array<string> getDirectories(string path, string filter)
 	{
 		array<string> result = new array<string>();
@@ -2007,21 +2230,59 @@ class directory
 		}
 		return result;
 	}
+
+	static array<wstring> getDirectoriesW(wstring path, wstring filter)
+	{
+		array<wstring> result = new array<wstring>();
+		short *buff = (short*)memory.alloc(path.length + 1 + filter.length + 1);
+		wcscpy(buff, path.c_str());
+		wcscat(buff, __wcseparator);
+		wcscat(buff, filter.c_str());
+		wstring *searchPath = new wstring(buff);
+		memory.free(buff);
+		_wfinddata_t fileInfo;
+		long handle = _wfindfirst64i32(searchPath.c_str(), &fileInfo);
+		if(handle != -1)
+		{
+			do
+			{
+				if((fileInfo.attrib & _A_SUBDIR) != 0)
+				{
+					result.add(new wstring(&fileInfo.name[0]));
+				}
+			} while(_wfindnext64i32(handle, &fileInfo) == 0);
+			_findclose(handle);
+		}
+		return result;
+	}
 }
 
 //-----------------------------------------------------------------------------
+
+short __wcperiod[2] = { '.', 0 };
+short __wcdirup[3] = { '.', '.', 0 };
 
 class path
 {
 	static string getCurrentDirectory()
     {
-        byte buffer[256];
-        if(_getcwd(buffer, 256))
+        byte buffer[1024];
+        if(_getcwd(buffer, 1024))
         {
             return new string(buffer);
         }
         return null;
     }
+
+	static wstring getCurrentDirectoryW()
+	{
+		short buffer[1024];
+		if(_wgetcwd(buffer, 1024))
+		{
+			return new wstring(buffer);
+		}
+		return null;
+	}
 
 	static string getDirectoryName(string filePath)
 	{
@@ -2036,6 +2297,19 @@ class path
 		}
 	}
 
+	static wstring getDirectoryNameW(wstring filePath)
+	{
+		int index = filePath.lastIndexOfChar('\\');
+		if(index >= 0)
+		{
+			return filePath.substr(0, index);
+		}
+		else
+		{
+			return new wstring(__wcperiod);
+		}
+	}
+
 	static string getFileName(string filePath)
     {
         int index = filePath.lastIndexOfChar('\\');
@@ -2044,6 +2318,15 @@ class path
 		else
 			return filePath;
     }
+
+	static string getFileNameW(wstring filePath)
+	{
+        int index = filePath.lastIndexOfChar('\\');
+		if(index >= 0)
+			return filePath.substr(index+1, filePath.length-index-1);
+		else
+			return filePath;
+	}
 
 	static string getExtension(string filePath)
 	{
@@ -2054,6 +2337,15 @@ class path
 			return "";
 	}
 
+	static string getExtensionW(wstring filePath)
+	{
+		int index = filePath.lastIndexOfChar('.');
+		if(index >= 0)
+			return filePath.substr(index, filePath.length-index);
+		else
+			return new wstring(__wcempty);
+	}
+
 	static string getFileNameWithoutExtension(string filePath)
 	{
 		int index = filePath.lastIndexOfChar('\\');
@@ -2062,6 +2354,16 @@ class path
 			return filePath.substr(index+1, dotIndex-index-1);
 		else
 			return path.getFileName(filePath);
+	}
+
+	static wstring getFileNameWithoutExtensionW(wstring filePath)
+	{
+		int index = filePath.lastIndexOfChar('\\');
+		int dotIndex = filePath.lastIndexOfChar('.');
+		if(dotIndex > index)
+			return filePath.substr(index+1, dotIndex-index-1);
+		else
+			return path.getFileNameW(filePath);
 	}
 
 	static string canonize(string filePath)
@@ -2095,6 +2397,33 @@ class path
 		return result;
 	}
 
+	static wstring canonizeW(wstring filePath)
+	{
+		array<wstring> source = filePath.split(new string(__wcseparator));
+		array<wstring> dest = new array<wstring>();
+		for(int i = 0; i < source.count; ++i)
+		{
+			wstring part = source[i];
+			if(part == new wstring(__wcperiod)) // skip current folder
+			{
+				continue;
+			}
+			else if(part == new wstring(__wcdirup)) // pop previous folder
+			{
+				if(dest.count > 0)
+				{
+					dest.removeAt(dest.count-1);
+				}
+			}
+			else
+			{
+				dest.add(part);
+			}
+		}
+		wstring result = dest.join(new wstring(__wcseparator));	
+		return result;
+	}
+
 	static string getFullPath(string filePath)
     {
         if(filePath.indexOf(":") == -1)
@@ -2114,6 +2443,32 @@ class path
             return filePath;
         }
     }
+
+	static wstring getFullPathW(wstring filePath)
+	{
+        if(filePath.indexOfChar(':') == -1)
+        {
+            wstring cwd = path.getCurrentDirectoryW();
+            if(cwd != null)
+            {
+				short *temp = (short*)memory.alloc(cwd.length + 1 + filePath.length + 1);
+				wcscpy(temp, cwd.c_str());
+				wcscat(temp, __wcseparator);
+				wcscat(temp, filePath.c_str());
+				wstring s = new wstring(temp);
+				memory.free(temp);
+                return path.canonizeW(s);
+            }
+            else
+            {
+                return null;
+            }
+        }
+        else
+        {
+            return filePath;
+        }
+	}
 }
 
 //-----------------------------------------------------------------------------
