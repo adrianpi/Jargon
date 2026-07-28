@@ -150,12 +150,12 @@ string keywords[37] =
 class ScannerState
 {
     string fileName;
-    string text;
+    wstring text;
     int textLen;
     int pos;
     int column;
     int line;
-    byte c;
+    short c;
     Token token;
     int tokenInt;
     long tokenLong;
@@ -177,13 +177,12 @@ class Scanner
 {
     // current input and position state
     string fileName;
-    string text;
+    wstring text;
     int textLen;
     int pos;        // index into `text` for current character
     int column;     // current column (character count on current line)
     int line;       // current line number (1-based)
-    byte c;         // current character, or '\0' at EOF
-
+    short c;         // current character, or '\0' at EOF
     // last produced token and its semantic payload
     Token token;
     int tokenInt;
@@ -253,7 +252,7 @@ class Scanner
     }
 
     // Constructor: initialize scanner and prime first token
-    Scanner constructor(string text, string fileName)
+    Scanner constructor(wstring text, string fileName)
     {
         base();
         this.text = text;
@@ -678,7 +677,7 @@ class Scanner
                 tokenString = "";
                 while(c != '"' && c != '\0' && c != '\n')
                 {
-                    tokenString += Unescape(c);
+                    tokenString += (byte)Unescape(c);
                     NextChar();
                 }
                 token = Token.String;
@@ -697,7 +696,7 @@ class Scanner
                 tokenString = "";
                 while(c != '\'' && c != '\0' && c != '\n')
                 {
-                    tokenString += Unescape(c);
+                    tokenString += (byte)Unescape(c);
                     NextChar();
                 }
                 token = Token.Byte;
@@ -728,7 +727,7 @@ class Scanner
                 //  - binary (0b...)
                 //  - floating point numbers with optional trailing 'f' for float
                 tokenString = "";
-                tokenString += c;
+                tokenString += (byte)c;
                 string szZero = new string("0");
 
                 NextChar();
@@ -753,7 +752,7 @@ class Scanner
                     || (!isReal && !isHex && !isBinary && c == '.') 
                     || (isHex && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))))
                 {
-                    tokenString += c;
+                    tokenString += (byte)c;
                     if(c == '.')
                         isReal = true;
                     NextChar();
@@ -761,16 +760,16 @@ class Scanner
 
                 if(isReal && (c == 'e' || c == 'E'))
                 {
-                    tokenString += c;
+                    tokenString += (byte)c;
                     NextChar();
                     if(c == '+' || c == '-')
                     {
-                        tokenString += c;
+                        tokenString += (byte)c;
                         NextChar();
                     }
                     while(c >= '0' && c <= '9')
                     {
-                        tokenString += c;
+                        tokenString += (byte)c;
                         NextChar();
                     }
                 }
@@ -864,7 +863,7 @@ class Scanner
                 // other names are Token.Ident. Boolean literals "true"/
                 // "false" are returned as Token.Bool with tokenInt set.
                 tokenString = "";
-                tokenString += c;
+                tokenString += (byte)c;
                 bool isL = c == 'L';
                 NextChar();
 
@@ -942,7 +941,7 @@ class Scanner
                 {
                     while(c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
                     {
-                        tokenString += c;
+                        tokenString += (byte)c;
                         NextChar();
                     }
                     if(tokenString == "true")
@@ -1002,11 +1001,11 @@ class Scanner
             if(c >= '0' && c <= '7')
             {
                 string octal = "";
-                octal = octal + c;
+                octal = octal + (byte)c;
                 NextChar();
                 while (c >= '0' && c <= '7')
                 {
-                    octal += c;
+                    octal += (byte)c;
                     NextChar();
                 }
                 // step back one position because the calling loop will advance
@@ -1021,7 +1020,7 @@ class Scanner
                 NextChar();
                 while ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
                 {
-                    hex += c;
+                    hex += (byte)c;
                     NextChar();
                 }
                 if (hex.length == 0)
@@ -1061,11 +1060,11 @@ class Scanner
             if(c >= '0' && c <= '7')
             {
                 string octal = "";
-                octal = octal + c;
+                octal = octal + (byte)c;
                 NextChar();
                 while (c >= '0' && c <= '7')
                 {
-                    octal += c;
+                    octal += (byte)c;
                     NextChar();
                 }
                 // step back one position because the calling loop will advance
@@ -1080,7 +1079,7 @@ class Scanner
                 NextChar();
                 while ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
                 {
-                    hex += c;
+                    hex += (byte)c;
                     NextChar();
                 }
                 if (hex.length == 0)

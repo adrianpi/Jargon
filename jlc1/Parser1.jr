@@ -426,11 +426,12 @@ class Parser1 : StageParser
         // Extract the substring that represents the template body. This raw
         // source is stored in Template.Source and later used to synthesize a
         // concrete class when the template is instantiated.
-        string templateSrc = startState.text.substr(startState.pos-1, len+1);
+        wstring templateSrc = startState.text.substr(startState.pos-1, len+1);
+        string templateSrcUtf8 = templateSrc.toUtf8();
         Template ts = new Template(module, name);
         for(int i = 0; i < templateParams.count; ++i)
             ts.TemplateParams.add(templateParams[i]);
-        ts.Source = templateSrc;
+        ts.Source = templateSrcUtf8;
         ts.attributes = attributes;
         if(ts.attributes != null)
             ts.Flags += SymbolFlags.HasAttributes;

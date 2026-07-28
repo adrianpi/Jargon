@@ -70,6 +70,16 @@ class CompileUnit
         Path = path.getFullPath(filePath);
         FileName = path.getFileName(filePath);
         Text = file.readAllText(filePath);
+
+        // Remove UTF8 BOM if present.
+        if (Text.length >= 3 && 
+            (ubyte)Text[0] == 0xEF && 
+            (ubyte)Text[1] == 0xBB && 
+            (ubyte)Text[2] == 0xBF)
+        {
+            Text = Text.substr(3, Text.length - 3);
+        }
+
         // Ensure there is a trailing newline which many parsers expect.
         Text = Text + "\r\n";
         return this;
@@ -299,7 +309,8 @@ class BaseParser
     void StartParse(CompileUnit cu)
     {
         unit = cu;
-        scanner = new Scanner(cu.Text, cu.Path);
+        wstring text = wstring.fromUtf8(cu.Text);
+        scanner = new Scanner(text, cu.Path);
         scanner.errorListener = this.errorListener;
         OnStartParse();
     }
