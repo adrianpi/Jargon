@@ -29,6 +29,7 @@ enum TypeCode
     Pointer,
     Struct,
     CStr,
+    CWStr,
     Enum, // Used only during serialization
 }
 
@@ -375,6 +376,7 @@ class Module : Symbol
 {
     dictionary<string, string> Strings = new dictionary<string, string>();
     dictionary<string, string> StringsRev = new dictionary<string, string>();
+    dictionary<string, wstring> WStrings = new dictionary<string, wstring>();
     array<ModuleUsing> Usings = new array<ModuleUsing>();
 
     Module constructor(string name)
@@ -393,6 +395,14 @@ class Module : Symbol
 
         string key = string.format("$cstr_%d", Strings.count);
         Strings[key] = str;
+        //StringsRev[str] = key;
+        return key;
+    }
+
+    string AddWString(wstring str)
+    {
+        string key = string.format("$cwstr_%d", WStrings.count);
+        WStrings[key] = str;
         //StringsRev[str] = key;
         return key;
     }

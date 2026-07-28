@@ -99,6 +99,12 @@ class ExpressionParser : BaseParser
 			scanner.NextToken();
 			return ce;
 		}
+        else if(scanner.Token == Token.Short)
+        {
+            ConstantExpression ce = ConstantExpression.FromShort(scanner.TokenInt);
+            scanner.NextToken();
+            return ce;
+        }
         // Float literal
         else if(scanner.Token == Token.Float)
         {
@@ -126,6 +132,19 @@ class ExpressionParser : BaseParser
             string key = module.AddString(str);
             unit.Strings.add(key);
             return ConstantExpression.FromString(key);
+        }
+        else if(scanner.Token == Token.WString)
+        {
+            wstring str = scanner.TokenWString;
+            scanner.NextToken();
+            while (scanner.Token == Token.WString)
+            {
+                str += scanner.TokenWString;
+                scanner.NextToken();
+            }
+            string key = module.AddWString(str);
+            unit.WStrings.add(key);
+            return ConstantExpression.FromWString(key);
         }
         // Parenthesized sub-expression or cast: either (type)expr or (expr)
         else if(scanner.Token == Token.LPar)

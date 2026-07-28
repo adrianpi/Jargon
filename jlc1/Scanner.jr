@@ -37,11 +37,13 @@ enum Token
     Keyword,
     Bool,
     Byte,
+    Short,
     Int,
     UInt,
     Long,
     ULong,
     String,
+    WString,
     Float,
     Double,
     Ident,
@@ -160,7 +162,10 @@ class ScannerState
     float tokenFloat;
     double tokenDouble;
     string tokenString;
+    wstring tokenWString;
 }
+
+short __wempty[1] = { 0 };
 
 // Scanner: the lexical analyzer
 // Responsibilities:
@@ -186,6 +191,7 @@ class Scanner
     float tokenFloat;
     double tokenDouble;
     string tokenString;
+    wstring tokenWString;
 
     hash_set<string> keywordsSet;  // for fast keyword lookup (optional optimization)
 
@@ -200,6 +206,7 @@ class Scanner
     float get TokenFloat() => tokenFloat;
     double get TokenDouble() => tokenDouble;
     string get TokenString() => tokenString;
+    wstring get TokenWString() => tokenWString;
     string get FileName() => fileName;
     int get Line() => line;
     int get Column() => column;
@@ -221,6 +228,7 @@ class Scanner
         state.tokenFloat = this.tokenFloat;
         state.tokenDouble = this.tokenDouble;
         state.tokenString = this.tokenString;
+        state.tokenWString = this.tokenWString;
         return state;
     }
 
@@ -241,6 +249,7 @@ class Scanner
         this.tokenFloat = state.tokenFloat;
         this.tokenDouble = state.tokenDouble;
         this.tokenString = state.tokenString;
+        this.tokenWString = state.tokenWString;
     }
 
     // Constructor: initialize scanner and prime first token
@@ -856,26 +865,101 @@ class Scanner
                 // "false" are returned as Token.Bool with tokenInt set.
                 tokenString = "";
                 tokenString += c;
+                bool isL = c == 'L';
                 NextChar();
-                while(c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+
+                if(isL && c == '\"') // Unicode string
                 {
-                    tokenString += c;
+                    tokenString = "";
+                    NextChar();
+                    tokenWString = new wstring(__wempty);
+                    while(c != '"' && c != '\0' && c != '\n')
+                    {
+                        long result = UnescapeW(c);
+                        if ((result & 0x100000000l) != 0)
+                        {
+                            short highSurrogate = (short)((result >> 16) & 0xFFFF);
+                            short lowSurrogate = (short)(result & 0xFFFF);
+
+                            tokenWString += highSurrogate;
+                            tokenWString += lowSurrogate;
+                        }
+                        else
+                        {
+                            tokenWString += (short)result;
+                        }
+                        NextChar();
+                    }
+                    token = Token.WString;
+                    if(c == '\0' || c == '\n')
+                    {
+                        Error("Unterminated string constant");
+                        token = Token.Error;
+                    }
                     NextChar();
                 }
-                if(tokenString == "true")
+                else if(isL && c == '\'')
                 {
-                    tokenInt = 1;
-                    token = Token.Bool;
-                }
-                else if(tokenString == "false")
-                {
-                    tokenInt = 0;
-                    token = Token.Bool;
+                    // Unicode character literal. Represented as Token.Short with tokenInt set
+                    // to the character value. Unterminated characters are reported.
+                    NextChar();
+                    tokenWString = new wstring(__wempty);
+                    while(c != '\'' && c != '\0' && c != '\n')
+                    {
+                        long result = UnescapeW(c);
+                        if ((result & 0x100000000l) != 0)
+                        {
+                            Error("Character literal too long");
+                            token = Token.Error;
+                            return;
+                        }
+                        else
+                        {
+                            tokenWString += (short)result;
+                        }
+                        NextChar();
+                    }
+                    token = Token.Short;
+                    if(c == '\0' || c == '\n')
+                    {
+                        NextChar();
+                        Error("Unterminated character constant");
+                        token = Token.Error;                    
+                    }
+                    else if(tokenWString.length > 1)
+                    {
+                        NextChar();
+                        Error("Invalid character constant");
+                        token = Token.Error;                    
+                    }
+                    else
+                    {
+                        NextChar();
+                        tokenInt = (int)tokenWString[0];
+                    }
                 }
                 else
                 {
-                    bool found = keywordsSet.contains(tokenString);
-                    token = found ? Token.Keyword : Token.Ident;
+                    while(c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+                    {
+                        tokenString += c;
+                        NextChar();
+                    }
+                    if(tokenString == "true")
+                    {
+                        tokenInt = 1;
+                        token = Token.Bool;
+                    }
+                    else if(tokenString == "false")
+                    {
+                        tokenInt = 0;
+                        token = Token.Bool;
+                    }
+                    else
+                    {
+                        bool found = keywordsSet.contains(tokenString);
+                        token = found ? Token.Keyword : Token.Ident;
+                    }
                 }
             }
             else
@@ -949,6 +1033,78 @@ class Scanner
                 }
                 pos--;
                 return (byte)strtoul(hex.c_str(), null, 16);
+            }
+        }
+        // Not an escape sequence: return the character unchanged
+        return cc;
+    }
+
+    long UnescapeW(short cc)
+    {
+        if(cc == '\\')
+        {
+            NextChar();
+            if(c == '0') return '\0';
+            else if(c == 'a') return '\a';
+            else if(c == 'b') return '\b';
+            else if(c == 'f') return '\f';
+            else if(c == 'n') return '\n';
+            else if(c == 'r') return '\r';
+            else if(c == 't') return '\t';
+            else if(c == 'v') return '\v';
+            else if(c == '"') return '"';
+            else if(c == '\'') return '\'';
+            else if(c == '\\') return '\\';
+
+            // Octal escape: accept only digits 0..7 to avoid invalid octal
+            // digits like '8'/'9' which would be an error.
+            if(c >= '0' && c <= '7')
+            {
+                string octal = "";
+                octal = octal + c;
+                NextChar();
+                while (c >= '0' && c <= '7')
+                {
+                    octal += c;
+                    NextChar();
+                }
+                // step back one position because the calling loop will advance
+                pos--;
+                return (short)strtoul(octal.c_str(), null, 8);
+            }
+            else if(c == 'x' || c == 'X')
+            {
+                // Hex escape: require at least one hex digit. If none present,
+                // report an error and return 0 as a safe fallback.
+                string hex = "";
+                NextChar();
+                while ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
+                {
+                    hex += c;
+                    NextChar();
+                }
+                if (hex.length == 0)
+                {
+                    Error("Invalid hex escape sequence");
+                    // backtrack to keep scanner position consistent
+                    pos--;
+                    return (short)0;
+                }
+                pos--;
+
+                ulong value = strtoull(hex.c_str(), null, 16);
+
+                // For 4-byte unicode characters, we encode a surrogate pair.
+                if(value > 0xFFFFul)
+                {
+                    ulong codepoint = value - 0x10000ul;
+                    ushort highSurrogate = (short)(0xD800 + ((codepoint >> 10) & 0x3FF));
+                    ushort lowSurrogate = (short)(0xDC00 + (codepoint & 0x3FF));
+
+                    return 0x100000000ul | ((ulong)highSurrogate << 16) | (ulong)lowSurrogate;
+                }
+                
+                return (long)value;
             }
         }
         // Not an escape sequence: return the character unchanged

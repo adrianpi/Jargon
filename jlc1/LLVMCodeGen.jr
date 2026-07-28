@@ -194,7 +194,8 @@ class CodeGenVisitor : CodeVisitor
 	void VisitConstantExpression(ConstantExpression e, VisitMode mode) 
 	{
 		TypeSymbol dt = e.DataType;
-		if(dt.IsPointer() && dt.ElementType == TypeSymbol.Byte)
+		if(dt.IsPointer() && 
+			(dt.ElementType == TypeSymbol.Byte || dt.ElementType == TypeSymbol.Short))
 		{
 			e.Tag = string.format("@%s", e.CStr);
 		}
@@ -1786,6 +1787,24 @@ class CodeGenVisitor : CodeVisitor
 			int len = s.length + 1; // include terminating null
 			string esc = Escape(s);
 			sb.appendLine(string.format("@%s = private constant[%d x i8] c\"%s\\00\", align 1", key, len, esc));			
+		}
+
+		sb.appendLine(";==============================================================================");
+		sb.appendLine("; WStrings");
+		sb.appendLine(";==============================================================================");
+
+		for(int i = 0; i < cu.WStrings.count; ++i)
+		{
+			string key = cu.WStrings[i];
+			wstring s = module.WStrings[key];
+			int len = s.length + 1; // include terminating null
+			sb.appendLine(string.format("@%s = private constant[%d x i16] [", key, len));
+			for(int j = 0; j < s.length; ++j)
+			{
+				sb.appendLine(string.format("\ti16 %d,", s[j]));
+			}
+			sb.appendLine("\ti16 0");
+			sb.appendLine("], align 2");
 		}
 
 		// Emit declarations for external symbol references

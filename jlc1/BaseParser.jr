@@ -57,7 +57,8 @@ class CompileUnit
     array<ModuleUsing> Usings = new array<ModuleUsing>();
     array<Symbol> Symbols = new array<Symbol>();
     array<Symbol> SymbolRefs = new array<Symbol>();
-    array<string> Strings = new array<string> ();
+    array<string> Strings = new array<string>();
+    array<string> WStrings = new array<string>();
     array<CompileUnit> Children = new array<CompileUnit>();
     weak Function staticInit;
     weak Function staticDeInit;

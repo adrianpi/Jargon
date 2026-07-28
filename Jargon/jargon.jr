@@ -18,6 +18,15 @@ byte* strcat(byte *dst, byte *src) external;
 byte* strncpy(byte *dst, byte *src, long len) external;
 byte* strstr(byte *where, byte *what) external;
 byte* strchr(byte *src, byte c) external;
+int wcslen(short *str) external;
+int wcscmp(short *a, short *b) external;
+short* wcscpy(short *dst, short *src) external;
+short* wcscat(short *dst, short *src) external;
+short* wcsncpy(short *dst, short *src, long len) external;
+short wcsstr(short *where, short *what) external;
+short wcschr(short *src, short c) external;
+short towlower(short c) external;
+short towupper(short c) external;
 void* fopen(byte *fileName, byte *mode) external;
 void fclose(void *fptr) external;
 long ftell(void *fptr) external;
@@ -52,9 +61,12 @@ int _findnext64i32(long handle,  _finddata_t *file) external;
 void _findclose(long handle) external;
 
 void OutputDebugStringA(byte *str) external;
+void OutputDebugStringW(short *str) external;
 
 void __stdio_common_vsprintf(void *options, byte *buffer, long bufferCount, byte *fmt, void *locale, void *ap) external;
+void __stdio_common_vswprintf(void *options, short *buffer, long bufferCount, short *fmt, void *locale, void *ap) external;
 int vprintf(byte *fmt, void *ap) external;
+int vwprintf(short *fmt, void *ap) external;
 
 void va_start(void *ap) verbatim "call void @llvm.va_start.p0(ptr #ap)";
 void va_end(void *ap) verbatim "call void @llvm.va_end.p0(ptr #ap)";
@@ -127,6 +139,28 @@ float roundf(float x) external;
 float fmodf(float x, float y) external;
 float fabsf(float x) external;
 
+int WideCharToMultiByte(
+    uint CodePage,
+    uint dwFlags,
+    short* lpWideCharStr,
+    int cchWideChar,
+    byte* lpMultiByteStr,
+    int cbMultiByte,
+    byte* lpDefaultChar,
+    bool* lpUsedDefaultChar
+) external;
+
+int MultiByteToWideChar(
+    uint CodePage,
+    uint dwFlags,
+    short* lpMultiByteStr,
+    int cbMultiByte,
+    byte* lpWideCharStr,
+    int cchWideChar
+) external;
+
+const int CP_ACP = 0;
+
 void print(string *fmt, ...)
 {
 	void *ap;
@@ -144,6 +178,23 @@ void println(string *fmt, ...)
 	printf("\n");
 }
 
+void wprint(wstring *fmt, ...)
+{
+	void *ap;
+	va_start(ap);
+	vwprintf(fmt.c_str(), ap);
+	va_end(ap);
+}
+
+void wprintln(wstring *fmt, ...)
+{
+	void *ap;
+	va_start(ap);
+	vwprintf(fmt.c_str(), ap);
+	va_end(ap);
+	printf("\n");
+}
+
 void Log(string fmt, ...)
 {
 	byte buffer[4096];
@@ -152,6 +203,17 @@ void Log(string fmt, ...)
 	__stdio_common_vsprintf(null, buffer, 4096, fmt.c_str(), null, ap);
 	va_end(ap);
 	OutputDebugStringA(buffer);
+	OutputDebugStringA("\n");
+}
+
+void LogW(wstring fmt, ...)
+{
+	short buffer[4096];
+	void *ap;
+	va_start(ap);
+	__stdio_common_vswprintf(null, buffer, 4096, fmt.c_str(), null, ap);
+	va_end(ap);
+	OutputDebugStringW(buffer);
 	OutputDebugStringA("\n");
 }
 
@@ -617,6 +679,348 @@ bool operator>=(string *a, string *b)
 bool operator!(string *a)
 {
 	if(a == null || strcmp(a.str, "") == 0)
+		return true;
+	else	
+		return false;
+}
+
+//-----------------------------------------------------------------------------
+
+short __wcempty[1] = { 0 };
+
+class wstring
+{
+	short *str;
+	
+	wstring *constructor(short *pValue)
+	{
+		base();
+		str = (short*) memory.alloc((wcslen(pValue)+1)*2);
+		wcscpy(str, pValue);
+		return this;
+	}
+	
+	void destructor()
+	{
+		base();
+		memory.free(str);
+	}
+
+	long getHash()
+	{
+		short *ptr = str;
+		// two random prime numbers
+		ulong hash = 3253;
+        int c = 0;
+        while ((c = *ptr++))
+			hash += (ulong)c * 83UL;
+		hash = hash & 0x7fffffff; // keep positive
+        return (long)hash;
+	}
+
+	string* toString() 
+	{
+		int size = WideCharToMultiByte(
+			CP_ACP,
+			0,
+			str,
+			-1,
+			null,
+			0,
+			null,
+			null);
+
+		byte* ansi = memory.alloc(size);
+
+		WideCharToMultiByte(
+			CP_ACP,
+			0,
+			str,
+			-1,
+			ansi,
+			size,
+			null,
+			null);
+
+		return new string(ansi);
+	}
+
+	static wstring fromString(string str)
+	{
+		int size = MultiByteToWideChar(
+			CP_ACP,
+			0,
+			str.str,
+			-1,
+			null,
+			0);
+
+		short* wide = memory.alloc(size*2);
+
+		MultiByteToWideChar(
+			CP_ACP,
+			0,
+			str.str,
+			-1,
+			wide,
+			size);
+
+		return new wstring(wide);
+	}
+	
+	short * c_str()
+	{
+		if(this == null)
+			return null;
+		return str;
+	}
+	
+	int get length()
+	{
+		return wcslen(str);
+	}
+	
+	short get_item(int index)
+	{
+		return str[index];
+	}
+
+	wstring* substr(int start, int len)
+	{
+		if(length == 0)
+			return new wstring(__wcempty);
+		start = 0 >? start <? length;
+		len = len <? (length-start);
+		short *temp = memory.alloc((len+1)*2);
+		memset(temp, 0, (len+1)*2);
+		wcsncpy(temp, str + start, len);
+		wstring *result = new wstring(temp);
+		memory.free(temp);
+		return result;
+	}
+
+	wstring* toLower()
+	{
+		short *temp = memory.alloc((length+1)*2);
+		short *src = str;
+		short *dst = temp;
+		while(*src) 
+		{
+			short c = *src++;
+			c = towlower(c);
+			*dst++ = c;
+		}
+		*dst = 0;
+		wstring *result = new wstring(temp);
+		memory.free(temp);
+		return result;
+	}
+
+	wstring* toUpper()
+	{
+		short *temp = memory.alloc((length+1)*2);
+		short *src = str;
+		short *dst = temp;
+		while(*src) 
+		{
+			short c = *src++;
+			c = towupper(c);
+			*dst++ = c;
+		}
+		*dst = 0;
+		wstring *result = new wstring(temp);
+		memory.free(temp);
+		return result;
+	}
+
+	int indexOf(wstring *other)
+	{
+		short *pos = wcsstr(str, other.str);
+		if(pos == null)
+			return -1;
+		else
+			return pos - str;
+	}
+
+	int indexOfChar(byte c)
+	{
+		short *pos = wcschr(str, c);
+		if(pos == null)
+			return -1;
+		else
+			return pos - str;
+	}
+
+	int lastIndexOfChar(short c)
+	{
+		for(int i = length - 1; i >= 0; --i)
+		{
+			if(str[i] == c)
+				return i;
+		}
+		return -1;
+	}
+
+	bool contains(string *other)
+	{
+		return indexOf(other) != -1;
+	}
+
+	bool startsWith(string *other)
+	{
+		return indexOf(other) == 0;
+	}
+
+	bool endsWith(string *other)
+	{
+		if(other.length > length)
+			return false;
+		return wcscmp(str + length - other.length, other.str) == 0;
+	}
+
+	string* reverse()
+	{
+		short *temp = memory.alloc((length+1)*2);
+		wcscpy(temp, str);
+		for(int i = 0; i < length >> 1; i++) {
+			short c = temp[i];
+			temp[i] = temp[length-i-1];
+			temp[length-i-1] = c;
+		}
+		wstring *result = new wstring(temp);
+		memory.free(temp);
+		return result;
+	}
+
+	wstring* ltrim()
+	{
+		if(length == 0)
+			return new wstring(__wcempty);
+
+		int pos = 0;
+		while((this[pos] == ' ' || this[pos] == '\t' || this[pos] == '\r' || this[pos] == '\n') && pos < length)
+		{
+			pos++;
+		}
+		
+		return substr(pos, length-pos);
+	}
+
+	wstring* rtrim()
+	{
+		if(length == 0)
+			return new wstring(__wcempty);
+
+		int pos = length;
+		while((this[pos-1] == ' ' || this[pos-1] == '\t' || this[pos-1] == '\r' || this[pos-1] == '\n') && pos > 0)
+		{
+			pos--;
+		}
+
+		return substr(0, pos);
+	}
+
+	wstring* trim()
+	{
+		return ltrim().rtrim();
+	}
+
+	static wstring* format(wstring *fmt, ...)
+	{
+		short buffer[4096];
+		void *ap;
+		va_start(ap);
+		__stdio_common_vswprintf(null, buffer, 4096, fmt.c_str(), null, ap);
+		va_end(ap);
+		return new wstring(buffer);
+	}
+
+    wstring replace(wstring find, wstring repl)
+    {
+        wstring temp = this;
+        int idx = temp.indexOf(find);
+        while(idx != -1)
+        {
+            //temp = temp.substr(0, idx) + repl + temp.substr(idx + find.length, temp.length - (idx + find.length));
+			wstring a = temp.substr(0, idx);
+			wstring b = temp.substr(idx + find.length, temp.length - (idx + find.length));
+			int len = a.length + b.length + repl.length;
+			short *buff = (short*)memory.alloc((len+1)*2);
+			wcscpy(buff, a.c_str());
+			wcscat(buff, repl.c_str());
+			wcscat(buff, b.c_str());
+			temp = new wstring(buff);
+			memory.free(buff);
+            idx = temp.indexOf(find);
+        }
+        return temp;
+    }
+}
+
+wstring* operator+(wstring *a, wstring *b)
+{
+	short *mem = (byte*)memory.alloc((a.length+b.length+1)*2);
+	wcscpy(mem, a.c_str());
+	wcscat(mem, b.c_str());
+	wstring *result = new wstring(mem);
+	memory.free(mem);
+	return result;
+}
+
+wstring* operator+(wstring *a, short b)
+{
+	short *mem = (short*)memory.alloc((a.length+2)*2);
+	wcscpy(mem, a.c_str());
+	mem[a.length] = b;
+	mem[a.length+1] = 0;
+	wstring *result = new wstring(mem);
+	memory.free(mem);
+	return result;
+}
+
+wstring* operator+(short a, wstring *b)
+{
+	short *mem = (short*)memory.alloc((b.length+2)*2);
+	mem[0] = a;
+	wcscpy(mem+1, b.c_str());
+	wstring *result = new wstring(mem);
+	memory.free(mem);
+	return result;
+}
+
+bool operator==(wstring *a, wstring *b)
+{
+	return wcscmp(a.str, b.str) == 0;
+}
+
+bool operator!=(wstring *a, wstring *b)
+{
+	return wcscmp(a.str, b.str) != 0;
+}
+
+bool operator<(wstring *a, wstring *b)
+{
+	return wcscmp(a.str, b.str) < 0;
+}
+
+bool operator>(wstring *a, wstring *b)
+{
+	return wcscmp(a.str, b.str) > 0;
+}
+
+bool operator<=(wstring *a, wstring *b)
+{
+	return wcscmp(a.str, b.str) <= 0;
+}
+
+bool operator>=(wstring *a, wstring *b)
+{
+	return wcscmp(a.str, b.str) >= 0;
+}
+
+bool operator!(wstring *a)
+{
+	if(a == null || wcscmp(a.str, __wcempty) == 0)
 		return true;
 	else	
 		return false;
@@ -1850,6 +2254,7 @@ enum TypeCode
     Pointer,
     Struct,
     CStr,
+	CWStr,
 	Enum,	// Used only during serialization
 }
 

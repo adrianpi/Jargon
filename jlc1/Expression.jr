@@ -205,6 +205,14 @@ class ConstantExpression : Expression
 		return e;
 	}
 
+	static ConstantExpression FromWString(string key)
+	{
+		ConstantExpression e = new ConstantExpression();
+		e.type = TypeSymbol._short.GetPointerType();
+		e.CStr = key;
+		return e;
+	}
+
 	void Visit(CodeVisitor visitor, VisitMode mode)
 	{
 		visitor.VisitConstantExpression(this, mode);
