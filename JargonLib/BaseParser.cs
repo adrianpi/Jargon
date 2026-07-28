@@ -260,7 +260,9 @@ namespace Jargon
                 if (symbolType == SymbolType.Method && sr.Symbol.Parent.Parent != module)
                     FindOrImport((sr.Symbol as MethodSymbol).DataType.Name);
 
-                e = new FieldExpression(new SymbolExpression(function.Parameters[0]), sr.Symbol);
+                var fe = new FieldExpression(new SymbolExpression(function.Parameters[0]), sr.Symbol);
+                fe.line = e.line;
+                e = fe;
             }
         }
 
@@ -391,6 +393,7 @@ namespace Jargon
                 var fc = new FunctionCallExpression(new SymbolExpression(opovr));
                 fc.Arguments.Add(left);
                 fc.Arguments.Add(right);
+                fc.line = left.line;
                 left = fc;
                 return true;
             }
@@ -406,6 +409,7 @@ namespace Jargon
                 var fc = new FunctionCallExpression(new SymbolExpression(opovr));
                 fc.Arguments.Add(new AddressOfExpression(left));
                 fc.Arguments.Add(new AddressOfExpression(right));
+                fc.line = left.line;
                 left = fc;
                 return true;
             }
@@ -424,6 +428,7 @@ namespace Jargon
             {
                 var fc = new FunctionCallExpression(new SymbolExpression(opovr));
                 fc.Arguments.Add(e);
+                fc.line = e.line;
                 e = fc;
                 return true;
             }

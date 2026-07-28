@@ -223,6 +223,7 @@ namespace Jargon
 
                 var fn = FindOrImport("__typeof");
                 var fc = new FunctionCallExpression(new SymbolExpression(fn));
+                fc.line = scanner.GetLine();
                 var cname = module.AddString(type.Name);
                 unit.Strings.Add(cname);
                 fc.Arguments.Add(new ConstantExpression(cname));
@@ -259,6 +260,7 @@ namespace Jargon
                     new SymbolExpression(function.FindChild("this")),
                     m);
                 fe.Explicit = true;
+                fe.line = scanner.GetLine();
 
                 if (_class.BaseClass.Parent != module)
                     FindOrImport(m.DataType.Name);
@@ -473,6 +475,7 @@ namespace Jargon
                     }
 
                     left = new FieldExpression(left, field);
+                    left.line = scanner.GetLine();
                     SetContext(left, line);
                 }
                 else if (scanner.GetToken() == Token.LPar)
@@ -486,6 +489,7 @@ namespace Jargon
                     if (left is FieldExpression fe1 && fe1.Field is MethodSymbol ms1 && !fe1.Explicit && ms1.Flags.HasFlag(SymbolFlags.Virtual))
                     {
                         var vtf = new FieldExpression(fe1.Expression, fe1.Expression.DataType.ElementType.FindChild("vtable"));
+                        vtf.line = scanner.GetLine();
                         var vie = new IndexExpression(vtf, new ConstantExpression(ms1.VSlot));
                         var vcs = new CastExpression(vie, ms1.DataType.GetPointerType());
                         var vdr = new DerefExpression(vcs);
@@ -553,6 +557,7 @@ namespace Jargon
                     }
                     if (!Expect(Token.RPar))
                         return null;
+                    fc.line = scanner.GetLine();
                     left = fc;
                 }
             }
@@ -619,6 +624,7 @@ namespace Jargon
                 var cname = module.AddString(cls.Name);
                 unit.Strings.Add(cname);
                 fc.Arguments.Add(new ConstantExpression(cname));
+                fc.line = scanner.GetLine();
                 left = fc;
                 SetContext(left);
             }
@@ -681,6 +687,7 @@ namespace Jargon
                 var fn = FindOrImport("_dynamicCast");
                 var fc = new FunctionCallExpression(new SymbolExpression(fn));
                 fc.Arguments.Add(left);
+                fc.line = scanner.GetLine();
                 var cname = module.AddString(cls.Name);
                 unit.Strings.Add(cname);
                 fc.Arguments.Add(new ConstantExpression(cname));

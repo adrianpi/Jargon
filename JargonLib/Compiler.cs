@@ -287,17 +287,19 @@ namespace Jargon
                 FileName = "clang-cl.exe",
                 Arguments = $"{(compilerOptions.DebugInfo ? "-g " : "")} /MD {(isDLL ? "/LD " : "")} /{compilerOptions.OptimizationLevel} {flags} {inputFiles} -o \"{outputPath}\" /link {libs}{libPaths}",
                 UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
+                //RedirectStandardOutput = true,
+                //RedirectStandardError = true,
                 CreateNoWindow = true
             };
 
             OnError(CompilerError.Info(">" + startInfo.FileName + " " + startInfo.Arguments));
+            System.Diagnostics.Debug.WriteLine(">" + startInfo.FileName + " " + startInfo.Arguments);
 
             try
             {
                 using (var process = Process.Start(startInfo))
                 {
+#if false
                     // Read output and error streams (optional, for diagnostics)
                     string output = process.StandardOutput.ReadToEnd();
                     string error = process.StandardError.ReadToEnd();
@@ -344,7 +346,7 @@ namespace Jargon
                             }
                         }
                     }
-
+#endif
                     process.WaitForExit();
 
                     if (process.ExitCode == 0)
@@ -445,6 +447,7 @@ namespace Jargon
                     if (m.Flags.HasFlag(SymbolFlags.Virtual))
                     {
                         var vtf = new FieldExpression(ie.Expression, ie.Expression.DataType.ElementType.FindChild("vtable"));
+                        vtf.line = e.line;
                         var vie = new IndexExpression(vtf, new ConstantExpression(m.VSlot));
                         var vcs = new CastExpression(vie, m.DataType.GetPointerType());
                         var vdr = new DerefExpression(vcs);
@@ -482,6 +485,7 @@ namespace Jargon
                     if (ps.Setter.Flags.HasFlag(SymbolFlags.Virtual))
                     {
                         var vtf = new FieldExpression(fe.Expression, fe.Expression.DataType.ElementType.FindChild("vtable"));
+                        vtf.line = e.line;
                         var vie = new IndexExpression(vtf, new ConstantExpression(ps.Setter.VSlot));
                         var vcs = new CastExpression(vie, ps.Setter.DataType.GetPointerType());
                         var vdr = new DerefExpression(vcs);
@@ -589,6 +593,7 @@ namespace Jargon
                     if (ps.Getter.Flags.HasFlag(SymbolFlags.Virtual))
                     {
                         var vtf = new FieldExpression(e.Expression, e.Expression.DataType.ElementType.FindChild("vtable"));
+                        vtf.line = e.line;
                         var vie = new IndexExpression(vtf, new ConstantExpression(ps.Getter.VSlot));
                         var vcs = new CastExpression(vie, ps.Getter.DataType.GetPointerType());
                         var vdr = new DerefExpression(vcs);
@@ -701,6 +706,7 @@ namespace Jargon
                     if (m.Flags.HasFlag(SymbolFlags.Virtual))
                     {
                         var vtf = new FieldExpression(e.Expression, e.Expression.DataType.ElementType.FindChild("vtable"));
+                        vtf.line = e.line;
                         var vie = new IndexExpression(vtf, new ConstantExpression(m.VSlot));
                         var vcs = new CastExpression(vie, m.DataType.GetPointerType());
                         var vdr = new DerefExpression(vcs);
