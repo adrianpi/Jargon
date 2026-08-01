@@ -1978,12 +1978,12 @@ class file
 
 	long read(void *buffer, long size)
 	{
-		return fread(buffer, size, 1, fptr);
+		return fread(buffer, 1, size, fptr);
 	}
 
 	long write(void *buffer, long size)
 	{
-		return fwrite(buffer, size, 1, fptr);
+		return fwrite(buffer, 1, size, fptr);
 	}
 
 	void close()
