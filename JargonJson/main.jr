@@ -161,6 +161,7 @@ class JsonScanner
 							num += c;
 							NextChar();
 						} while((c >= '0' && c <= "9") || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'));
+						pos--;
 						// unicode not supported, truncation will occur
 						tokenString += (byte)strtoul(num, null, 16);
 					}
