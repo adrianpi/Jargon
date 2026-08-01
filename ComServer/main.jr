@@ -7,10 +7,12 @@ Register the COM server in the registry with the following keys:
 HKEY_CLASSES_ROOT
     CLSID
         {EF30D8D6-99C5-408B-B202-9BF19AB77667}
-            (Default)="My Jargon COM Object"
+            (Default)="Example Jargon COM Object"
             InprocServer32
                 (Default)="C:\Jargon\x64\Debug\ComServer.dll"
                 ThreadingModel="Apartment"
+
+You can also use regsvr32.exe from a privileged console.
 */
 
 [ComInterface("00000000-0000-0000-C000-000000000046")]
@@ -28,9 +30,16 @@ class IClassFactory : IUnknown
     virtual uint LockServer(bool fLock);
 }
 
-int instances = 0;
-int lockCount = 0;
+int g_instances = 0;
+int g_lockCount = 0;
+long g_hModule = 0;
+
 int MessageBoxA(long hWnd, byte* lpText, byte* lpCaption, uint uType) external;
+uint GetModuleFileNameW(long hModule, short* lpFilename, uint nSize) external;
+long RegCreateKeyExW(long hKey, short* lpSubKey, uint Reserved, short* lpClass, uint dwOptions, uint samDesired, void* lpSecurityAttributes, long* phkResult, uint* lpdwDisposition) external;
+long RegSetValueExW(long hKey, short* lpValueName, uint Reserved, uint dwType, byte* lpData, uint cbData) external;
+long RegCloseKey(long hKey) external;
+long RegDeleteTreeW(long hKey, short* lpSubKey) external;
 
 [ComInterface("A96BAFB4-5CDE-4560-A2EC-1B724984C621")]
 class IMyComObject : IUnknown
@@ -45,7 +54,7 @@ class MyComObject : IMyComObject
 
     MyComObject constructor()
     {
-        instances++;
+        g_instances++;
         return this;
     }
 
@@ -53,8 +62,7 @@ class MyComObject : IMyComObject
     {
         IID iidUnk = uuidof(IUnknown);
         IID iidIObj = uuidof(IMyComObject);
-        IID iidObj = uuidof(MyComObject);
-        if(GuidsEqual(*riid, iidUnk) || GuidsEqual(*riid, iidIObj) || GuidsEqual(*riid, iidObj))
+        if(GuidsEqual(*riid, iidUnk) || GuidsEqual(*riid, iidIObj))
         {
             *ppvObject = this;
             refCount++;
@@ -75,7 +83,7 @@ class MyComObject : IMyComObject
         if(rc == 0)
         {
             delete this;
-            instances--;
+            g_instances--;
         }
         return rc;
     }
@@ -135,9 +143,9 @@ class MyClassFactory : IClassFactory
     uint LockServer(bool fLock)
     {
         if(fLock)
-            ++lockCount;
+            ++g_lockCount;
         else
-            --lockCount;
+            --g_lockCount;
         return 0; // S_OK
     }
 }
@@ -157,7 +165,7 @@ uint DllGetClassObject(IID *rclsid, IID *riid, void **ppv)
 
 uint DllCanUnloadNow()
 {
-    if(instances == 0 && lockCount == 0)
+    if(g_instances == 0 && g_lockCount == 0)
         return 0; // S_OK
     else
         return 1; // S_FALSE
@@ -167,6 +175,7 @@ int DllStart(long hModule, int dwReason, void *pReserved)
 {
     if(dwReason == 1) // DLL_PROCESS_ATTACH
     {
+        g_hModule = hModule;
         myClassFactory = new MyClassFactory();
     }
     else if(dwReason == 0) // DLL_PROCESS_DETACH
@@ -178,4 +187,80 @@ int DllStart(long hModule, int dwReason, void *pReserved)
         }
     }
     return 1; // TRUE
+}
+
+uint DllRegisterServer()
+{
+    long HKEY_CLASSES_ROOT = 0x80000000;
+    uint KEY_WRITE = 0x20006;
+    uint REG_SZ = 1;
+
+    short dllPath[1024];
+    uint pathLen = GetModuleFileNameW(g_hModule, &dllPath[0], 1024);
+    if(pathLen == 0)
+    {
+        return 0x80004005; // E_FAIL
+    }
+
+    long hKeyCLSID = 0;
+    long hKeyGuid = 0;
+    long hKeyInproc = 0;
+    uint disposition = 0;
+
+    // Build the registry key path
+    wstring rootKey = L"CLSID\\{";
+    IID iid = uuidof(MyComObject);
+    rootKey += wstring.fromString(GuidToString(&iid));
+    rootKey += L"}";
+
+    // Delete the key first if it exists to ensure clean registration
+    RegDeleteTreeW(HKEY_CLASSES_ROOT, rootKey.c_str());
+
+    // Create key HKEY_CLASSES_ROOT\CLSID\{...}
+    long result = RegCreateKeyExW(HKEY_CLASSES_ROOT, rootKey.c_str(), 0, null, 0, KEY_WRITE, null, &hKeyGuid, &disposition);
+    if(result != 0)
+    {
+        return 0x80004005; // E_FAIL
+    }
+
+    wstring description = L"Example Jargon COM Object";
+    RegSetValueExW(hKeyGuid, null, 0, REG_SZ, description.c_str(), description.length * 2);
+    // Create InprocServer32 subkey
+    result = RegCreateKeyExW(hKeyGuid, L"InprocServer32", 0, null, 0, KEY_WRITE, null, &hKeyInproc, &disposition);
+    if(result != 0)
+    {
+        RegCloseKey(hKeyGuid);
+        return 0x80004005; // E_FAIL
+    }
+
+    // Set default value to DLL path
+    RegSetValueExW(hKeyInproc, null, 0, REG_SZ, dllPath, pathLen * 2);
+
+    // Set ThreadingModel
+    wstring threadingModel = L"Apartment";
+    RegSetValueExW(hKeyInproc, L"ThreadingModel", 0, REG_SZ, threadingModel.c_str(),
+        threadingModel.length * 2);
+
+    RegCloseKey(hKeyInproc);
+    RegCloseKey(hKeyGuid);
+
+    return 0; // S_OK
+}
+
+uint DllUnregisterServer()
+{
+    long HKEY_CLASSES_ROOT = 0x80000000;
+
+    // Delete HKEY_CLASSES_ROOT\CLSID\{...} and all subkeys
+    wstring rootKey = L"CLSID\\{";
+    IID iid = uuidof(MyComObject);
+    rootKey += wstring.fromString(GuidToString(&iid));
+    rootKey += L"}";
+
+    long result = RegDeleteTreeW(HKEY_CLASSES_ROOT, rootKey.c_str());
+
+    if(result != 0 && result != 2) // Allow ERROR_FILE_NOT_FOUND (2)
+        return 0x80004005; // E_FAIL
+
+    return 0; // S_OK
 }
