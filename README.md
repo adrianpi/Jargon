@@ -20,8 +20,8 @@
 - **Debug support** — generates debug information compatible with standard debuggers (`-g` flag)
 - **Interop with C** — direct declaration of external C functions
 - **Reflection** — RTTI API to inspect type info, properties, methods, enums and constants
-- **Unicode** - Unicode UTF-16 and UTF-8 support
-- **COM Support** - Use or implement COM classes and interfaces
+- **Unicode** — Unicode UTF-16 and UTF-8 support
+- **COM Support** — Use or implement COM classes and interfaces
 
 ## Project Structure
 
