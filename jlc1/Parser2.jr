@@ -341,7 +341,7 @@ class Parser2 : StageParser
         }
         else
         {
-            if(cls.Name == "object")
+            if(cls.Name == "object" || cls.Name == "IUnknown")
             {
                 // Root object class: create a vtable field which is a pointer
                 // to a pointer (i.e. void** convention). This special field is
@@ -350,9 +350,9 @@ class Parser2 : StageParser
                 vtable.Index = cls.FieldCount;
                 cls.FieldCount++;
                 vtable.Offset = 0;
-                    cls.SetSize(8);
+                cls.SetSize(8);
             }
-        }        
+        } 
 
         Function factory = cls.Factory;
 
@@ -398,6 +398,12 @@ class Parser2 : StageParser
                     if(attributes != null)
                     {
                         Error("Invalid attribute on const member");
+                        return false;
+                    }
+
+                    if(cls.IsComInterface())
+                    {
+                        Error("Const members not allowed in COM interface");
                         return false;
                     }
                 }
@@ -452,14 +458,33 @@ class Parser2 : StageParser
                     // Handle property-like getters/setters and constructors
                     if (decl.isGetter)
                     {
+                        if(cls.IsComInterface())
+                        {
+                            Error("Properties not allowed in COM interface");
+                            scope = prevScope;
+                            return false;
+                        }
                         fn.Name = string.format("get_%s", decl.name);
                     }
                     else if (decl.isSetter)
                     {
+                        if(cls.IsComInterface())
+                        {
+                            Error("Properties not allowed in COM interface");
+                            scope = prevScope;
+                            return false;
+                        }
                         fn.Name = string.format("set_%s", decl.name);
                     }
                     else if (fn.Name == "constructor")
                     {
+                        if(cls.IsComInterface())
+                        {
+                            Error("Constructors not allowed in COM interface");
+                            scope = prevScope;
+                            return false;
+                        }
+
                         // Add constructor parameters to the class factory
                         for(int i = 0; i < fn.Parameters.count; ++i)
                         {
@@ -468,6 +493,16 @@ class Parser2 : StageParser
                             p2.Offset = p.Offset;
                             factory.Parameters.add(p2);
                         }
+                    }
+                    else if(fn.Name == "destructor")
+                    {
+                        if(cls.IsComInterface())
+                        {
+                            Error("Destructors not allowed in COM interfaces");
+                            scope = prevScope;
+                            return false;
+
+                        }                        
                     }
 
                     string fname = fn.Name;
@@ -482,6 +517,15 @@ class Parser2 : StageParser
                         }
                         _this.Offset = 1;
                         fn.Parameters.insert(0, _this);
+                    }
+                    else
+                    {
+                        if(cls.IsComInterface())
+                        {
+                            Error("Static methods not allowed on COM interfaces");
+                            scope = prevScope;
+                            return false;
+                        }
                     }
 
                     // Create the method symbol that references the underlying function
@@ -557,6 +601,35 @@ class Parser2 : StageParser
 
                     VirtualizeMethod(ms, fn, cls, _static, _virtual);
 
+                    if(cls.IsComInterface() && (ms.Flags & SymbolFlags.Virtual) == 0)
+                    {
+                        Error("COM interface methods must be virtual");
+                        scope = prevScope;
+                        return false;
+                    }
+
+                    if(ms.Name == "destructor")
+                    {
+                        if(cls.IsComClass())
+                        {
+                            if((ms.Flags & SymbolFlags.Virtual) != 0)
+                            {
+                                Error("Destructors cannot be virtual for COM classes");
+                                scope = prevScope;
+                                return false;
+                            }
+                        }
+                        else
+                        {
+                            if((ms.Flags & SymbolFlags.Virtual) == 0)
+                            {
+                                Error("Destructors must be virtual");
+                                scope = prevScope;
+                                return false;
+                            }
+                        }
+                    }
+
                     // Static method extension: a static method whose first
                     // parameter is named 'this' is treated as an extension method
                     // for that type. The parser synthesizes an 'ext_<TypeName>'
@@ -585,6 +658,12 @@ class Parser2 : StageParser
                     // definition) or as a double-arrow shorthand or omitted.
                     if (scanner.Token == Token.LBrace)
                     {
+                        if(cls.IsComInterface())
+                        {
+                            Error("Method bodies not allowed in COM interface");
+                            scope = prevScope;
+                            return false;
+                        }
                         // Skip method body at this stage; later passes will parse
                         // the body and generate code.
                         SkipBraces();
@@ -596,12 +675,26 @@ class Parser2 : StageParser
                     }
                     else if(scanner.Token == Token.DoubleArrow)
                     {
+                        if(cls.IsComInterface())
+                        {
+                            Error("Method bodies not allowed in COM interface");
+                            scope = prevScope;
+                            return false;
+                        }
                         // Double-arrow indicates an inline code snippet that we
                         // skip until the trailing semicolon.
                         scanner.NextToken();
                         while (scanner.Token != Token.Semicolon && scanner.Token != Token.EOF)
                             scanner.NextToken();
                         if (!Expect(Token.Semicolon))
+                        {
+                            scope = prevScope;
+                            return false;
+                        }
+                    }
+                    else if(cls.IsComInterface())
+                    {
+                        if(!Expect(Token.Semicolon))
                         {
                             scope = prevScope;
                             return false;
@@ -616,6 +709,13 @@ class Parser2 : StageParser
                 }
                 else
                 {
+                    if(cls.IsComInterface())
+                    {
+                        Error("Fields not allowed in COM interface");
+                        scope = prevScope;
+                        return false;
+                    }
+
                     if(_const)
                     {
                         if(!Expect(Token.Assign))
@@ -717,47 +817,54 @@ class Parser2 : StageParser
                 return false;
             }
 
-            if (cls.Name != "object")
+            if(!cls.IsComInterface())
             {
-                // Ensure default constructor exists (delegates to base ctor)
-                MethodSymbol ownCtorMethod = cls.Find("constructor") as MethodSymbol;
-                if(ownCtorMethod == null)
+                if (cls.Name != "object")
                 {
-                    if (!CreateConstructor(cls))
+                    // Ensure default constructor exists (delegates to base ctor)
+                    MethodSymbol ownCtorMethod = cls.Find("constructor") as MethodSymbol;
+                    if(ownCtorMethod == null)
+                    {
+                        if (!CreateConstructor(cls))
+                        {
+                            scope = prevScope;
+                            return false;
+                        }
+                    }
+
+                    if(!cls.IsComClass())
+                    {
+                        // Add virtual getClassName() method used by runtime reflection
+                        if (!CreateGetClassNameMethod(cls))
+                        {
+                            scope = prevScope;
+                            return false;
+                        }                    
+                    }
+
+                    // Add finalizer method that releases member references and
+                    // chains to base finalize implementation.
+                    if (!CreateFinalizer(cls))
                     {
                         scope = prevScope;
                         return false;
                     }
-                }
 
-                // Add virtual getClassName() method used by runtime reflection
-                if (!CreateGetClassNameMethod(cls))
+                }        
+                // Create virtual table global var and populate its static init
+                if (!CreateVirtualTable(cls))
                 {
                     scope = prevScope;
                     return false;
                 }
 
-                // Add finalizer method that releases member references and
-                // chains to base finalize implementation.
-                if (!CreateFinalizer(cls))
+                // Create per-class instance initialization method called by the
+                // constructor to initialize instance fields.
+                if (!CreateInstanceInitMethod(cls))
                 {
                     scope = prevScope;
                     return false;
                 }
-            }        
-            // Create virtual table global var and populate its static init
-            if (!CreateVirtualTable(cls))
-            {
-                scope = prevScope;
-                return false;
-            }
-
-            // Create per-class instance initialization method called by the
-            // constructor to initialize instance fields.
-            if (!CreateInstanceInitMethod(cls))
-            {
-                scope = prevScope;
-                return false;
             }
             
             scope = prevScope;
@@ -779,34 +886,36 @@ class Parser2 : StageParser
         ownCtor.Body = new StatementBlock();
         unit.AddSymbol(ownCtor);
         MethodSymbol baseCtorMethod = cls.BaseClass.FindChild("constructor") as MethodSymbol;
-        if(baseCtorMethod == null)
+        if(baseCtorMethod != null)
         {
-            Error("No base ctor method");
-            return false;
+            Function baseCtorFn = baseCtorMethod.GetFunction();
+            if(baseCtorFn == null)
+            {
+                Error("No base ctor function");
+                return false;
+            }
+            FindOrImport(baseCtorFn.Name);
+            if (baseCtorFn.Parameters.count > 1)
+            {
+                Error(string.format("No default constructor for %s", cls.BaseClass.Name));
+                return false;
+            }
+            FunctionCallExpression baseFCall = new FunctionCallExpression(new SymbolExpression(baseCtorFn));
+            baseFCall.Arguments.add(new SymbolExpression(ownCtorThis));
+
+            LocalVariable lv = new LocalVariable(ownCtor.Body.Scope, string.format("__temp%d", scanner.Line), ownCtorThis.DataType, null);
+            lv.Offset = -(++ownCtor.LocalsCount);
+            ownCtor.Locals.add(lv);
+
+            AssignmentExpression assign = new AssignmentExpression(new SymbolExpression(lv), baseFCall);
+            ownCtor.Body.Statements.add(new ExpressionStatement(assign));
+
+            ownCtor.Body.Statements.add(new ReturnStatement(new SymbolExpression(lv)));
         }
-        Function baseCtorFn = baseCtorMethod.GetFunction();
-        if(baseCtorFn == null)
+        else
         {
-            Error("No base ctor function");
-            return false;
+            ownCtor.Body.Statements.add(new ReturnStatement(new SymbolExpression(ownCtorThis)));
         }
-        FindOrImport(baseCtorFn.Name);
-        if (baseCtorFn.Parameters.count > 1)
-        {
-            Error(string.format("No default constructor for %s", cls.BaseClass.Name));
-            return false;
-        }
-        FunctionCallExpression baseFCall = new FunctionCallExpression(new SymbolExpression(baseCtorFn));
-        baseFCall.Arguments.add(new SymbolExpression(ownCtorThis));
-
-        LocalVariable lv = new LocalVariable(ownCtor.Body.Scope, string.format("__temp%d", scanner.Line), ownCtorThis.DataType, null);
-        lv.Offset = -(++ownCtor.LocalsCount);
-        ownCtor.Locals.add(lv);
-
-        AssignmentExpression assign = new AssignmentExpression(new SymbolExpression(lv), baseFCall);
-        ownCtor.Body.Statements.add(new ExpressionStatement(assign));
-
-        ownCtor.Body.Statements.add(new ReturnStatement(new SymbolExpression(lv)));
 
         ownCtor.Flags += SymbolFlags.NoDebug;
 
@@ -871,7 +980,8 @@ class Parser2 : StageParser
             if (fs != null 
                 && fs.DataType.IsClassRef()
                 && (fs.Flags & SymbolFlags.Static) == 0
-                && (fs.Flags & SymbolFlags.Weak) == 0)
+                && (fs.Flags & SymbolFlags.Weak) == 0
+                && !((ClassType)fs.DataType.ElementType).IsComObject())
             {
                 // Generate call to object's release method for each strong
                 // reference field so destructor semantics are honored.
@@ -884,19 +994,26 @@ class Parser2 : StageParser
             }
         }
 
-        MethodSymbol baseFinalizeMethod = cls.BaseClass.FindChild("finalize") as MethodSymbol;
-        Function baseFinalize = baseFinalizeMethod.DataType as Function;
-        FindOrImport(baseFinalize.Name);
-        FunctionCallExpression baseCall = new FunctionCallExpression(new SymbolExpression(baseFinalize));
-        baseCall.Arguments.add(new SymbolExpression(finalizeThis));
-        finalize.Body.Statements.add(new ExpressionStatement(baseCall));
-
-        MethodSymbol finBase = cls.FindChild("finalize") as MethodSymbol;
-        int vslot = finBase.VSlot;
         MethodSymbol finalizeMethod = new MethodSymbol(cls, "finalize", finalize.DataType as Function);
-        finalizeMethod.VSlot = vslot;
-        finalizeMethod.Flags += SymbolFlags.Virtual;
-        cls.VirtualMethods[vslot] = finalizeMethod;
+
+        MethodSymbol baseFinalizeMethod = cls.BaseClass.FindChild("finalize") as MethodSymbol;
+        if(baseFinalizeMethod != null)
+        {
+            Function baseFinalize = baseFinalizeMethod.DataType as Function;
+            FindOrImport(baseFinalize.Name);
+            FunctionCallExpression baseCall = new FunctionCallExpression(new SymbolExpression(baseFinalize));
+            baseCall.Arguments.add(new SymbolExpression(finalizeThis));
+            finalize.Body.Statements.add(new ExpressionStatement(baseCall));
+        }
+
+        // Finalizers are not virtual for COM objects
+        if(!cls.IsComObject())
+        {
+            int vslot = baseFinalizeMethod.VSlot;
+            finalizeMethod.VSlot = vslot;
+            finalizeMethod.Flags += SymbolFlags.Virtual;
+            cls.VirtualMethods[vslot] = finalizeMethod;
+        }
 
         return true;
     }

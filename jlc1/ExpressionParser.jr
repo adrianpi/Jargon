@@ -349,6 +349,12 @@ class ExpressionParser : BaseParser
             if(ts.IsClassRef())
                 ts = ts.ElementType;
 
+            if(ts is ClassType && ((ClassType)ts).IsComObject())
+            {
+                Error("Invalid operation for COM objects");
+                return null;
+            }
+
             FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(fn));
             string cname = module.AddString(ts.Name);
             unit.Strings.add(cname);
@@ -449,6 +455,35 @@ class ExpressionParser : BaseParser
             for(int i = 0; i < args.count; ++i)
                 ctorCall.Arguments.add(args[i]);
             return ctorCall;
+        }
+        else if(IsKeyword("uuidof"))
+        {
+            if(!Expect(Token.LPar))
+                return null;
+            ClassType ccls = ParseClassType();
+            if (ccls == null)
+            {
+                Error("Class expected");
+                return null;
+            }
+            if(!ccls.IsComObject())
+            {
+                Error("Not a COM interface or class");
+                return null;
+            }
+            if(!Expect(Token.RPar))
+                return null;
+            Function fn = FindOrImport("__uuidof");
+            if(fn == null)
+            {
+                Error("Internal error: Function '__uuidof' not found");
+                return null;
+            }
+            FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(fn));
+            string ccname = module.AddString(ccls.Name);
+            unit.Strings.add(ccname);
+            fc.Arguments.add(ConstantExpression.FromString(ccname));
+            return fc;
         }
 		else
 		{
@@ -760,6 +795,11 @@ class ExpressionParser : BaseParser
                 Error("Class expected");
                 return null;
             }
+            if(cls.IsComObject())
+            {
+                Error("Invalid operation for COM objects");
+                return null;
+            }
             Function fn = FindOrImport("_isClassOf");
             if(fn == null)
             {
@@ -786,6 +826,11 @@ class ExpressionParser : BaseParser
             if (cls == null)
             {
                 Error("Class expected");
+                return null;
+            }
+            if(cls.IsComObject())
+            {
+                Error("Invalid operation for COM objects");
                 return null;
             }
             Function fn = FindOrImport("_dynamicCast");

@@ -30,7 +30,7 @@ class Parser4 : StageParser
         for (int i = unit.Symbols.count - 1; i >= 0; --i)
         {
             GlobalVariable gv = unit.Symbols[i] as GlobalVariable;
-            if (gv != null && gv.DataType.IsPointer() && gv.DataType.ElementType.IsClass())
+            if (gv != null && gv.DataType.IsClassRef() && !((ClassType)gv.DataType.ElementType).IsComObject())
             {
                 FunctionCallExpression fc = new FunctionCallExpression(new SymbolExpression(releaseFn));
                 fc.Arguments.add(new SymbolExpression(gv));
@@ -182,6 +182,13 @@ class Parser4 : StageParser
                         scope = fn.Parent;
                         function = null;
                     }
+                    else if(cls.IsComInterface())
+                    {
+                        if(!Expect(Token.Semicolon))
+                        {
+                            return false;
+                        }
+                    }
                     else
                     {
                         Error("Syntax error");
@@ -265,8 +272,11 @@ class Parser4 : StageParser
             // Update the per-class instance init method so that it assigns
             // any initializer expressions to instance fields. This populates
             // the __init body with assignment statements and a return of 'this'.
-            if (!UpdateInstanceInitMethod(cls))
-                return false;
+            if(!cls.IsComInterface())
+            {
+                if (!UpdateInstanceInitMethod(cls))
+                    return false;
+            }
 
             return Expect(Token.RBrace);
         }
@@ -866,43 +876,80 @@ class Parser4 : StageParser
         StatementBlock sb = new StatementBlock();
 
         MethodSymbol dtor = cls.FindChild("destructor") as MethodSymbol;
-        if(dtor == null)
+        if(dtor == null && !cls.IsComClass())
         {
             Error("Internal error: No destructor found in class hierarchy");
         }
 
-        if ((dtor.Flags & SymbolFlags.Virtual) != 0)
+        if(!cls.IsComClass())
         {
-            FunctionCallExpression fc = ExpressionParser.GetMethodInvocation(dtor, e, false);
-            fc.line = e.line;
-            fc.Arguments.add(e);
-            sb.Statements.add(new ExpressionStatement(fc));
+            if ((dtor.Flags & SymbolFlags.Virtual) != 0)
+            {
+                FunctionCallExpression fc = ExpressionParser.GetMethodInvocation(dtor, e, false);
+                fc.line = e.line;
+                fc.Arguments.add(e);
+                sb.Statements.add(new ExpressionStatement(fc));
+            }
+            else
+            {
+                // Destructors are expected to be virtual in this language
+                Error("Internal error: Destructors must be virtual");
+                return null;
+            }
         }
-        else
+        else if(dtor != null)
         {
-            // Destructors are expected to be virtual in this language
-            Error("Internal error: Destructors must be virtual");
-            return null;
+            if ((dtor.Flags & SymbolFlags.Virtual) != 0)
+            {            
+                Error("Internal error: Destructors cannot be virtual for COM classes");
+                return null;
+            }
+            else
+            {
+                FunctionCallExpression fc = ExpressionParser.GetMethodInvocation(dtor, e, false);
+                fc.line = e.line;
+                fc.Arguments.add(e);
+                sb.Statements.add(new ExpressionStatement(fc));
+            }
         }
 
         MethodSymbol finalize = cls.FindChild("finalize") as MethodSymbol;
 
         if(finalize != null)
         {
-            if((finalize.Flags & SymbolFlags.Virtual) != 0)
+            if(!cls.IsComClass())
             {
-                FunctionCallExpression fc = ExpressionParser.GetMethodInvocation(finalize, e, false);
-                fc.Arguments.add(e);
-                fc.line = e.line;
-                sb.Statements.add(new ExpressionStatement(fc));
+                if((finalize.Flags & SymbolFlags.Virtual) != 0)
+                {
+                    FunctionCallExpression fc = ExpressionParser.GetMethodInvocation(finalize, e, false);
+                    fc.Arguments.add(e);
+                    fc.line = e.line;
+                    sb.Statements.add(new ExpressionStatement(fc));
+                }
+                else
+                {
+                    Error("Internal error: Finalizer should be virtual");
+                    return null;
+                }
             }
             else
             {
-                Error("Finalizer should be virtual");
+                if((finalize.Flags & SymbolFlags.Virtual) != 0)
+                {
+                    Error("Internal error: Finalizer should not be virtual for COM classes");
+                    return null;
+                }
+                else
+                {
+                    FunctionCallExpression fc = ExpressionParser.GetMethodInvocation(finalize, e, false);
+                    fc.Arguments.add(e);
+                    fc.line = e.line;
+                    sb.Statements.add(new ExpressionStatement(fc));
+                }
             }
         }
 
-        Function free = module.Find("free") as Function;
+        Function free = FindOrImport("memory__free");
         if (free != null)
         {
             FunctionCallExpression fcall = new FunctionCallExpression(new SymbolExpression(free));
@@ -911,7 +958,8 @@ class Parser4 : StageParser
         }
         else
         {
-            Error("free() not found");
+            Error("memory_free() not found");
+            return null;
         }
 
         return sb;

@@ -79,6 +79,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Reflection", "Reflection\Re
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "JargonJson", "JargonJson\JargonJson.vcxproj", "{81CE18E6-3A95-42E4-9E46-FA9112C1638B}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ComServer", "ComServer\ComServer.vcxproj", "{18AED1A9-F91A-47D0-8B24-26071FA31CF3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -239,6 +241,14 @@ Global
 		{81CE18E6-3A95-42E4-9E46-FA9112C1638B}.Release|Any CPU.Build.0 = Release|x64
 		{81CE18E6-3A95-42E4-9E46-FA9112C1638B}.Release|x64.ActiveCfg = Release|x64
 		{81CE18E6-3A95-42E4-9E46-FA9112C1638B}.Release|x64.Build.0 = Release|x64
+		{18AED1A9-F91A-47D0-8B24-26071FA31CF3}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{18AED1A9-F91A-47D0-8B24-26071FA31CF3}.Debug|Any CPU.Build.0 = Debug|x64
+		{18AED1A9-F91A-47D0-8B24-26071FA31CF3}.Debug|x64.ActiveCfg = Debug|x64
+		{18AED1A9-F91A-47D0-8B24-26071FA31CF3}.Debug|x64.Build.0 = Debug|x64
+		{18AED1A9-F91A-47D0-8B24-26071FA31CF3}.Release|Any CPU.ActiveCfg = Release|x64
+		{18AED1A9-F91A-47D0-8B24-26071FA31CF3}.Release|Any CPU.Build.0 = Release|x64
+		{18AED1A9-F91A-47D0-8B24-26071FA31CF3}.Release|x64.ActiveCfg = Release|x64
+		{18AED1A9-F91A-47D0-8B24-26071FA31CF3}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -263,6 +273,7 @@ Global
 		{BF07B11A-66AA-4B84-9C74-3A881532731E} = {50E80652-B408-444A-8A67-2D819994EB59}
 		{E36AD904-3B6E-42F7-9B73-FEF809E08EF7} = {50E80652-B408-444A-8A67-2D819994EB59}
 		{81CE18E6-3A95-42E4-9E46-FA9112C1638B} = {6C390832-E7F1-4756-9BEE-59AA06E0C657}
+		{18AED1A9-F91A-47D0-8B24-26071FA31CF3} = {50E80652-B408-444A-8A67-2D819994EB59}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {B4A63E25-8C9B-4AE7-9171-8220235AA53C}

@@ -187,7 +187,7 @@ class Compiler : CompilerErrorListener
         {
 			Symbol c = cu.Symbols[j];
 			Function fn = c as Function;
-            if (fn != null)
+            if (fn != null && fn.Body != null)
             {
                 // Skip external declarations which have no body
                 if ((fn.Flags &SymbolFlags.External) != 0)
@@ -558,7 +558,8 @@ class Compiler : CompilerErrorListener
 				if(!options.NoStartup)
 				{
 					libList += "StartupDLL.lib"; // link with startup code for DLLs
-					subsys += " /INCLUDE:DllMain";
+					//subsys += " /INCLUDE:DllMain";
+					subsys += " /WHOLEARCHIVE:StartupDLL.lib";
 				}
 			}
 			else if(!options.NoStartup)

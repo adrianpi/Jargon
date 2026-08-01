@@ -53,8 +53,11 @@ class Parser3 : StageParser
 
             // Create factory function for new operator: this synthesizes the
             // runtime allocation and init/constructor call chain.
-            if (!CreateFactoryFunction(cls))
-                return false;                
+            if(!cls.IsComInterface())
+            {
+                if (!CreateFactoryFunction(cls))
+                    return false;                
+            }
 
             _class = null;
             return Expect(Token.RBrace);
@@ -119,11 +122,13 @@ class Parser3 : StageParser
             hc = hc.BaseClass;
         }
         hierarchy.reverse(); // make class hierarchy top-down
-        Expression arg = newObjCall;
+        Expression arg = new CastExpression(newObjCall, cls.GetPointerType());
         // Wrap allocation with successive init calls: arg = init(arg)
         for(int i = 0; i < hierarchy.count; ++i)
         {
             ClassType c = hierarchy[i];
+            if(c.IsComInterface())
+                continue;
             Function initFn = FindOrImport(string.format("%s__init", c.Name));
             if(initFn == null)
             {

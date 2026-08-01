@@ -113,6 +113,109 @@ class Symbol
 
     // Visitor entrypoint for code generation / transforms. Subclasses override.
     virtual void Visit(CodeVisitor visitor) {}
+
+    bool HasAttribute(string name)
+	{
+		if(attributes == null)
+			return false;
+
+		string key = name + "(";
+		for(int i = 0; i < attributes.count; ++i)
+		{
+			string attr = attributes[i];
+			if(attr.startsWith(key))
+				return true;
+		}
+		return false;
+	}
+
+	array<string> GetAttributes()
+	{
+		array<string> result = new array<string>();
+		if(attributes != null)
+		{
+			for(int i = 0; i < attributes.count; ++i)
+			{
+				string attr = attributes[i];
+				int pos = attr.indexOfChar('(');
+				if(pos != -1)
+					attr = attr.substr(0, pos);
+				result.add(attr);
+			}
+		}
+		return result;
+	}
+
+	bool GetAttributeBool(string name)
+	{
+		if(attributes == null)
+			return false;
+
+		string key = name + "(";
+		for(int i = 0; i < attributes.count; ++i)
+		{
+			string attr = attributes[i];
+			if(attr.startsWith(key))
+			{
+				int pos = attr.indexOfChar(')');
+				if(pos != -1)
+				{
+					string value = attr.substr(key.length, pos-key.length);
+					return value == "true";
+				}
+			}
+		}
+		return false;
+	}
+
+	int GetAttributeInt(string name)
+	{
+		if(attributes == null)
+			return 0;
+
+		string key = name + "(";
+		for(int i = 0; i < attributes.count; ++i)
+		{
+			string attr = attributes[i];
+			if(attr.startsWith(key))
+			{
+				int pos = attr.indexOfChar(')');
+				if(pos != -1)
+				{
+					string value = attr.substr(key.length, pos-key.length);
+					return atoi(value.c_str());
+				}
+			}
+		}
+		return 0;
+	}
+
+	string GetAttributeString(string name)
+	{
+		if(attributes == null)
+			return null;
+
+		string key = name + "(";
+		for(int i = 0; i < attributes.count; ++i)
+		{
+			string attr = attributes[i];
+			if(attr.startsWith(key))
+			{
+				int pos = attr.indexOfChar(')');
+				if(pos != -1)
+				{
+					string value = attr.substr(key.length, pos-key.length);
+					if(value.startsWith("\"") && value.endsWith("\""))
+					{
+						value = value.substr(1, value.length-2);
+						return value;
+					}
+					return null;
+				}
+			}
+		}
+		return null;
+	}
 }
 
 // RootSymbol: singleton root of the global symbol tree. Useful for canonical
@@ -615,6 +718,10 @@ class ClassType : TypeSymbol
     int FieldCount;                    // number of instance fields
     array<MethodSymbol> VirtualMethods; // vtable layout
     weak Function Factory;             // factory function (e.g. for 'new')
+
+    bool IsComInterface() => (Flags & SymbolFlags.ComInterface) != 0;
+    bool IsComClass() => (Flags & SymbolFlags.ComClass) != 0;
+    bool IsComObject() => (Flags & SymbolFlags.ComMask) != 0;
     
     ClassType constructor(Symbol parent, string name)
         

@@ -1,0 +1,181 @@
+using jargon;
+
+/*
+
+Register the COM server in the registry with the following keys:
+
+HKEY_CLASSES_ROOT
+    CLSID
+        {EF30D8D6-99C5-408B-B202-9BF19AB77667}
+            (Default)="My Jargon COM Object"
+            InprocServer32
+                (Default)="C:\Jargon\x64\Debug\ComServer.dll"
+                ThreadingModel="Apartment"
+*/
+
+[ComInterface("00000000-0000-0000-C000-000000000046")]
+class IUnknown
+{
+    virtual uint QueryInterface(IID* riid, void** ppvObject);
+    virtual uint AddRef();
+    virtual uint Release();
+}
+
+[ComInterface("00000001-0000-0000-C000-000000000046")]
+class IClassFactory : IUnknown
+{
+    virtual uint CreateInstance(IUnknown* pUnkOuter, IID* riid, void** ppvObject);
+    virtual uint LockServer(bool fLock);
+}
+
+int instances = 0;
+int lockCount = 0;
+int MessageBoxA(long hWnd, byte* lpText, byte* lpCaption, uint uType) external;
+
+[ComInterface("A96BAFB4-5CDE-4560-A2EC-1B724984C621")]
+class IMyComObject : IUnknown
+{
+    virtual void Foo();
+}
+
+[ComClass("EF30D8D6-99C5-408B-B202-9BF19AB77667")]
+class MyComObject : IMyComObject
+{
+    int refCount = 1;
+
+    MyComObject constructor()
+    {
+        instances++;
+        return this;
+    }
+
+    uint QueryInterface(IID* riid, void** ppvObject)
+    {
+        IID iidUnk = uuidof(IUnknown);
+        IID iidIObj = uuidof(IMyComObject);
+        IID iidObj = uuidof(MyComObject);
+        if(GuidsEqual(*riid, iidUnk) || GuidsEqual(*riid, iidIObj) || GuidsEqual(*riid, iidObj))
+        {
+            *ppvObject = this;
+            refCount++;
+            return 0; // S_OK
+        }
+        *ppvObject = null;
+        return 0x80004002; // E_NOINTERFACE
+    }
+
+    uint AddRef()
+    {
+        return ++refCount;
+    }
+
+    uint Release()
+    {
+        int rc = --refCount;
+        if(rc == 0)
+        {
+            delete this;
+            instances--;
+        }
+        return rc;
+    }
+
+    virtual void Foo()
+    {
+        MessageBoxA(0, "Foo method called", "MyComObject", 0);
+    }
+}
+
+[ComClass("998C9DE2-5ADC-4FE5-ABAA-8431FD340E06")]
+class MyClassFactory : IClassFactory
+{
+    int refCount = 1;
+
+    uint QueryInterface(IID* riid, void** ppvObject)
+    {
+        IID iidUnk = uuidof(IUnknown);
+        IID iidFact = uuidof(IClassFactory);
+        if(GuidsEqual(*riid, iidUnk) || GuidsEqual(*riid, iidFact))
+        {
+            *ppvObject = this;
+            refCount++;
+            return 0; // S_OK
+        }
+        *ppvObject = null;
+        return 0x80004002; // E_NOINTERFACE
+    }
+
+    uint AddRef()
+    {
+        return ++refCount;
+    }
+
+    uint Release()
+    {
+        int rc = --refCount;
+        if(rc == 0)
+            delete this;
+        return rc;
+    }
+
+    uint CreateInstance(IUnknown* pUnkOuter, IID* riid, void** ppvObject)
+    {
+        if (pUnkOuter != null)
+            return 0x80040110L; // CLASS_E_NOAGGREGATION
+
+        if(GuidsEqual(*riid, uuidof(IMyComObject)))
+        {
+            MyComObject* obj = new MyComObject();
+            *ppvObject = obj;
+            return 0;
+        }
+        return 0x80004002; // E_NOINTERFACE
+    }
+
+    uint LockServer(bool fLock)
+    {
+        if(fLock)
+            ++lockCount;
+        else
+            --lockCount;
+        return 0; // S_OK
+    }
+}
+
+MyClassFactory myClassFactory = null;
+
+uint DllGetClassObject(IID *rclsid, IID *riid, void **ppv)
+{
+    IID id = uuidof(MyComObject);
+    if(GuidsEqual(*rclsid, uuidof(MyComObject)))
+    {
+        uint hr = myClassFactory.QueryInterface(riid, ppv);
+        return hr;
+    }
+    return 0x80040111; // CLASS_E_CLASSNOTAVAILABLE
+}
+
+uint DllCanUnloadNow()
+{
+    if(instances == 0 && lockCount == 0)
+        return 0; // S_OK
+    else
+        return 1; // S_FALSE
+}
+
+int DllStart(long hModule, int dwReason, void *pReserved)
+{
+    if(dwReason == 1) // DLL_PROCESS_ATTACH
+    {
+        myClassFactory = new MyClassFactory();
+    }
+    else if(dwReason == 0) // DLL_PROCESS_DETACH
+    {
+        if(myClassFactory != null)
+        {
+            myClassFactory.Release();
+            myClassFactory = null;
+        }
+    }
+    return 1; // TRUE
+}

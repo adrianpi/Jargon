@@ -1,6 +1,6 @@
 // Startup code for the Jargon Runtime.
 // This is the entry point for the runtime and is responsible for initializing
-// the runtime and calling the WinStart() function of the Win32 program.
+// the runtime and calling the DllMain() function of the user DLL.
 
 using jargon;
 

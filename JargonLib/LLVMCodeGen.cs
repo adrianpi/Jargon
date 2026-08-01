@@ -1364,6 +1364,9 @@ namespace Jargon
             string linkage = f.Flags.HasFlag(SymbolFlags.Internal) ? "internal " : (isDLL ? "dllexport " : "");
             bool inOtherUnit = Unit != null && f.Unit != Unit;
 
+            if(f.Name == "DllMain")
+                linkage = "";
+
             if (f.Flags.HasFlag(SymbolFlags.External) || inOtherUnit)
                 sb.Append($"declare {IRType(f.ReturnType)} @{f.Name}(");
             else

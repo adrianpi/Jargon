@@ -5,49 +5,59 @@ using jargon;
 // It creates an instance of the engine, sets up a minimal 
 // IActiveScriptSite implementation, and runs a simple script.
 //
-// It also registers a named item "MyObject" which is a custom
+// It registers a named item "MyObject" which is a custom
 // IDispatch object with a SayHello(name) method that can be
 // called from JavaScript.
+//
+// It also instantiates and uses a MyComObject object from the 
+// ComServer example.
 ///////////////////////////////////////////////////////////////
 
-// ============================================================
-// COM type definitions (IUnknown, IDispatch, VARIANT, etc.)
-// ============================================================
-
-struct IID
+[ComInterface("00000000-0000-0000-C000-000000000046")]
+class IUnknown
 {
-    uint Data1;
-    ushort Data2;
-    ushort Data3;
-    byte Data4[8];
+    virtual uint QueryInterface(IID* riid, void** ppvObject);
+    virtual uint AddRef();
+    virtual uint Release();
 }
 
-struct IUnknownInterface
+[ComInterface("00020400-0000-0000-C000-000000000046")]
+class IDispatch : IUnknown
 {
-    void* (*QueryInterface)(void *self, IID *riid, void **ppvObject);
-    uint (*AddRef)(void *self);
-    uint (*Release)(void *self);
+    virtual uint GetTypeInfoCount(uint *pctinfo);
+    virtual uint GetTypeInfo(uint iTInfo, uint lcid, void **ppTInfo);
+    virtual uint GetIDsOfNames(IID *riid, short **rgszNames, uint cNames, uint lcid, int *rgDispId);
+    virtual uint Invoke(int dispIdMember, IID *riid, uint lcid, ushort wFlags, void *pDispParams, void *pVarResult, void *pExcepInfo, uint *puArgErr);
 }
 
-struct IUnknown
-{
-    IUnknownInterface* lpVtbl;
+struct EXCEPINFO {
+    ushort  wCode;
+    ushort  wReserved;
+    short*  bstrSource;
+    short*  bstrDescription;
+    short*  bstrHelpFile;
+    uint    dwHelpContext;
+    void*   pvReserved;
+    void*   pfnDeferredFillIn;
+    int     scode;
 }
 
-struct IDispatchInterface
+[ComInterface("BB1A2AE1-A4F9-11CF-8F20-00805F2CD064")]
+class IActiveScript : IUnknown
 {
-    void* (*QueryInterface)(void *self, IID *riid, void **ppvObject);
-    uint (*AddRef)(void *self);
-    uint (*Release)(void *self);
-    uint (*GetTypeInfoCount)(void *self, uint *pctinfo);
-    uint (*GetTypeInfo)(void *self, uint iTInfo, uint lcid, void **ppTInfo);
-    uint (*GetIDsOfNames)(void *self, IID *riid, short **rgszNames, uint cNames, uint lcid, int *rgDispId);
-    uint (*Invoke)(void *self, int dispIdMember, IID *riid, uint lcid, ushort wFlags, void *pDispParams, void *pVarResult, void *pExcepInfo, uint *puArgErr);
-}
-
-struct IDispatch
-{
-    IDispatchInterface* lpVtbl;
+    virtual uint SetScriptSite(void *pScriptSite);
+    virtual uint GetScriptSite(IID *riid, void **ppvObject);
+    virtual uint SetScriptState(uint ss);
+    virtual uint GetScriptState(uint *pssState);
+    virtual uint Close();
+    virtual uint AddNamedItem(short *pstrName, uint dwFlags);
+    virtual uint AddTypeLib(IID *rguidTypeLib, uint dwMajor, uint dwMinor, uint dwFlags);
+    virtual uint GetScriptDispatch(short *pstrItemName, IDispatch **ppdisp);
+    virtual uint GetCurrentScriptThreadID(uint *pstidThread);
+    virtual uint GetScriptThreadID(uint dwWin32ThreadId, uint *pstidThread);
+    virtual uint GetScriptThreadState(uint stidThread, uint *pstsState);
+    virtual uint InterruptScriptThread(uint stidThread, EXCEPINFO *pexcepinfo, uint dwFlags);
+    virtual uint Clone(void **ppscript);
 }
 
 struct DECIMAL
@@ -99,21 +109,53 @@ struct DISPPARAMS {
     uint cNamedArgs;
 }
 
-struct EXCEPINFO {
-    ushort  wCode;
-    ushort  wReserved;
-    short*  bstrSource;
-    short*  bstrDescription;
-    short*  bstrHelpFile;
-    uint    dwHelpContext;
-    void*   pvReserved;
-    void*   pfnDeferredFillIn;
-    int     scode;
+[ComInterface("C7EF7658-E1EE-480E-97EA-D52CB4D76D17")]
+class IActiveScriptParse : IUnknown
+{
+    virtual uint InitNew();
+    virtual uint AddScriptlet(
+        short *pstrDefaultName, short *pstrCode, short *pstrItemName,
+        short *pstrSubItemName, short *pstrEventName, short *pstrDelimiter,
+        ulong dwSourceContextCookie, uint ulStartingLineNumber,
+        uint dwFlags, short **pbstrName, EXCEPINFO *pexcepinfo);
+    virtual uint ParseScriptText(
+        short *pstrCode, short *pstrItemName, void *punkContext,
+        short *pstrDelimiter, ulong dwSourceContextCookie,
+        uint ulStartingLineNumber, uint dwFlags,
+        VARIANT *pvarResult, EXCEPINFO *pexcepinfo);
 }
 
-// ============================================================
-// VT / DISPATCH constants
-// ============================================================
+[ComInterface("DB01A1E3-A42B-11CF-8F20-00805F2CD064")]
+class IActiveScriptSite : IUnknown
+{
+    virtual uint QueryLcid(uint *plcid);
+    virtual uint GetItemInfo(short *pstrName, uint dwReturnMask, IUnknown **ppunkItem, void **ppti);
+    virtual uint GetDocVersionString(short **pbstrVersion);
+    virtual uint OnScriptTerminate(VARIANT *pvarResult, EXCEPINFO *pei);
+    virtual uint OnStateChange(uint ssScriptState);
+    virtual uint OnScriptError(void *pScriptError);
+    virtual uint OnEnterScript();
+    virtual uint OnLeaveScript();
+}
+
+uint CoInitialize(void *pvReserved) external;
+void CoUninitialize() external;
+uint CoCreateInstance(IID *rclsid, long pUnkOuter, uint dwClsContext, IID *riid, void **ppv) external;
+uint VariantInit(VARIANT *pvarg) external;
+void VariantClear(VARIANT *pvarg) external;
+short* SysAllocString(short *psz) external;
+void SysFreeString(short *psz) external;
+
+const uint SCRIPTSTATE_UNINITIALIZED = 0;
+const uint SCRIPTSTATE_INITIALIZED   = 5;
+const uint SCRIPTSTATE_STARTED       = 1;
+const uint SCRIPTSTATE_CONNECTED     = 2;
+const uint SCRIPTSTATE_DISCONNECTED  = 3;
+const uint SCRIPTSTATE_CLOSED        = 4;
+
+const uint SCRIPTTEXT_ISEXPRESSION = 0x00000020;
+
+const uint LOCALE_USER_DEFAULT = 0x0400;
 
 const ushort VT_EMPTY    = 0;
 const ushort VT_BSTR     = 8;
@@ -124,438 +166,206 @@ const ushort DISPATCH_METHOD      = 0x1;
 const ushort DISPATCH_PROPERTYGET = 0x2;
 const ushort DISPATCH_PROPERTYPUT = 0x4;
 
-const uint LOCALE_USER_DEFAULT = 0x0400;
-const int  DISPID_PROPERTYPUT  = 0xFFFFFFFD; //-3
+const uint SCRIPTITEM_ISVISIBLE      = 0x00000002; 
 
-const uint SCRIPTTEXT_ISEXPRESSION = 0x00000020;
+//////////////////////////////////////////////////////////
 
-// ============================================================
-// IActiveScript interface
-// ============================================================
-
-struct IActiveScriptInterface
+[ComClass("10D51383-4EBE-430C-A7E0-D37F82932BFE")]
+class MyObject : IDispatch
 {
-    // IUnknown
-    void* (*QueryInterface)(void *self, IID *riid, void **ppvObject);
-    uint  (*AddRef)(void *self);
-    uint  (*Release)(void *self);
-    // IActiveScript
-    uint (*SetScriptSite)(void *self, void *pScriptSite);
-    uint (*GetScriptSite)(void *self, IID *riid, void **ppvObject);
-    uint (*SetScriptState)(void *self, uint ss);
-    uint (*GetScriptState)(void *self, uint *pssState);
-    uint (*Close)(void *self);
-    uint (*AddNamedItem)(void *self, short *pstrName, uint dwFlags);
-    uint (*AddTypeLib)(void *self, IID *rguidTypeLib, uint dwMajor, uint dwMinor, uint dwFlags);
-    uint (*GetScriptDispatch)(void *self, short *pstrItemName, IDispatch **ppdisp);
-    uint (*GetCurrentScriptThreadID)(void *self, uint *pstidThread);
-    uint (*GetScriptThreadID)(void *self, uint dwWin32ThreadId, uint *pstidThread);
-    uint (*GetScriptThreadState)(void *self, uint stidThread, uint *pstsState);
-    uint (*InterruptScriptThread)(void *self, uint stidThread, EXCEPINFO *pexcepinfo, uint dwFlags);
-    uint (*Clone)(void *self, void **ppscript);
-}
+    int refCount = 1;
 
-struct IActiveScript
-{
-    IActiveScriptInterface *lpVtbl;
-}
-
-// ============================================================
-// IActiveScriptParse interface
-// ============================================================
-
-struct IActiveScriptParseInterface
-{
-    // IUnknown
-    void* (*QueryInterface)(void *self, IID *riid, void **ppvObject);
-    uint  (*AddRef)(void *self);
-    uint  (*Release)(void *self);
-    // IActiveScriptParse
-    uint (*InitNew)(void *self);
-    uint (*AddScriptlet)(void *self,
-        short *pstrDefaultName, short *pstrCode, short *pstrItemName,
-        short *pstrSubItemName, short *pstrEventName, short *pstrDelimiter,
-        ulong dwSourceContextCookie, uint ulStartingLineNumber,
-        uint dwFlags, short **pbstrName, EXCEPINFO *pexcepinfo);
-    uint (*ParseScriptText)(void *self,
-        short *pstrCode, short *pstrItemName, void *punkContext,
-        short *pstrDelimiter, ulong dwSourceContextCookie,
-        uint ulStartingLineNumber, uint dwFlags,
-        VARIANT *pvarResult, EXCEPINFO *pexcepinfo);
-}
-
-struct IActiveScriptParse
-{
-    IActiveScriptParseInterface *lpVtbl;
-}
-
-// ============================================================
-// IActiveScriptSite - our minimal host implementation
-//
-// We build a vtable struct and a single instance so the
-// JScript engine has a site to call back into.
-// ============================================================
-
-struct IActiveScriptSiteVtbl
-{
-    void* (*QueryInterface)(void *self, IID *riid, void **ppvObject);
-    uint  (*AddRef)(void *self);
-    uint  (*Release)(void *self);
-    uint  (*QueryLcid)(void *self, uint *plcid);
-    uint  (*GetItemInfo)(void *self, short *pstrName, uint dwReturnMask, IUnknown **ppunkItem, void **ppti);
-    uint  (*GetDocVersionString)(void *self, short **pbstrVersion);
-    uint  (*OnScriptTerminate)(void *self, VARIANT *pvarResult, EXCEPINFO *pei);
-    uint  (*OnStateChange)(void *self, uint ssScriptState);
-    uint  (*OnScriptError)(void *self, void *pScriptError);
-    uint  (*OnEnterScript)(void *self);
-    uint  (*OnLeaveScript)(void *self);
-}
-
-struct IActiveScriptSite
-{
-    IActiveScriptSiteVtbl *lpVtbl;
-}
-
-// ============================================================
-// External Win32 / COM functions
-// ============================================================
-
-uint CoInitialize(void *pvReserved) external;
-void CoUninitialize() external;
-uint CoCreateInstance(IID *rclsid, long pUnkOuter, uint dwClsContext, IID *riid, void **ppv) external;
-
-int MultiByteToWideChar(
-    uint CodePage, uint dwFlags,
-    byte *lpMultiByteStr, int cbMultiByte,
-    short *lpWideCharStr, int cchWideChar
-) external;
-
-int WideCharToMultiByte(
-    uint CodePage, uint dwFlags,
-    short *lpWideCharStr, int cchWideChar,
-    byte *lpMultiByteStr, int cbMultiByte,
-    byte *lpDefaultChar, bool *lpUsedDefaultChar
-) external;
-
-uint VariantInit(VARIANT *pvarg) external;
-void VariantClear(VARIANT *pvarg) external;
-short* SysAllocString(short *psz) external;
-void SysFreeString(short *psz) external;
-
-int MessageBoxA(long hWnd, byte *lpText, byte *lpCaption, uint uType) external;
-
-// ============================================================
-// Well-known IIDs / CLSIDs
-// ============================================================
-
-IID NullIID      = {0, 0, 0, {0,0,0,0,0,0,0,0}};
-IID IUnknownIID  = {0x00000000, 0x0000, 0x0000, {0xC0,0x00,0x00,0x00,0x00,0x00,0x00,0x46}};
-IID IDispatchIID = {0x00020400, 0x0000, 0x0000, {0xC0,0x00,0x00,0x00,0x00,0x00,0x00,0x46}};
-
-// CLSID for JScript engine (64-bit)
-// {F414C260-6AC0-11CF-B6D1-00AA00BBBB58}
-IID JScriptCLSID = {
-    0xF414C260,
-    0x6AC0,
-    0x11CF,
-    {0xB6,0xD1,0x00,0xAA,0x00,0xBB,0xBB,0x58}
-};
-
-// IID_IActiveScript  {BB1A2AE1-A4F9-11CF-8F20-00805F2CD064}
-IID IActiveScriptIID = {
-    0xBB1A2AE1,
-    0xA4F9,
-    0x11CF,
-    {0x8F,0x20,0x00,0x80,0x5F,0x2C,0xD0,0x64}
-};
-
-// IID_IActiveScriptParse (64-bit) {C7EF7658-E1EE-480E-97EA-D52CB4D76D17}
-IID IActiveScriptParseIID = {
-    0xC7EF7658,
-    0xE1EE,
-    0x480E,
-    {0x97,0xEA,0xD5,0x2C,0xB4,0xD7,0x6D,0x17}
-};
-
-// IID_IActiveScriptSite {DB01A1E3-A42B-11CF-8F20-00805F2CD064}
-IID IActiveScriptSiteIID = {
-    0xDB01A1E3,
-    0xA42B,
-    0x11CF,
-    {0x8F,0x20,0x00,0x80,0x5F,0x2C,0xD0,0x64}
-};
-
-// ============================================================
-// Helpers
-// ============================================================
-
-short* AsciiToWide(byte *ascii)
-{
-    int cnt = MultiByteToWideChar(0, 0, ascii, -1, null, 0);
-    short *wide = memory.alloc((cnt + 1) * 2);
-    MultiByteToWideChar(0, 0, ascii, -1, wide, cnt + 1);
-    return wide;
-}
-
-byte* WideToAscii(short *wide)
-{
-    int cnt = WideCharToMultiByte(0, 0, wide, -1, null, 0, null, null);
-    byte *ascii = memory.alloc(cnt + 1);
-    WideCharToMultiByte(0, 0, wide, -1, ascii, cnt + 1, null, null);
-    return ascii;
-}
-
-bool GuidsEqual(IID *a, IID *b)
-{
-    if(a.Data1 != b.Data1) return false;
-    if(a.Data2 != b.Data2) return false;
-    if(a.Data3 != b.Data3) return false;
-    for(int i = 0; i < 8; ++i)
+    uint QueryInterface(IID* riid, void** ppvObject)
     {
-        if(a.Data4[i] != b.Data4[i]) return false;
-    }
-    return true;
-}
-
-bool StrEqualWide(short *a, short *b)
-{
-    int i = 0;
-    while(a[i] != 0 && b[i] != 0)
-    {
-        if(a[i] != b[i]) return false;
-        i++;
-    }
-    return a[i] == b[i];
-}
-
-// ============================================================
-// MyObject - a custom IDispatch object exposed to JavaScript
-//
-// Exposes a single method: SayHello(name)
-// Returns a BSTR greeting string.
-// DISPID for SayHello = 1
-// ============================================================
-
-uint myObjectRefCount = 1;
-
-void* MyObj_QueryInterface(void *self, IID *riid, void **ppvObject)
-{
-    if(GuidsEqual(riid, &IUnknownIID) || GuidsEqual(riid, &IDispatchIID))
-    {
-        *ppvObject = self;
-        myObjectRefCount++;
-        return 0; // S_OK
-    }
-    *ppvObject = null;
-    return 0x80004002; // E_NOINTERFACE
-}
-
-uint MyObj_AddRef(void *self)
-{
-    myObjectRefCount++;
-    return myObjectRefCount;
-}
-
-uint MyObj_Release(void *self)
-{
-    myObjectRefCount--;
-    return myObjectRefCount;
-}
-
-uint MyObj_GetTypeInfoCount(void *self, uint *pctinfo)
-{
-    *pctinfo = 0;
-    return 0;
-}
-
-uint MyObj_GetTypeInfo(void *self, uint iTInfo, uint lcid, void **ppTInfo)
-{
-    return 0x80004001; // E_NOTIMPL
-}
-
-uint MyObj_GetIDsOfNames(void *self, IID *riid, short **rgszNames, uint cNames, uint lcid, int *rgDispId)
-{
-    short *sayHelloWide = AsciiToWide("SayHello");
-    if(StrEqualWide(rgszNames[0], sayHelloWide))
-    {
-        rgDispId[0] = 1;
-        memory.free(sayHelloWide);
-        return 0; // S_OK
-    }
-    memory.free(sayHelloWide);
-    rgDispId[0] = -1;
-    return 0x80020006; // DISP_E_UNKNOWNNAME
-}
-
-uint MyObj_Invoke(void *self, int dispIdMember, IID *riid, uint lcid, ushort wFlags, void *pDispParams, void *pVarResult, void *pExcepInfo, uint *puArgErr)
-{
-    if(dispIdMember == 1) // SayHello
-    {
-        DISPPARAMS *params = (DISPPARAMS*)pDispParams;
-        string greeting;
-
-        if(params.cArgs >= 1 && params.rgvarg[0].vt == VT_BSTR)
+        IID iidUnk = uuidof(IUnknown);
+        IID iidDisp = uuidof(IDispatch);
+        if(GuidsEqual(*riid, iidUnk) || GuidsEqual(*riid, iidDisp))
         {
-            byte *nameAscii = WideToAscii(params.rgvarg[0].data.bstrVal);
-            greeting = string.format("Hello %s, greetings from MyObject!", nameAscii);
-            memory.free(nameAscii);
+            *ppvObject = this;
+            ++refCount;
+            return 0;
         }
-        else
-        {
-            greeting = "Hello from MyObject!";
-        }
-
-        if(pVarResult != null)
-        {
-            VARIANT *vr = (VARIANT*)pVarResult;
-            vr.vt = VT_BSTR;
-            short *wideGreeting = AsciiToWide(greeting.c_str());
-            vr.data.bstrVal = SysAllocString(wideGreeting);
-            memory.free(wideGreeting);
-        }
-
-        return 0; // S_OK
+        *ppvObject = null;
+        return 0x80004002; // E_NOINTERFACE
     }
 
-    return 0x80020003; // DISP_E_MEMBERNOTFOUND
-}
-
-IDispatchInterface myObjectVtbl = {
-    MyObj_QueryInterface,
-    MyObj_AddRef,
-    MyObj_Release,
-    MyObj_GetTypeInfoCount,
-    MyObj_GetTypeInfo,
-    MyObj_GetIDsOfNames,
-    MyObj_Invoke
-};
-
-IDispatch myObject = { &myObjectVtbl };
-
-// ============================================================
-// IActiveScriptSite callback implementations
-// ============================================================
-
-uint refCount = 1;
-
-void* Site_QueryInterface(void *self, IID *riid, void **ppvObject)
-{
-    if(GuidsEqual(riid, &IUnknownIID) || GuidsEqual(riid, &IActiveScriptSiteIID))
+    uint AddRef()
     {
-        *ppvObject = self;
-        refCount++;
-        return 0;
+        return ++refCount;
     }
-    *ppvObject = null;
-    // E_NOINTERFACE = 0x80004002
-    return 0x80004002;
-}
 
-uint Site_AddRef(void *self)
-{
-    refCount++;
-    return refCount;
-}
-
-uint Site_Release(void *self)
-{
-    refCount--;
-    return refCount;
-}
-
-uint Site_GetLcid(void *self, uint *plcid)
-{
-    *plcid = LOCALE_USER_DEFAULT;
-    return 0;
-}
-
-uint Site_GetItemInfo(void *self, short *pstrName, uint dwReturnMask, IUnknown **ppunkItem, void **ppti)
-{
-    // SCRIPTINFO_IUNKNOWN = 1
-    if((dwReturnMask & 1) != 0 && ppunkItem != null)
+    uint Release()
     {
-        // Check if the engine is asking for "MyObject"
-        short *expectedWide = AsciiToWide("MyObject");
-        bool match = StrEqualWide(pstrName, expectedWide);
-        memory.free(expectedWide);
+        --refCount;
+        int rc = refCount;
+        if(refCount == 0)
+            delete this;
+        return rc;
+    }
 
-        if(match)
+    uint GetTypeInfoCount(uint *pctinfo)
+    {
+        *pctinfo = 0;
+    }
+
+    uint GetTypeInfo(uint iTInfo, uint lcid, void **ppTInfo)
+    {
+        return 0x80004001; // E_NOTIMPL
+    }
+
+    uint GetIDsOfNames(IID *riid, short **rgszNames, uint cNames, uint lcid, int *rgDispId)
+    {
+        wstring name = rgszNames[0];
+        if(name == L"SayHello")
         {
-            *ppunkItem = (IUnknown*)&myObject;
-            myObjectRefCount++;
-            if(ppti != null) *ppti = null;
+            rgDispId[0] = 1;
             return 0; // S_OK
         }
+        rgDispId[0] = -1;
+        return 0x80020006; // DISP_E_UNKNOWNNAME
     }
 
-    if(ppunkItem != null) *ppunkItem = null;
-    if(ppti != null) *ppti = null;
-    return 0x80070057; // E_INVALIDARG
+    uint Invoke(int dispIdMember, IID *riid, uint lcid, ushort wFlags, void *pDispParams, void *pVarResult, void *pExcepInfo, uint *puArgErr)
+    {
+        if(dispIdMember == 1) // SayHello
+        {
+            DISPPARAMS *params = (DISPPARAMS*)pDispParams;
+            wstring greeting;
+
+            if(params.cArgs >= 1 && params.rgvarg[0].vt == VT_BSTR)
+            {
+                short* name = params.rgvarg[0].data.bstrVal;
+                greeting = wstring.format(L"Hello %ls, greetings from MyObject!", name);
+            }
+            else
+            {
+                greeting = L"Hello from MyObject!";
+            }
+
+            if(pVarResult != null)
+            {
+                VARIANT *vr = (VARIANT*)pVarResult;
+                vr.vt = VT_BSTR;
+                vr.data.bstrVal = SysAllocString(greeting.c_str());
+            }
+
+            return 0; // S_OK
+        }
+
+        return 0x80020003; // DISP_E_MEMBERNOTFOUND
+    }
 }
 
-uint Site_GetDocVersionString(void *self, short **pbstrVersion)
+[ComClass("FE489AA2-744E-4466-8147-9CFBED576585")]
+class MySite : IActiveScriptSite
 {
-    *pbstrVersion = SysAllocString(AsciiToWide("1.0"));
-    return 0;
+    int refCount = 1;
+    MyObject myObject;
+
+    MySite constructor()
+    {
+        myObject = new MyObject();
+        return this;
+    }
+
+    void destructor()
+    {
+        myObject.Release();
+    }
+
+    uint QueryInterface(IID* riid, void** ppvObject)
+    {
+        IID iidUnk = uuidof(IUnknown);
+        IID iidSite = uuidof(IActiveScriptSite);
+        if(GuidsEqual(*riid, iidUnk) || GuidsEqual(*riid, iidSite))
+        {
+            *ppvObject = this;
+            ++refCount;
+            return 0;
+        }
+        *ppvObject = null;
+        return 0x80004002; // E_NOINTERFACE
+    }
+
+    uint AddRef()
+    {
+        return ++refCount;
+    }
+
+    uint Release()
+    {
+        --refCount;
+        int rc = refCount;
+        if(refCount == 0)
+            delete this;
+        return rc;
+    }
+
+    uint QueryLcid(uint *plcid)
+    {
+        *plcid = LOCALE_USER_DEFAULT;
+        return 0;
+    }
+
+    uint GetItemInfo(short *pstrName, uint dwReturnMask, IUnknown **ppunkItem, void **ppti)
+    {
+        if((dwReturnMask & 1) != 0 && ppunkItem != null)
+        {
+            if(new wstring(pstrName) == new wstring(L"MyObject"))
+            {
+                *ppunkItem = myObject;
+                myObject.AddRef();
+                if(ppti != null) 
+                    *ppti = null;
+                return 0; // S_OK
+            }
+        }
+
+        if(ppunkItem != null) *ppunkItem = null;
+        if(ppti != null) *ppti = null;
+        return 0x80070057; // E_INVALIDARG
+    }
+
+    uint GetDocVersionString(short **pbstrVersion)
+    {
+        *pbstrVersion = SysAllocString(L"1.0");
+        return 0; // S_OK
+    }
+
+    uint OnScriptTerminate(VARIANT *pvarResult, EXCEPINFO *pei)
+    {
+        return 0;
+    }
+
+    uint OnStateChange(uint ssScriptState)
+    {
+        return 0;
+    }
+
+    uint OnScriptError(void *pScriptError)
+    {
+        return 0;
+    }
+
+    uint OnEnterScript()
+    {
+        return 0;
+    }
+
+    uint OnLeaveScript()
+    {
+        return 0;
+    }
 }
 
-uint Site_OnScriptTerminate(void *self, VARIANT *pvarResult, EXCEPINFO *pei)
+// From ComServer example project
+[ComInterface("A96BAFB4-5CDE-4560-A2EC-1B724984C621")]
+class IMyComObject : IUnknown
 {
-    return 0;
+    virtual void Foo();
 }
 
-uint Site_OnStateChange(void *self, uint ssScriptState)
-{
-    return 0;
-}
-
-uint Site_OnScriptError(void *self, void *pScriptError)
-{
-    return 0;
-}
-
-uint Site_OnEnterScript(void *self)
-{
-    return 0;
-}
-
-uint Site_OnLeaveScript(void *self)
-{
-    return 0;
-}
-
-// ============================================================
-// Static vtable and site instance
-// ============================================================
-
-IActiveScriptSiteVtbl siteVtbl = {
-    Site_QueryInterface,
-    Site_AddRef,
-    Site_Release,
-    Site_GetLcid,
-    Site_GetItemInfo,
-    Site_GetDocVersionString,
-    Site_OnScriptTerminate,
-    Site_OnStateChange,
-    Site_OnScriptError,
-    Site_OnEnterScript,
-    Site_OnLeaveScript
-};
-
-IActiveScriptSite site = { &siteVtbl };
-
-// ============================================================
-// Script state constants
-// ============================================================
-
-const uint SCRIPTSTATE_UNINITIALIZED = 0;
-const uint SCRIPTSTATE_INITIALIZED   = 5;
-const uint SCRIPTSTATE_STARTED       = 1;
-const uint SCRIPTSTATE_CONNECTED     = 2;
-const uint SCRIPTSTATE_DISCONNECTED  = 3;
-const uint SCRIPTSTATE_CLOSED        = 4;
-
-const uint SCRIPTITEM_ISVISIBLE      = 0x00000002; 
+int MessageBoxA(long hWnd, byte *lpText, byte *lpCaption, uint uType) external;
 
 // ============================================================
 // Main
@@ -565,53 +375,34 @@ int start(int argc, byte **argv)
 {
     uint hr = CoInitialize(null);
 
-    // Create the JScript engine (64-bit native)
-    IActiveScript *scriptEngine = null;
-    hr = CoCreateInstance(&JScriptCLSID, 0, 1, &IActiveScriptIID, &scriptEngine);
+    IID iidJScript = GuidFromString("F414C260-6AC0-11CF-B6D1-00AA00BBBB58");
+    IID iidActiveScript = uuidof(IActiveScript);
+    IID iidActiveScriptParse = uuidof(IActiveScriptParse);
 
-    if(scriptEngine == null)
-    {
-        MessageBoxA(0, "Failed to create JScript engine.", "Error", 0);
-        CoUninitialize();
-        return 1;
-    }
+    IActiveScript activeScript;
+    hr = CoCreateInstance(&iidJScript, 0, 1, &iidActiveScript, (void**)&activeScript);
 
-    // Get IActiveScriptParse
-    IActiveScriptParse *parser = null;
-    hr = scriptEngine.lpVtbl.QueryInterface(scriptEngine, &IActiveScriptParseIID, &parser);
+    IActiveScriptParse parser;
+    hr = activeScript.QueryInterface(&iidActiveScriptParse, (void**)&parser);
 
-    if(parser == null)
-    {
-        MessageBoxA(0, "Failed to get IActiveScriptParse.", "Error", 0);
-        scriptEngine.lpVtbl.Release(scriptEngine);
-        CoUninitialize();
-        return 1;
-    }
+    hr = parser.InitNew();
 
-    // Initialize the parser
-    hr = parser.lpVtbl.InitNew(parser);
+    MySite mySite = new MySite();
 
-    // Set our script site
-    hr = scriptEngine.lpVtbl.SetScriptSite(scriptEngine, &site);
+    hr = activeScript.SetScriptSite(mySite);
+    
+    hr = activeScript.AddNamedItem(L"MyObject", SCRIPTITEM_ISVISIBLE);
 
-    // Register "MyObject" as a named item so JavaScript can access it
-    short *myObjName = AsciiToWide("MyObject");
-    hr = scriptEngine.lpVtbl.AddNamedItem(scriptEngine, myObjName, SCRIPTITEM_ISVISIBLE);
-    memory.free(myObjName);
+    hr = activeScript.SetScriptState(SCRIPTSTATE_STARTED);
 
-    // Start the engine
-    hr = scriptEngine.lpVtbl.SetScriptState(scriptEngine, SCRIPTSTATE_STARTED);
-
-    // JavaScript code that calls MyObject.SayHello()
-    short *scriptCode = AsciiToWide("MyObject.SayHello('JavaScript')");
+    wstring jscriptCode = L"MyObject.SayHello('JavaScript')";
 
     VARIANT result;
     VariantInit(&result);
     EXCEPINFO excep = {};
 
-    hr = parser.lpVtbl.ParseScriptText(
-        parser,
-        scriptCode,         // code
+    hr = parser.ParseScriptText(
+        jscriptCode.c_str(), // code
         null,               // item name
         null,               // context
         null,               // delimiter
@@ -622,21 +413,31 @@ int start(int argc, byte **argv)
         &excep
     );
 
-    memory.free(scriptCode);
-
-    if(result.vt == VT_BSTR)
-    {
-        byte *text = WideToAscii(result.data.bstrVal);
-        MessageBoxA(0, text, "alert", 0);
-        memory.free(text);
-    }
+    string strResult = string.format("Result: %ls", result.data.bstrVal);
+    MessageBoxA(0, strResult.c_str(), "Javascript Result", 0);
 
     VariantClear(&result);
 
-    // Cleanup
-    scriptEngine.lpVtbl.SetScriptState(scriptEngine, SCRIPTSTATE_CLOSED);
-    parser.lpVtbl.Release(parser);
-    scriptEngine.lpVtbl.Release(scriptEngine);
+    hr = activeScript.SetScriptState(SCRIPTSTATE_CLOSED);
+    parser.Release();
+    activeScript.Release();
+    mySite.Release();
+
+    IMyComObject comObj;
+    IID iidObj = GuidFromString("EF30D8D6-99C5-408B-B202-9BF19AB77667");
+    IID iidIObj = uuidof(IMyComObject);
+    hr = CoCreateInstance(&iidObj, 0, 1, &iidIObj, (void**)&comObj);
+
+    if(hr == 0 && comObj != null)
+    {
+        comObj.Foo();
+
+        comObj.Release();
+    }
+    else
+    {
+        MessageBoxA(0, "Failed to create MyComObject.\r\nMake sure ComServer project is compiled and is properly setup in the registry.", "Error", 0);
+    }
 
     CoUninitialize();
     return 0;

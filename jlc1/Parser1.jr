@@ -356,12 +356,29 @@ class Parser1 : StageParser
         attributes = null;
 
         ClassType ct = (ClassType)existing;
-        // Create a factory function symbol used by the runtime to construct
-        // instances. The function signature is ClassName* (pointer to class)
-        // and is named <ClassName>__new by convention.
-        Function factory = new Function(module, string.format("%s__new", ct.Name), ct.GetPointerType());
-        ct.Factory = factory;
-        unit.AddSymbol(factory);
+
+        if(ct.HasAttribute("ComInterface"))
+        {
+            ct.Flags += SymbolFlags.ComInterface;
+            ct.FieldCount = 0;
+            ct.SetSize(0);
+            ct.BaseClass = null;
+            ct.VirtualMethods.clear();
+        }
+        else
+        {
+            if(ct.HasAttribute("ComClass"))
+            {
+                ct.Flags += SymbolFlags.ComClass;
+            }
+
+            // Create a factory function symbol used by the runtime to construct
+            // instances. The function signature is ClassName* (pointer to class)
+            // and is named <ClassName>__new by convention.
+            Function factory = new Function(module, string.format("%s__new", ct.Name), ct.GetPointerType());
+            ct.Factory = factory;
+            unit.AddSymbol(factory);
+        }
 
         if (scanner.Token == Token.Semicolon)
         {

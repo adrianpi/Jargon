@@ -10,6 +10,7 @@ void free(void *ptr) external;
 void memset(void* ptr, int val, int size) external;
 void memcpy(void* dst, void *src, int size) external;
 void memmove(void* dst, void *src, int size) external;
+int memcmp(void* dst, void *src, int size) external;
 int printf(byte* fmt, ...) external;
 int strlen(byte *str) external;
 int strcmp(byte *a, byte *b) external;
@@ -413,6 +414,11 @@ class memory
 	static void move(void *dst, void *src, long size)
 	{
 		memmove(dst, src, size);
+	}
+
+	static int compare(void *ptr1, void *ptr2, long size)
+	{
+		return memcmp(ptr1, ptr2, size);
 	}
 }
 
@@ -2566,6 +2572,87 @@ class math
 
 //-----------------------------------------------------------------------------
 
+struct IID
+{
+    uint Data1;
+    ushort Data2;
+    ushort Data3;
+    byte Data4[8];
+}
+
+int UuidFromStringA(byte* psz, IID* pGuid) external;
+int UuidToStringA(IID* pGuid, byte **ppsz) external;
+void RpcStringFreeA(byte** ppsz) external;
+int UuidCreate(IID* pGuid) external;
+
+IID GuidFromString(string s)
+{
+    IID iid;
+	memory.put(&iid, 0, sizeof(IID));
+    UuidFromStringA((byte*)s.c_str(), &iid);
+    return iid;
+}
+
+string GuidToString(IID* pGuid)
+{
+    byte *ptr;
+    UuidToStringA(pGuid, &ptr);
+    string sGUID = new string(ptr);
+    RpcStringFreeA(&ptr);
+    return sGUID;
+}
+
+IID NewGuid()
+{
+    IID iid;
+	memory.put(&iid, 0, sizeof(IID));
+    UuidCreate(&iid);
+    return iid;
+}
+
+IID __uuidof(byte *cname)
+{
+    IID iid;
+	memory.put(&iid, 0, sizeof(IID));
+
+	string className = cname;
+
+    RTTIClassType cls = RTTIType.GetType(className) as RTTIClassType;
+    if(cls != null)
+    {
+        if(cls.HasAttribute("ComInterface"))
+        {
+            string siid = cls.GetAttributeString("ComInterface");
+            iid = GuidFromString(siid);
+        }
+        else if(cls.HasAttribute("ComClass"))
+        {
+            string siid = cls.GetAttributeString("ComClass");
+            iid = GuidFromString(siid);
+        }
+    }
+	else
+	{
+		Log("__uuidof: %s is not a class type", cname);
+	}
+
+    return iid;
+}
+
+bool GuidsEqual(IID @a, IID @b)
+{
+    if(a.Data1 != b.Data1) return false;
+    if(a.Data2 != b.Data2) return false;
+    if(a.Data3 != b.Data3) return false;
+    for(int i = 0; i < 8; ++i)
+    {
+        if(a.Data4[i] != b.Data4[i]) return false;
+    }
+    return true;
+}
+
+//-----------------------------------------------------------------------------
+
 enum SymbolType
 {
     None = 0,
@@ -2629,6 +2716,9 @@ enum SymbolFlags
     Protected = 0x400,
     Private = 0x800,
 	HasAttributes = 0x1000,
+	ComInterface = 0x2000,
+	ComClass = 0x4000,
+	ComMask = 0x6000,
     VisibilityMask = 0xc04, // (Internal|Private|Protected)
 }
 

@@ -895,7 +895,8 @@ class CodeGenVisitor : CodeVisitor
         {
 			if (fn.Name != "object__addRef" && fn.Name != "object_release"
 			    && e.Arguments[i].DataType.IsClassRef()
-			    && IsFunctionCall(e.Arguments[i]))
+			    && IsFunctionCall(e.Arguments[i])
+				&& !(((ClassType)e.Arguments[i].DataType.ElementType).IsComObject()))
             {
                 DelayRelease dr = new DelayRelease();
                 dr.tag = e.Arguments[i].Tag;
@@ -930,7 +931,7 @@ class CodeGenVisitor : CodeVisitor
 		string sdbg = dbge(d);
 
 		TypeSymbol dt = f.DataType;
-        if (dt.IsClassRef() && IsFunctionCall(f))
+        if (dt.IsClassRef() && IsFunctionCall(f) && !(((ClassType)dt.ElementType).IsComObject()))
         {
             sb.appendLine(string.format("\tcall void(ptr) @object__release(ptr %s)%s", f.Tag, sdbg));
         }
@@ -992,7 +993,7 @@ class CodeGenVisitor : CodeVisitor
 				e.Left.Visit(this, VisitMode.Address);                
 
 				// Release old object* if not a declaration and not weak
-                if (!_weak && !e.isInit && ldt.IsClassRef())
+                if (!_weak && !e.isInit && ldt.IsClassRef() && !(((ClassType)ldt.ElementType).IsComObject()))
                 {
                     string temp = NewTag();
                     sb.appendLine(string.format("\t%s = load ptr, ptr %s", temp, e.Left.Tag));
@@ -1009,7 +1010,7 @@ class CodeGenVisitor : CodeVisitor
                     sb.appendLine(string.format("\t#dbg_declare(ptr %s, !%d, !DIExpression(), !%d)", tag, DINode.LocalMap[e.decl].ID, loc.ID));
                 }
 
-				if (!_weak && ldt.IsClassRef() && !IsFunctionCall(e.Right))
+				if (!_weak && ldt.IsClassRef() && !IsFunctionCall(e.Right) && !(((ClassType)ldt.ElementType).IsComObject()))
                 {
                     // retain new object*
                     string temp = NewTag();
@@ -1218,7 +1219,7 @@ class CodeGenVisitor : CodeVisitor
 
 			TypeSymbol dt = s.Expression.DataType;
 
-			if(dt.IsClassRef() && !IsFunctionCall(s.Expression))
+			if(dt.IsClassRef() && !IsFunctionCall(s.Expression) && !(((ClassType)dt.ElementType).IsComObject()))
 			{
 				sb.appendLine(string.format("\tcall void(ptr) @object__addRef(ptr %s)%s", s.Expression.Tag, sdbg));
 			}
@@ -1258,7 +1259,7 @@ class CodeGenVisitor : CodeVisitor
             if (l is LocalVariable)
             { 
 				LocalVariable lv = (LocalVariable)l;
-                if (lv.DataType.IsClassRef())
+                if (lv.DataType.IsClassRef() && !(((ClassType)lv.DataType.ElementType).IsComObject()))
                 {
                     string temp = NewTag();
                     sb.appendLine(string.format("\t%s = load ptr, ptr %%%s_%d", temp, lv.Name, -lv.Offset));
@@ -1526,8 +1527,16 @@ class CodeGenVisitor : CodeVisitor
 		//tag = 1;
 
 		bool export = options.OutputFileName.toLower().endsWith(".dll") || !options.NoExports;
+		if(s.Name == "DllMain" || s.Name == "DllStart")
+			export = false;
+
 		string linkage = (s.Flags & SymbolFlags.Internal) != 0 ? "internal " : (export ? "dllexport " : "");
 		bool inOtherUnit = unit != null && s.Unit != unit;
+
+		if(s.declaringClass != null && s.declaringClass.IsComInterface())
+		{
+			return;
+		}
 
 		if((s.Flags & SymbolFlags.External) != 0 || inOtherUnit)
 			sb.append("declare ");
@@ -1912,7 +1921,7 @@ class CodeGenVisitor : CodeVisitor
             }
         }
 
-		if(tinfo)
+		if(tinfo && !options.OutputFileName.endsWith(".lib"))
 		{
 			sb.appendLine(";==============================================================================");
 			sb.appendLine("; Type Info");
