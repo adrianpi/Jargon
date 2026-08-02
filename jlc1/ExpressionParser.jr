@@ -589,7 +589,7 @@ class ExpressionParser : BaseParser
                         if((fn.Flags & SymbolFlags.External) != 0
 					        && parDt.IsStruct() && ((StructType)parDt).Size < 9)
                         {
-                            // Coherse small structures to scalars for external calls (C ABI)
+                            // Coherse small structures into scalars for external calls (C ABI)
                             if(((StructType)parDt).Size < 2)
                                 e = new DerefExpression(
                                         new CastExpression(
