@@ -540,7 +540,9 @@ class CodeGenVisitor : CodeVisitor
                 if (i != 0)
                     n += ", ";
                 LocalVariable p = fn.Parameters[i];
-                n = n + IRType(p.DataType, false);
+				TypeSymbol pType = p.DataType;
+				pType = CoherseFunctionParameterType(fn, pType);
+                n = n + IRType(pType, false);
             }
             if ((fn.Flags & SymbolFlags.Variadic) != 0)
             {
@@ -589,6 +591,27 @@ class CodeGenVisitor : CodeVisitor
             return "";
         }
     }
+
+	// Windows ABI coherses struct parameters into scalars when they are 
+	// small and fit into a register. This function handles that.
+	static TypeSymbol CoherseFunctionParameterType(Function fn, TypeSymbol pType)
+	{
+		TypeSymbol result = pType;
+
+		if((fn.Flags & SymbolFlags.External) != 0 && pType.IsStruct())
+		{
+			StructType st = (StructType)pType;
+			if(st.Size < 2)
+				result = TypeSymbol.Byte;
+			else if(st.Size < 3)
+				result = TypeSymbol.Short;
+			else if(st.Size < 5)
+				result = TypeSymbol.Int;
+			else if(st.Size < 9)
+				result = TypeSymbol.Long;
+		}
+		return result;
+	}
 
 	// IRType2 - variant that treats arrays as pointers (useful for call
 	// arguments where arrays decay to pointers). Otherwise mirrors IRType.
@@ -1553,7 +1576,10 @@ class CodeGenVisitor : CodeVisitor
 				sb.append(", ");
 
 			LocalVariable p = s.Parameters[i];
-			sb.append(IRType(p.DataType, false));
+			TypeSymbol pType = p.DataType;
+			pType = CoherseFunctionParameterType(s, pType);
+
+			sb.append(IRType(pType, false));
 			sb.append(" ");
 			sb.append("%");
 			sb.append(p.Name);
