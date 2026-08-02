@@ -541,7 +541,7 @@ class CodeGenVisitor : CodeVisitor
                     n += ", ";
                 LocalVariable p = fn.Parameters[i];
 				TypeSymbol pType = p.DataType;
-				pType = CoherseFunctionParameterType(fn, pType);
+				pType = CoerceFunctionParameterType(fn, pType);
                 n = n + IRType(pType, false);
             }
             if ((fn.Flags & SymbolFlags.Variadic) != 0)
@@ -592,22 +592,22 @@ class CodeGenVisitor : CodeVisitor
         }
     }
 
-	// Windows ABI coherses struct parameters into scalars when they are 
+	// Windows ABI coerces struct parameters into scalars when they are 
 	// small and fit into a register. This function handles that.
-	static TypeSymbol CoherseFunctionParameterType(Function fn, TypeSymbol pType)
+	static TypeSymbol CoerceFunctionParameterType(Function fn, TypeSymbol pType)
 	{
 		TypeSymbol result = pType;
 
 		if((fn.Flags & SymbolFlags.External) != 0 && pType.IsStruct())
 		{
 			StructType st = (StructType)pType;
-			if(st.Size < 2)
+			if(st.Size == 1)
 				result = TypeSymbol.Byte;
-			else if(st.Size < 3)
+			else if(st.Size == 2)
 				result = TypeSymbol.Short;
-			else if(st.Size < 5)
+			else if(st.Size == 4)
 				result = TypeSymbol.Int;
-			else if(st.Size < 9)
+			else if(st.Size == 8)
 				result = TypeSymbol.Long;
 		}
 		return result;
@@ -1577,7 +1577,7 @@ class CodeGenVisitor : CodeVisitor
 
 			LocalVariable p = s.Parameters[i];
 			TypeSymbol pType = p.DataType;
-			pType = CoherseFunctionParameterType(s, pType);
+			pType = CoerceFunctionParameterType(s, pType);
 
 			sb.append(IRType(pType, false));
 			sb.append(" ");

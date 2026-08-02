@@ -589,23 +589,25 @@ class ExpressionParser : BaseParser
                         if((fn.Flags & SymbolFlags.External) != 0
 					        && parDt.IsStruct() && ((StructType)parDt).Size < 9)
                         {
-                            // Coherse small structures into scalars for external calls (C ABI)
-                            if(((StructType)parDt).Size < 2)
+                            // Coerce small structures into scalars for external calls (C ABI)
+                            if(((StructType)parDt).Size == 1)
                                 e = new DerefExpression(
                                         new CastExpression(
                                             new AddressOfExpression(e), TypeSymbol.Byte.GetPointerType()));
-                            else if(((StructType)parDt).Size < 3)
+                            else if(((StructType)parDt).Size == 2)
                                 e = new DerefExpression(
                                         new CastExpression(
                                             new AddressOfExpression(e), TypeSymbol.Short.GetPointerType()));
-                            else if(((StructType)parDt).Size < 5)
+                            else if(((StructType)parDt).Size == 4)
                                 e = new DerefExpression(
                                         new CastExpression(
                                             new AddressOfExpression(e), TypeSymbol.Int.GetPointerType()));
-                            else
+                            else if(((StructType)parDt).Size == 8)
                                 e = new DerefExpression(
                                         new CastExpression(
                                             new AddressOfExpression(e), TypeSymbol.Long.GetPointerType()));
+                            else
+                                e = ForceCast(e, parDt);
                         }
                         else
 				        {
