@@ -129,6 +129,7 @@ int start()
 	// Invoke the method again using variadic form
 	mFoo.function.Call(test);
 
+	// Get value from a static property ('this' param is ignored)
 	println("TestClass.VAL %d", cTest.GetProperty("VAL").GetIntValue(null));
 
 	// Custom Attributes - There are for illustration purposes only, 
