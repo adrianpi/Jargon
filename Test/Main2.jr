@@ -31,6 +31,7 @@ int test()
 	options.OutputDirectory = ".";
 
 	options.DebugInfo = false;
+	options.NoExports = true;
 	options.OptimizationLevel = "O2";
 
 

@@ -9,6 +9,7 @@ int run()
 	CompilerOptions options = new CompilerOptions();
 	options.OutputFileName = "meta.exe";
 	options.OutputDirectory = ".";
+	options.NoExports = true;
 
 	options.InputFiles.add("..\\jlc1\\Scanner.jr");
 	options.InputFiles.add("..\\jlc1\\Expression.jr");
