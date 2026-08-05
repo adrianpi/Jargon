@@ -266,6 +266,9 @@ class TypeInfo
         {
             Symbol c = m.Children[i];
 
+            if(c.Name == "static_init" || c.Name == "static_deinit")
+                continue;
+
             if ((c.Flags & SymbolFlags.External) == 0)  // Skip external symbols
             {
                 // Write constant values with their type-specific data
