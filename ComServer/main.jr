@@ -1,4 +1,5 @@
 using jargon;
+using JargonCom;
 
 /*
 
@@ -14,21 +15,6 @@ HKEY_CLASSES_ROOT
 
 You can also use regsvr32.exe from a privileged console.
 */
-
-[ComInterface("00000000-0000-0000-C000-000000000046")]
-class IUnknown
-{
-    virtual uint QueryInterface(IID* riid, void** ppvObject);
-    virtual uint AddRef();
-    virtual uint Release();
-}
-
-[ComInterface("00000001-0000-0000-C000-000000000046")]
-class IClassFactory : IUnknown
-{
-    virtual uint CreateInstance(IUnknown* pUnkOuter, IID* riid, void** ppvObject);
-    virtual uint LockServer(bool fLock);
-}
 
 int g_instances = 0;
 int g_lockCount = 0;
@@ -66,10 +52,10 @@ class MyComObject : IMyComObject
         {
             *ppvObject = this;
             refCount++;
-            return 0; // S_OK
+            return S_OK;
         }
         *ppvObject = null;
-        return 0x80004002; // E_NOINTERFACE
+        return E_NOINTERFACE;
     }
 
     uint AddRef()
@@ -107,10 +93,10 @@ class MyClassFactory : IClassFactory
         {
             *ppvObject = this;
             refCount++;
-            return 0; // S_OK
+            return S_OK;
         }
         *ppvObject = null;
-        return 0x80004002; // E_NOINTERFACE
+        return E_NOINTERFACE;
     }
 
     uint AddRef()
@@ -126,7 +112,7 @@ class MyClassFactory : IClassFactory
         return rc;
     }
 
-    uint CreateInstance(IUnknown* pUnkOuter, IID* riid, void** ppvObject)
+    uint CreateInstance(IUnknown pUnkOuter, IID* riid, void** ppvObject)
     {
         if (pUnkOuter != null)
             return 0x80040110L; // CLASS_E_NOAGGREGATION
@@ -135,9 +121,9 @@ class MyClassFactory : IClassFactory
         {
             MyComObject* obj = new MyComObject();
             *ppvObject = obj;
-            return 0;
+            return S_OK;
         }
-        return 0x80004002; // E_NOINTERFACE
+        return E_NOINTERFACE;
     }
 
     uint LockServer(bool fLock)
@@ -146,7 +132,7 @@ class MyClassFactory : IClassFactory
             ++g_lockCount;
         else
             --g_lockCount;
-        return 0; // S_OK
+        return S_OK;
     }
 }
 
@@ -166,9 +152,9 @@ uint DllGetClassObject(IID *rclsid, IID *riid, void **ppv)
 uint DllCanUnloadNow()
 {
     if(g_instances == 0 && g_lockCount == 0)
-        return 0; // S_OK
+        return S_OK;
     else
-        return 1; // S_FALSE
+        return S_FALSE;
 }
 
 int DllStart(long hModule, int dwReason, void *pReserved)
@@ -199,7 +185,7 @@ uint DllRegisterServer()
     uint pathLen = GetModuleFileNameW(g_hModule, &dllPath[0], 1024);
     if(pathLen == 0)
     {
-        return 0x80004005; // E_FAIL
+        return E_FAIL;
     }
 
     long hKeyCLSID = 0;
@@ -220,7 +206,7 @@ uint DllRegisterServer()
     long result = RegCreateKeyExW(HKEY_CLASSES_ROOT, rootKey.c_str(), 0, null, 0, KEY_WRITE, null, &hKeyGuid, &disposition);
     if(result != 0)
     {
-        return 0x80004005; // E_FAIL
+        return E_FAIL;
     }
 
     wstring description = L"Example Jargon COM Object";
@@ -230,7 +216,7 @@ uint DllRegisterServer()
     if(result != 0)
     {
         RegCloseKey(hKeyGuid);
-        return 0x80004005; // E_FAIL
+        return E_FAIL;
     }
 
     // Set default value to DLL path
@@ -244,7 +230,7 @@ uint DllRegisterServer()
     RegCloseKey(hKeyInproc);
     RegCloseKey(hKeyGuid);
 
-    return 0; // S_OK
+    return S_OK;
 }
 
 uint DllUnregisterServer()
@@ -260,7 +246,7 @@ uint DllUnregisterServer()
     long result = RegDeleteTreeW(HKEY_CLASSES_ROOT, rootKey.c_str());
 
     if(result != 0 && result != 2) // Allow ERROR_FILE_NOT_FOUND (2)
-        return 0x80004005; // E_FAIL
+        return E_FAIL;
 
-    return 0; // S_OK
+    return S_OK;
 }

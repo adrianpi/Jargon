@@ -1,0 +1,92 @@
+using jargon;
+
+const uint S_OK                         = 0x00000000;
+const uint S_FALSE                      = 0x00000001;
+const uint E_FAIL                       = 0x80004005;
+const uint E_INVALIDARG                 = 0x80070057;
+const uint E_OUTOFMEMORY                = 0x8007000E;
+const uint E_POINTER                    = 0x80004003;
+const uint E_NOINTERFACE                = 0x80004002;
+const uint E_NOTIMPL                    = 0x80004001;
+const uint E_ACCESSDENIED               = 0x80070005;
+const uint CLASS_E_CLASSNOTAVAILABLE    = 0x80040111;
+const uint REGDB_E_CLASSNOTREG          = 0x80040154;
+const uint CO_E_NOTINITIALIZED          = 0x800401F0;
+
+const uint CLSCTX_INPROC_SERVER         = 0x1;
+const uint CLSCTX_INPROC_HANDLER        = 0x2;
+const uint CLSCTX_LOCAL_SERVER          = 0x4;
+const uint CLSCTX_INPROC_SERVER16       = 0x8;
+const uint CLSCTX_REMOTE_SERVER         = 0x10;
+
+const int REGCLS_SINGLEUSE              = 0;
+const int REGCLS_MULTIPLEUSE            = 1;
+const int REGCLS_MULTI_SEPARATE         = 2;
+const int REGCLS_SUSPENDED              = 4;
+const int REGCLS_SURROGATE              = 8;
+
+[ComInterface("00000000-0000-0000-C000-000000000046")]
+class IUnknown
+{
+    virtual uint QueryInterface(IID* riid, void** ppvObject);
+    virtual uint AddRef();
+    virtual uint Release();
+}
+
+[ComInterface("00000001-0000-0000-C000-000000000046")]
+class IClassFactory : IUnknown
+{
+    virtual uint CreateInstance(IUnknown pUnkOuter, IID* riid, void** ppvObject);
+    virtual uint LockServer(bool fLock);
+}
+
+uint CoInitialize(void *pvReserved) external;
+void CoUninitialize() external;
+uint CoCreateInstance(IID *rclsid, IUnknown pUnkOuter, uint dwClsContext, IID *riid, void **ppv) external;
+void* CoTaskMemAlloc(uint cb) external;
+void CoTaskMemFree(void* pv) external;
+uint CoRegisterClassObject(IID *rclsid, IUnknown pUnk, uint dwClsContext, uint flags, uint lpdwRegister) external;
+uint CoRevokeClassObject(uint dwRegister) external;
+
+class COM
+{
+    static uint Initialize()
+    {
+        return CoInitialize(null);
+    }
+
+    static void Uninitialize()
+    {
+        CoUninitialize();
+    }
+
+    static uint CreateInstance(IID *rclsid, IUnknown pkUnkOuter, uint dwClsContext, IID *riid, void **ppv)
+    {
+        return CoCreateInstance(rclsid, pkUnkOuter, dwClsContext, riid, ppv);
+    }
+
+    static void* TaskMemAlloc(uint cb)
+    {
+        return CoTaskMemAlloc(cb);
+    }
+
+    static void TaskMemFree(void *pv)
+    {
+        CoTaskMemFree(pv);
+    }
+
+    static uint RegisterClassObject(IID *rclsid, IUnknown pUnk, uint dwClsContext, uint flags, uint lpdwRegister)
+    {
+        return CoRegisterClassObject(rclsid, pUnk, dwClsContext, flags, lpdwRegister);
+    }
+
+    static uint RevokeClassObject(uint dwRegister)
+    {
+        return CoRevokeClassObject(dwRegister);
+    }
+}
+
+int DllStart(long hinstDLL, uint fdwReason, void *lpvReserved)
+{
+    return 1;
+}
