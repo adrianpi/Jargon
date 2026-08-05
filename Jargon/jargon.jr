@@ -2270,26 +2270,6 @@ short __wcdirup[3] = { '.', '.', 0 };
 
 class path
 {
-	static string getCurrentDirectory()
-    {
-        byte buffer[1024];
-        if(_getcwd(buffer, 1024))
-        {
-            return new string(buffer);
-        }
-        return null;
-    }
-
-	static wstring getCurrentDirectoryW()
-	{
-		short buffer[1024];
-		if(_wgetcwd(buffer, 1024))
-		{
-			return new wstring(buffer);
-		}
-		return null;
-	}
-
 	static string getDirectoryName(string filePath)
 	{
 		int index = filePath.lastIndexOfChar('\\');
@@ -2440,7 +2420,7 @@ class path
     {
         if(filePath.indexOf(":") == -1)
         {
-            string cwd = path.getCurrentDirectory();
+            string cwd = directory.current();
             if(cwd != null)
             {
                 return path.canonize(cwd + '\\' + filePath);
@@ -2460,7 +2440,7 @@ class path
 	{
         if(filePath.indexOfChar(':') == -1)
         {
-            wstring cwd = path.getCurrentDirectoryW();
+            wstring cwd = directory.currentW();
             if(cwd != null)
             {
 				short *temp = (short*)memory.alloc(cwd.length + 1 + filePath.length + 1);

@@ -91,7 +91,7 @@ class Parser1 : StageParser
             // library directories. Entries starting with '$' are treated as
             // environment variable references (e.g. $JARGON_LIB).
             array<string> dirs = new array<string>();
-            dirs.add(path.getCurrentDirectory());
+            dirs.add(directory.current());
             for(int i = 0; i < options.LibraryDirectories.count; ++i)
                 dirs.add(options.LibraryDirectories[i]);
             string dllname = null;
