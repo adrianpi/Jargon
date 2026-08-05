@@ -3002,7 +3002,7 @@ class RTTIType : RTTISymbol
 	virtual bool IsClass() => false;
 	virtual bool IsClassRef() => false;
 
-	RTTIModule get ParentModule() => _dynamicCast(this.parent, "RTTIModule");
+	RTTIModule get ParentModule() => this.parent as RTTIModule;
 	
 	static RTTIType _void = new RTTIPrimitiveType("void", 0);
 	static RTTIType _bool = new RTTIPrimitiveType("bool", 1);
@@ -3107,7 +3107,7 @@ class RTTIEnumValue : RTTISymbol
 {
 	long value;
 
-	RTTIEnumType get ParentEnum() => _dynamicCast(this.parent, "RTTIEnumType");
+	RTTIEnumType get ParentEnum() => this.parent as RTTIEnumType;
 
 	RTTIEnumValue constructor(string name, SymbolFlags flags, long value)
 	{
@@ -3132,7 +3132,7 @@ class RTTIEnumType : RTTIType
 
 	RTTIEnumValue GetValue(string name)
 	{
-		return _dynamicCast(Find(name), "RTTIEnumValue");
+		return Find(name) as RTTIEnumValue;
 	}
 
 	array<string> EnumValues()
@@ -3147,7 +3147,7 @@ class RTTIEnumType : RTTIType
 			RTTISymbol child = children[i];
 			if(child.name == value)
 			{
-				RTTIEnumValue ev = _dynamicCast(child, "RTTIEnumValue");
+				RTTIEnumValue ev = child as RTTIEnumValue;
 				if(ev)
 					return ev.value;
 			}
@@ -3160,7 +3160,7 @@ class RTTIEnumType : RTTIType
 		for(int i = 0; i < children.count; ++i)
 		{
 			RTTISymbol child = children[i];
-			RTTIEnumValue ev = _dynamicCast(child, "RTTIEnumValue");
+			RTTIEnumValue ev = child as RTTIEnumValue;
 			if(ev && ev.value == value)
 				return ev.name;
 		}
@@ -3173,7 +3173,7 @@ class RTTIParameter : RTTISymbol
 	RTTIType parameterType;
 	int offset;
 
-	RTTIFunction get ParentFunction() => _dynamicCast(this.parent, "RTTIFunction");
+	RTTIFunction get ParentFunction() => this.parent as RTTIFunction;
 
 	RTTIParameter constructor(string name, SymbolFlags flags, RTTIType ptype)
 	{
@@ -3207,7 +3207,7 @@ class RTTIFunction : RTTIType
 
 	RTTIParameter GetParameter(string name)
 	{
-		return _dynamicCast(Find(name), "RTTIParameter");
+		return Find(name) as RTTIParameter;
 	}
 }
 
@@ -3216,9 +3216,9 @@ class RTTIConstant : RTTISymbol
 	RTTIConstValue value;
 	RTTIType type;
 
-	RTTIClassType get ParentClass() => _dynamicCast(this.parent, "RTTIClassType");
+	RTTIClassType get ParentClass() => this.parent as RTTIClassType;
 
-	RTTIModule get ParentModule() => _dynamicCast(this.parent, "RTTIModule");
+	RTTIModule get ParentModule() => this.parent as RTTIModule;
 
 	RTTIConstant constructor(SymbolFlags flags, string name, RTTIType type, RTTIConstValue value)
 	{
@@ -3235,7 +3235,7 @@ class RTTIField : RTTISymbol
 	int offset;
 	int index;
 
-	RTTIType get ParentType() => _dynamicCast(this.parent, "RTTIType");
+	RTTIType get ParentType() => this.parent as RTTIType;
 
 	RTTIField constructor(string name, SymbolFlags flags, RTTIType ftype)
 	{
@@ -3427,7 +3427,7 @@ class RTTIStructType : RTTIType
 
 	RTTIField GetField(string name)
 	{
-		return _dynamicCast(Find(name), "RTTIField");
+		return Find(name) as RTTIField;
 	}
 
 	array<string> EnumFields()
@@ -3442,7 +3442,7 @@ class RTTIMethod : RTTISymbol
 	string functionName;
 	short VSlot;
 
-	RTTIClassType get ParentClass() => _dynamicCast(this.parent, "RTTIClassType");
+	RTTIClassType get ParentClass() => this.parent as RTTIClassType;
 
 	RTTIMethod constructor(string name, SymbolFlags flags)
 	{
@@ -3462,7 +3462,7 @@ class RTTIProperty : RTTISymbol
 	RTTIMethod rawGetter;
 	RTTIMethod rawSetter;
 
-	RTTIClassType get ParentClass() => _dynamicCast(this.parent, "RTTIClassType");
+	RTTIClassType get ParentClass() => this.parent as RTTIClassType;
 
 	RTTIProperty constructor(string name, SymbolFlags flags, RTTIType ptype)
 	{
@@ -3879,22 +3879,22 @@ class RTTIClassType : RTTIType
 
 	RTTIConstant GetConstant(string name)
 	{
-		return _dynamicCast(Find(name), "RTTIConstant");
+		return Find(name) as RTTIConstant;
 	}
 
 	RTTIField GetField(string name)
 	{
-		return _dynamicCast(Find(name), "RTTIField");
+		return Find(name) as RTTIField;
 	}
 
 	RTTIProperty GetProperty(string name)
 	{
-		return _dynamicCast(Find(name), "RTTIProperty");
+		return Find(name) as RTTIProperty;
 	}
 
 	RTTIMethod GetMethod(string name)
 	{
-		return _dynamicCast(Find(name), "RTTIMethod");
+		return Find(name) as RTTIMethod;
 	}
 
 	RTTIFunction GetCreator()
@@ -4009,32 +4009,32 @@ class RTTIModule : RTTISymbol
 
 	static RTTIModule GetModule(string name)
 	{
-		return _dynamicCast(RTTIRoot.Instance.Find(name), "RTTIModule");
+		return RTTIRoot.Instance.Find(name) as RTTIModule;
 	}
 
 	RTTIConstant GetConstant(string name)
 	{
-		return _dynamicCast(Find(name), "RTTIConstant");
+		return Find(name) as RTTIConstant;
 	}
 
 	RTTIEnumType GetEnum(string name)
 	{
-		return _dynamicCast(Find(name), "RTTIEnumType");
+		return Find(name) as RTTIEnumType;
 	}
 
 	RTTIFunction GetFunction(string name)
 	{
-		return _dynamicCast(Find(name), "RTTIFunction");
+		return Find(name) as RTTIFunction;
 	}
 
 	RTTIStructType GetStruct(string name)
 	{
-		return _dynamicCast(Find(name), "RTTIStructType");
+		return Find(name) as RTTIStructType;
 	}
 
 	RTTIClassType GetClass(string name)
 	{
-		return _dynamicCast(Find(name), "RTTIClassType");
+		return Find(name) as RTTIClassType;
 	}
 
 	array<string> EnumConstants()
@@ -4732,10 +4732,10 @@ void _freeTypeInfo(byte *address)
 {
 	string moduleName = GetModuleName((ulong)address);
 
-	RTTIModule module = _dynamicCast(RTTIRoot.Instance.Find(moduleName), "RTTIModule");
+	RTTIModule module = RTTIRoot.Instance.Find(moduleName) as RTTIModule;
 	for(int i = 0; i < module.children.count; ++i)
 	{
-		RTTIType type = _dynamicCast(module.children[i], "RTTIType");
+		RTTIType type = module.children[i] as RTTIType;
 		if(type != null && !type.IsFunction())
 		{
 			RTTIType.allTypes.remove(type.name);
