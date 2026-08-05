@@ -2426,7 +2426,13 @@ class path
 				dest.add(part);
 			}
 		}
-		wstring result = dest.join(new wstring(__wcseparator));	
+		wstring result = new wstring(__wcempty);
+		for(int i = 0; i < dest.count; ++i)
+		{
+			if(i != 0)
+				result += new wstring(__wcseparator);
+			result += dest[i];
+		}
 		return result;
 	}
 
@@ -3197,6 +3203,11 @@ class RTTIFunction : RTTIType
 	array<string> EnumParameters()
 	{
 		return EnumChildren("RTTIParameter");
+	}
+
+	RTTIParameter GetParameter(string name)
+	{
+		return _dynamicCast(Find(name), "RTTIParameter");
 	}
 }
 
