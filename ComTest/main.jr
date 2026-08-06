@@ -177,7 +177,7 @@ class MyObject : IDispatch
     {
         IID iidUnk = uuidof(IUnknown);
         IID iidDisp = uuidof(IDispatch);
-        if(GuidsEqual(*riid, iidUnk) || GuidsEqual(*riid, iidDisp))
+        if(*riid == iidUnk || *riid == iidDisp)
         {
             *ppvObject = this;
             ++refCount;
@@ -274,7 +274,7 @@ class MySite : IActiveScriptSite
     {
         IID iidUnk = uuidof(IUnknown);
         IID iidSite = uuidof(IActiveScriptSite);
-        if(GuidsEqual(*riid, iidUnk) || GuidsEqual(*riid, iidSite))
+        if(*riid == iidUnk || *riid == iidSite)
         {
             *ppvObject = this;
             ++refCount;

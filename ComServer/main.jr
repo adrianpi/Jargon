@@ -48,7 +48,7 @@ class MyComObject : IMyComObject
     {
         IID iidUnk = uuidof(IUnknown);
         IID iidIObj = uuidof(IMyComObject);
-        if(GuidsEqual(*riid, iidUnk) || GuidsEqual(*riid, iidIObj))
+        if(*riid == iidUnk || *riid == iidIObj)
         {
             *ppvObject = this;
             refCount++;
@@ -89,7 +89,7 @@ class MyClassFactory : IClassFactory
     {
         IID iidUnk = uuidof(IUnknown);
         IID iidFact = uuidof(IClassFactory);
-        if(GuidsEqual(*riid, iidUnk) || GuidsEqual(*riid, iidFact))
+        if(*riid == iidUnk || *riid == iidFact)
         {
             *ppvObject = this;
             refCount++;
@@ -117,7 +117,7 @@ class MyClassFactory : IClassFactory
         if (pUnkOuter != null)
             return 0x80040110L; // CLASS_E_NOAGGREGATION
 
-        if(GuidsEqual(*riid, uuidof(IMyComObject)))
+        if(*riid == uuidof(IMyComObject))
         {
             MyComObject* obj = new MyComObject();
             *ppvObject = obj;
@@ -141,7 +141,7 @@ MyClassFactory myClassFactory = null;
 uint DllGetClassObject(IID *rclsid, IID *riid, void **ppv)
 {
     IID id = uuidof(MyComObject);
-    if(GuidsEqual(*rclsid, uuidof(MyComObject)))
+    if(*rclsid == uuidof(MyComObject))
     {
         uint hr = myClassFactory.QueryInterface(riid, ppv);
         return hr;
