@@ -319,7 +319,7 @@ class Compiler : CompilerErrorListener
 		}
 
 		// Create module object representing the whole compilation output
-		Module module = new Module(path.getFileNameWithoutExtension(options.OutputFileName).toLower());
+		Module module = new Module(path.getFileNameWithoutExtension(options.OutputFileName));
 
 		// PASS 1: initial parsing
 		if(options.Verbose)
