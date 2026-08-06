@@ -724,7 +724,6 @@ class ClassType : TypeSymbol
     bool IsComObject() => (Flags & SymbolFlags.ComMask) != 0;
     
     ClassType constructor(Symbol parent, string name)
-        
     {
         base(parent, name, SymbolType.Class, TypeCode.Struct);
         this.FieldCount = 0;

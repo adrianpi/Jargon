@@ -817,6 +817,8 @@ class Parser2 : StageParser
                 return false;
             }
 
+            cls.SetSize((cls.Size + 7) / 8 * 8);
+
             if(!cls.IsComInterface())
             {
                 if (cls.Name != "object")

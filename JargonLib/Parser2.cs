@@ -379,7 +379,8 @@ namespace Jargon
                             {
                                 fs.Index = cls.FieldCount;
                                 cls.FieldCount++;
-                                int offs = ((cls.Size + decl.type.Size - 1) / decl.type.Size) * decl.type.Size;
+                                int alignment = GetAlignment(decl.type);
+                                int offs = ((cls.Size + alignment - 1) / alignment) * alignment;
                                 fs.Offset = offs;
                                 cls.SetSize(offs + decl.type.Size);
                             }
@@ -407,6 +408,8 @@ namespace Jargon
                     _class = null;
                     return false;
                 }
+
+                cls.SetSize((cls.Size + 7) / 8 * 8);
 
                 if (cls.Name != "object")
                 {
