@@ -649,6 +649,10 @@ class Parser4 : StageParser
         {
             return ParseContinue();
         }
+        else if(IsKeyword("switch"))
+        {
+            return ParseSwitch();
+        }
         else if(IsKeyword("delete"))
         {
             return ParseDelete();
@@ -851,6 +855,76 @@ class Parser4 : StageParser
         if (!Expect(Token.Semicolon))
             return null;
         return new ContinueStatement();
+    }
+
+    Statement ParseSwitch()
+    {
+        if(!Expect(Token.LPar))
+            return null;
+        Expression selector = ParseExpression();
+        if(selector == null)
+            return null;
+        if(!Expect(Token.RPar))
+            return null;
+        SwitchStatement _switch = new SwitchStatement(selector);
+        if(!Expect(Token.LBrace))
+            return null;
+        SwitchCase currentCase = null;
+        SwitchCase defaultCase = null;
+        while(scanner.Token != Token.RBrace && scanner.Token != Token.EOF)
+        {
+            if(IsKeyword("case"))
+            {
+                Expression value = ParseExpression();
+                if(value == null)
+                    return null;
+                if(!Expect(Token.Colon))
+                    return null;
+                value = ForceCast(value, selector.DataType);
+                Expression e = null;
+                Expression left = selector;
+                if(!CheckBinaryOperatorOverride(Token.Equal, left, value))
+                    e = new BinaryExpression(BinOp.Equal, selector, value);
+                else
+                    e = left;
+                SwitchCase sc = new SwitchCase(e);
+                _switch.Cases.add(sc);
+                currentCase = sc;
+            }
+            else if(IsKeyword("default"))
+            {
+                if(defaultCase != null)
+                {
+                    Error("Default case already defined");
+                    return null;
+                }
+                if(!Expect(Token.Colon))
+                    return null;
+                SwitchCase sc2 = new SwitchCase(null);
+                currentCase = sc2;
+                defaultCase = sc2;
+            }
+            else
+            {
+                if(currentCase == null)
+                {
+                    Error("Syntax error");
+                    return null;
+                }
+                Statement s = ParseStatementOrBlock();
+                if(s == null)
+                    return null;
+                currentCase.Body.Statements.add(s);
+            }
+        }
+        if(!Expect(Token.RBrace))
+            return null;
+
+        // Put default case always at the end
+        if(defaultCase != null)
+            _switch.Cases.add(defaultCase);
+
+        return _switch;
     }
 
     // ParseDelete - handle object deletion. For classes with virtual

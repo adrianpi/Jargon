@@ -1453,9 +1453,15 @@ class CodeGenVisitor : CodeVisitor
         sb.appendLine(string.format("\tbr label %%%s%s", lbl.Name, sdbg));
     }
 
-	void VisitContinueStatement(BreakStatement s)
+	void VisitContinueStatement(ContinueStatement s)
     {
         LoopStatement loop = loops.peek();
+		if(loop.ContinueLabel == null)
+		{
+			Error("Continue statement not in a loop", s.file, s.line);
+			return;
+		}
+
 		string sdbg = dbgs(s);
 
 		for(int i = blocks.count-1; i >= 0; --i)
@@ -1469,6 +1475,42 @@ class CodeGenVisitor : CodeVisitor
 		CodeLabel lbl = loop.ContinueLabel as CodeLabel;
 		sb.appendLine(string.format("\tbr label %%%s%s", lbl.Name, sdbg));
     }
+
+	void VisitSwitchStatement(SwitchStatement s)
+	{
+		loops.push(s);
+
+		string sdbg = dbgs(s);
+		string endLabel = NewLabel();
+		s.BreakLabel = new CodeLabel(endLabel);
+
+		for(int i = 0; i < s.Cases.count; ++i)
+		{		
+			SwitchCase sc = s.Cases[i];
+			string label1 = NewLabel();
+			string label2 = NewLabel();
+
+			s.Body = sc.Body; // this is so VisitBreakStatement do the cleanup properly
+
+			if(sc.Condition != null)
+			{
+				sc.Condition.Visit(this, VisitMode.Load);
+				ReleaseExpression(sc.Condition, sc.Condition);
+				sb.appendLine(string.format("\tbr i1 %s, label %%%s, label %%%s%s", sc.Condition.Tag, label1, label2, sdbg));
+				sb.appendLine(string.format("%s:", label1));				
+			}
+			
+			sc.Body.Visit(this);
+			
+			sb.appendLine(string.format("\tbr label %%%s", label2));
+			sb.appendLine(string.format("%s:", label2));
+		}
+
+		sb.appendLine(string.format("\tbr label %%%s", endLabel));
+		sb.appendLine(string.format("%s:", endLabel));
+
+		loops.pop();
+	}
 
 	array<string> used = new array<string>();	
 

@@ -205,3 +205,31 @@ class EmptyStatement : Statement
 {
 
 }
+
+class SwitchCase
+{
+	Expression Condition;
+	StatementBlock Body;
+	SwitchCase constructor(Expression condition)
+	{
+		base();
+		this.Condition = condition;
+		this.Body = new StatementBlock();
+		return this;
+	}
+}
+
+class SwitchStatement : LoopStatement
+{
+	array<SwitchCase> Cases = new array<SwitchCase>();
+	SwitchStatement constructor(Expression condition)
+	{
+		base();
+		this.Condition = condition;
+		return this;
+	}
+	void Visit(CodeVisitor visitor)
+	{
+		visitor.VisitSwitchStatement(this);
+	}
+}

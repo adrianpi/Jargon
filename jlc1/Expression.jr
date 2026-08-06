@@ -63,6 +63,7 @@ class CodeVisitor
 	virtual void VisitContinueStatement(ContinueStatement s) {}
 	virtual void VisitDoStatement(DoStatement s) {}
 	virtual void VisitForStatement(ForStatement s) {}
+	virtual void VisitSwitchStatement(SwitchStatement s) {}
 }
 
 // Base Expression class

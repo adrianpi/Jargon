@@ -522,4 +522,20 @@ class CodeTransform : CodeVisitor
 		}
         s.Body.Visit(this);
 	}
+
+	void VisitSwitchStatement(SwitchStatement s) 
+	{
+		s.Condition.Visit(this, VisitMode.Load);
+		s.Condition = transformed;
+		for(int i = 0; i < s.Cases.count; ++i)
+		{
+			SwitchCase sc = s.Cases[i];
+			if(sc.Condition != null)
+			{
+				sc.Condition.Visit(this, VisitMode.Load);
+				sc.Condition = transformed;
+			}
+			sc.Body.Visit(this);
+		}
+	}
 }
