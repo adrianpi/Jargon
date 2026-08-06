@@ -1340,13 +1340,15 @@ class CodeGenVisitor : CodeVisitor
 		string label1 = NewLabel();
 		string label2 = NewLabel();
 		string label3 = NewLabel();
-		sb.appendLine(string.format("\tbr i1 %s, label %%%s, label %%%s%s", s.Condition.Tag, label1, label2, sdbg));
+		sb.appendLine(string.format("\tbr i1 %s, label %%%s, label %%%s%s", s.Condition.Tag, label1, s.Else != null ? label2 : label3, sdbg));
 		sb.appendLine(string.format("%s:", label1));
 		s.Then.Visit(this);
-		sb.appendLine(string.format("\tbr label %%%s", label3));
-		sb.appendLine(string.format("%s:", label2));
 		if(s.Else != null)
+		{
+			sb.appendLine(string.format("\tbr label %%%s", label3));
+			sb.appendLine(string.format("%s:", label2));
 			s.Else.Visit(this);
+		}
 		sb.appendLine(string.format("\tbr label %%%s", label3));
 		sb.appendLine(string.format("%s:", label3));
 	}
