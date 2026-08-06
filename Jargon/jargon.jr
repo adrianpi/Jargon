@@ -2069,6 +2069,21 @@ template class hash_set<K>
 		
         return false;
 	}
+
+	array<K>* toArray()
+	{
+		array<K>* result = new array<K>();
+		for(int i = 0; i < size; ++i)
+		{
+			hash_item<K>* pair = buckets[i];
+			while(pair != null)
+			{
+				result.add(pair.key);
+				pair = pair.next;
+			}
+		}
+		return result;
+	}
 }
 
 //-----------------------------------------------------------------------------
