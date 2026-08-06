@@ -97,14 +97,7 @@ class Parser1 : StageParser
             string dllname = null;
             for(int i = 0; i < dirs.count && dllname == null; ++i)
             {
-                string ddir = dirs[i];
-                if (ddir.startsWith("$"))
-                {
-                    string sub = ddir.substr(1, ddir.length-1);
-                    ddir = getenv(sub.c_str());
-                    if (ddir == null)
-                        continue;
-                }
+                string ddir = Compiler.ExpandLibFolder(dirs[i]);
 
                 if(file.exists(string.format("%s\\%s.dll", ddir, name)))
                 {
