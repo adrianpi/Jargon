@@ -1258,7 +1258,29 @@ class ExpressionParser : BaseParser
             {
                 AutoCast(left, right);
                 if(!CheckBinaryOperatorOverride(tkn, left, right))
+                {
+                    if((op == BinOp.Equal || op == BinOp.NEqual) && left.DataType.IsStruct() && left.DataType == right.DataType)
+                    {
+                        Function memCompFunc = FindOrImport("memory__compare");
+                        if(memCompFunc == null)
+                        {
+                            Error("memory.compare() not found. Missing 'using jargon;' ?");
+                            return null;
+                        }
+                        FunctionCallExpression fcall = new FunctionCallExpression(new SymbolExpression(memCompFunc));
+                        fcall.Arguments.add(new AddressOfExpression(left));
+                        fcall.Arguments.add(new AddressOfExpression(right));
+                        fcall.Arguments.add(ConstantExpression.FromLong(left.DataType.Size));
+
+                        return new BinaryExpression(
+                            op,
+                            fcall,
+                            ConstantExpression.FromInt(0)
+                        );
+                        
+                    }
 				    left = new BinaryExpression(op, left, right);
+                }
             }
             SetContext(left, -1);
             SetContext(right, -1);
