@@ -92,7 +92,9 @@ string ComputeMD5FromFile(string filePath)
 	byte *mem = memory.alloc(size);
 	f.read(mem, size);
 	f.close();
-	return ComputeMD5(mem, size);
+	string result = ComputeMD5(mem, size);
+	memory.free(mem);
+	return result;
 }
 
 // Compiler class - drives the compilation pipeline. Implements
