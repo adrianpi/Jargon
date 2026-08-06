@@ -770,6 +770,10 @@ class BaseParser
     {
         ClassType cls = null;
         TypeSymbol ts = ParseType();
+        if(ts == null)
+        {
+            return null;
+        }
         if (ts.SymbolType == SymbolType.Template)
         {
             if (!Expect(Token.Less))

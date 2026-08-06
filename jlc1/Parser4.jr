@@ -641,6 +641,10 @@ class Parser4 : StageParser
         {
             return ParseFor();
         }
+        else if(IsKeyword("foreach"))
+        {
+            return ParseForeach();
+        }
         else if(IsKeyword("break"))
         {
             return ParseBreak();
@@ -855,6 +859,155 @@ class Parser4 : StageParser
         if (!Expect(Token.Semicolon))
             return null;
         return new ContinueStatement();
+    }
+
+    Statement ParseForeach()
+    {
+        int line = scanner.Line;
+
+        if(!Expect(Token.LPar))
+            return null;
+        
+        StatementBlock sb = new StatementBlock();
+        sb.Scope.Reparent(scope);
+        scope = sb.Scope;
+
+        BlockScope bs = new BlockScope();
+        bs.Reparent(scope);
+        scope = bs;
+
+        Declaration decl = new Declaration();
+        if(!ParseDeclaration(decl, true, null, false, false))
+            return null;
+        if(!Expect(Token.Colon))
+            return null;
+        Expression collection = ParseExpression();
+        if(collection == null)
+            return null;
+        if(!Expect(Token.RPar))
+            return null;    
+
+        ClassType collType = null;
+        if(collection.DataType.IsClassRef())
+            collType = collection.DataType.ElementType as ClassType;
+        if(collType == null)
+        {
+            Error("Collection is not a class");
+            return null;
+        }
+        MethodSymbol getIterator = collType.FindChild("getIterator") as MethodSymbol;
+        if(getIterator == null)
+        {
+            Error("Collection does not have a getIterator method");
+            return null;
+        }
+        Function getIteratorFunc = getIterator.type;
+        if(getIteratorFunc == null)
+        {
+            Error("Internal error: Cannot get getIterator function");
+            return null;
+        }
+        if(!getIteratorFunc.ReturnType.IsClassRef() || getIteratorFunc.Parameters.count != 1 || 
+            !getIteratorFunc.Parameters[0].DataType.IsClassRef() || getIteratorFunc.Parameters[0].DataType.ElementType != collType)
+        {
+            Error("getIterator has bad signature");
+            return null;
+        }
+        FindOrImport(getIteratorFunc.Name);
+        FunctionCallExpression getIteratorCall = ExpressionParser.GetMethodInvocation(getIterator, collection, false);
+        getIteratorCall.Arguments.add(collection);
+        SetContext(getIteratorCall, line);
+        TypeSymbol iterType = getIteratorFunc.ReturnType.ElementType;
+
+        ClassType objType = FindType("object") as ClassType;
+        if(objType == null)
+        {
+            Error("Internal error: object type not found");
+            return null;
+        }
+
+        LocalVariable lvIter = new LocalVariable(bs, string.format("__iter%d", scanner.Line), objType.GetPointerType(), getIteratorCall);
+        lvIter.Offset = -(++function.LocalsCount);
+        lvIter.line = scanner.Line;
+        function.Locals.add(lvIter);
+
+        SymbolExpression se = new SymbolExpression(lvIter);
+        if(!StaticAssign(sb, se, getIteratorCall, scanner.Line, lvIter))
+            return null;
+        
+        LocalVariable lvElem = new LocalVariable(bs, decl.name, decl.type, null);
+        lvElem.Offset = -(++function.LocalsCount);
+        lvElem.line = scanner.Line;
+        function.Locals.add(lvElem);
+
+        Statement body = ParseStatementOrBlock();
+        if(body == null)
+            return null;
+
+        scope = bs.Parent;
+        scope = scope.Parent;
+
+        if(!getIteratorFunc.ReturnType.IsClassRef())
+        {
+            Error("getIterator return type is not a class reference");
+            return null;
+        }
+
+        MethodSymbol iterNext = getIteratorFunc.ReturnType.ElementType.FindChild("next") as MethodSymbol;
+        if(iterNext == null)
+        {
+            Error("Iterator does not define a next() method");
+            return null;
+        }
+        Function iterNextFunc = iterNext.type;
+        if(iterNextFunc.ReturnType != TypeSymbol.Bool || iterNextFunc.Parameters.count != 1 || 
+            !iterNextFunc.Parameters[0].DataType.IsClassRef() || iterNextFunc.Parameters[0].DataType.ElementType != iterType)
+        {
+            Error("Iterator next() has bad signature");
+            return null;
+        }
+        FindOrImport(iterNextFunc.Name);
+        FunctionCallExpression iterNextCall = ExpressionParser.GetMethodInvocation(iterNext, new SymbolExpression(lvIter), false);
+        iterNextCall.Arguments.add(new SymbolExpression(lvIter));
+        SetContext(iterNextCall, line);
+
+        body = ForceBlock(body);
+
+        MethodSymbol getElement = getIteratorFunc.ReturnType.ElementType.FindChild("getElement") as MethodSymbol;
+        if(iterNext == null)
+        {
+            Error("Iterator does not define a getElement() method");
+            return null;
+        }
+        Function getElementFunc = getElement.type;
+        if(getElementFunc.ReturnType == TypeSymbol.Void || getElementFunc.Parameters.count != 1 || 
+            !getElementFunc.Parameters[0].DataType.IsClassRef() || getElementFunc.Parameters[0].DataType.ElementType != iterType)
+        {
+            Error("Iterator getElement() has bad signature");
+            return null;
+        }
+
+        FindOrImport(getElementFunc.Name);
+        FunctionCallExpression getElementCall = ExpressionParser.GetMethodInvocation(getElement, new SymbolExpression(lvIter), false);
+        getElementCall.Arguments.add(new SymbolExpression(lvIter));
+        SetContext(getElementCall, line);
+
+        ((StatementBlock)body).Statements.insert(0, 
+            new ExpressionStatement(
+                new AssignmentExpression(
+                    new SymbolExpression(lvElem),
+                    new CastExpression(
+                        getElementCall,
+                        lvElem.DataType
+                    )
+                )
+            )
+        );
+
+        ForStatement fs = new ForStatement(null, iterNextCall, null, body);
+        fs.Scope = bs;
+        sb.Statements.add(fs);
+        return sb;
     }
 
     Statement ParseSwitch()

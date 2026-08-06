@@ -1243,7 +1243,38 @@ class iarray
 	virtual void clearElements() {}
 	virtual void indexOfElement(void *pElem) {}
 	virtual void removeElementAt(int index) {}
+}
 
+template class array_iterator<T> 
+{
+	array<T> arr;
+	int index;
+
+	array_iterator<T> constructor(array<T> arr)
+	{
+		base();
+		this.arr = arr;
+		this.index = -1;
+		return this;
+	}
+
+	bool next()
+	{
+		if(index < arr._count - 1)
+		{
+			index++;
+			return true;
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	T getElement()
+	{
+		return arr.data[index];
+	}
 }
 
 template class array<T> : iarray
@@ -1266,6 +1297,11 @@ template class array<T> : iarray
 	{
 		clear();
 		base();
+	}
+
+	array_iterator<T> getIterator()
+	{
+		return new array_iterator<T>(this);
 	}
 	
 	int get count() => _count;
@@ -1650,6 +1686,50 @@ template class hash_pair<K,T>
 	}
 }
 
+template class dictionary_iterator<K,T>
+{
+	dictionary<K,T> dict;
+	int bucketIndex;
+	hash_pair<K,T>* current;
+
+	dictionary_iterator<K,T> constructor(dictionary<K,T> dict)
+	{
+		base();
+		this.dict = dict;
+		this.bucketIndex = -1;
+		this.current = null;
+		return this;
+	}
+
+	bool next()
+	{
+		if(current != null && current.next != null)
+		{
+			current = current.next;
+			return true;
+		}
+
+		++bucketIndex;
+		while(bucketIndex < dict.size)
+		{
+			if(dict.buckets[bucketIndex] != null)
+			{
+				current = dict.buckets[bucketIndex];
+				return true;
+			}
+			++bucketIndex;
+		}
+
+		current = null;
+		return false;
+	}
+
+	K getElement()
+	{
+		return current.key;
+	}
+}
+
 template class dictionary<K,T>
 {
 	hash_pair<K,T>** buckets;
@@ -1670,6 +1750,11 @@ template class dictionary<K,T>
         memory.free(buckets);
         base();
     }
+
+	dictionary_iterator<K,T> getIterator()
+	{
+		return new dictionary_iterator<K,T>(this);
+	}
 	
 	void clear() {
         for (int i = 0; i < size; ++i) {
@@ -1818,6 +1903,50 @@ template class hash_item<K>
 	}
 }
 
+template class hash_set_iterator<K>
+{
+	hash_set<K> dict;
+	int bucketIndex;
+	hash_item<K> current;
+
+	hash_set_iterator<K> constructor(hash_set<K> dict)
+	{
+		base();
+		this.dict = dict;
+		this.bucketIndex = -1;
+		this.current = null;
+		return this;
+	}
+
+	bool next()
+	{
+		if(current != null && current.next != null)
+		{
+			current = current.next;
+			return true;
+		}
+
+		++bucketIndex;
+		while(bucketIndex < dict.size)
+		{
+			if(dict.buckets[bucketIndex] != null)
+			{
+				current = dict.buckets[bucketIndex];
+				return true;
+			}
+			++bucketIndex;
+		}
+
+		current = null;
+		return false;
+	}
+
+	K getElement()
+	{
+		return current.key;
+	}
+}
+
 template class hash_set<K>
 {
 	hash_item<K>** buckets;
@@ -1838,6 +1967,11 @@ template class hash_set<K>
         memory.free(buckets);
         base();
     }
+
+	hash_set_iterator<K> getIterator()
+	{
+		return new hash_set_iterator<K>(this);
+	}
 	
 	void clear() {
         for (int i = 0; i < size; ++i) {
