@@ -2956,7 +2956,7 @@ class RTTISymbol
 	SymbolType stype;
 	SymbolFlags flags;
 	string name;
-	array<RTTIType> children = new array<RTTIType>();
+	array<RTTISymbol> children = new array<RTTISymbol>();
 	weak RTTISymbol parent = null;
 	array<string> attributes = new array<string>();
 
@@ -3191,7 +3191,7 @@ class RTTIPrimitiveType : RTTIType
 
 class RTTIPointerType : RTTIType
 {
-	RTTIType elementType;
+	weak RTTIType elementType;
 
 	bool IsPointer() => true;
 	bool IsClassRef() => elementType.IsClass();
@@ -3206,7 +3206,7 @@ class RTTIPointerType : RTTIType
 
 class RTTIArrayType : RTTIType
 {
-	RTTIType elementType;
+	weak RTTIType elementType;
 	int size;
 
 	bool IsArray() => true;
@@ -4101,7 +4101,7 @@ class RTTIClassType : RTTIType
 class RTTIModuleUsing
 {
 	string name;
-	weak RTTIModule module;
+	/*weak*/ RTTIModule module;
 }
 
 struct RTTIResourceEntry
@@ -4850,13 +4850,34 @@ void _freeTypeInfo(byte *address)
 	string moduleName = GetModuleName((ulong)address);
 
 	RTTIModule module = RTTIRoot.Instance.Find(moduleName) as RTTIModule;
+	if(module == null)
+		return; // should not happen, but just in case
+
+	// First collect and then remove, as it can delete objects and break 
+	// the RTTI class hierarchy while iterating over it 
+	// thus "as RTTIType" stops working properly!
+
+	array<RTTIType> typesToRemove = new array<RTTIType>();
+
 	for(int i = 0; i < module.children.count; ++i)
 	{
 		RTTIType type = module.children[i] as RTTIType;
 		if(type != null && !type.IsFunction())
 		{
-			RTTIType.allTypes.remove(type.name);
+			typesToRemove.add(type);
+			RTTIType pt = type.pointerType;
+			while(pt != null)
+			{
+				typesToRemove.add(pt);
+				pt = pt.pointerType;
+			}
 		}
+	}
+
+	for(int i = 0; i < typesToRemove.count; ++i)
+	{
+		RTTIType.allTypes.remove(typesToRemove[i].name);
+		typesToRemove[i].pointerType = null;
 	}
 
 	RTTIRoot.Instance.children.remove(module);
