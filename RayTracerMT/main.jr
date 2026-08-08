@@ -4,8 +4,8 @@ using jargon;
 // Multi-threaded Ray Tracer
 // The rendering is parallelized across multiple threads, with 
 // each thread responsible for rendering a horizontal slice of 
-// the image. The scene data is shared via raw pointers (longs)
-// to avoid contention on atomic ref-counting.
+// the image. The rendering code uses weak local references to 
+// avoid ARC addRef/release overhead.
 // ============================================================
 
 // ----- Win32 constants -----
@@ -233,10 +233,6 @@ class Sphere
 // ============================================================
 array<Sphere> gSpheres = new array<Sphere>();
 
-// Thread-safe sphere cache: raw pointers stored as longs to bypass ref-counting.
-long* gSphereCache = null;
-int   gSphereCount = 0;
-
 vec3 gLightDir;
 vec3 gLightColor;
 vec3 gAmbient;
@@ -284,9 +280,12 @@ int sceneHit(Ray* r, float* outT)
 {
     int   best = -1;
     float closest = 1.0e30f;
-    for (int i = 0; i < gSphereCount; ++i)
+    for(int i = 0; i < gSpheres.count; ++i)
     {
-        float t = ((Sphere)gSphereCache[i]).intersect(r);
+        // Use weak reference to avoid refcounting overhead
+        // Also access the array data directly to prevent a memory leak
+        weak Sphere sp = gSpheres.data[i];
+        float t = sp.intersect(r);
         if (t > 0.0f && t < closest)
         {
             closest = t;
@@ -311,14 +310,14 @@ vec3 traceRay(Ray* r, int depth)
         return vec3_new(1.0f, 1.0f, 1.0f) * (1.0f - skyT) + gBgColor * skyT;
     }
 
-    // Access sphere and material via raw pointers (long casts) to avoid
-    // ref-counting races across threads.
-    long sp = gSphereCache[idx];
-    long mt = (long)((Sphere)sp).mat;
+    // Use weak references to avoid refcounting overhead
+    // Also access the array data directly to prevent a memory leak
+    weak Sphere sp = gSpheres.data[idx];
+    weak Material mt = sp.mat;
 
     // Hit point and normal
     vec3 hitPt = r.origin + r.dir * t;
-    vec3 normal = vec3_normalize(hitPt - ((Sphere)sp).center);
+    vec3 normal = vec3_normalize(hitPt - sp.center);
 
     // Diffuse lighting (Lambertian)
     float diff = 0.0f >? vec3_dot(normal, gLightDir);
@@ -333,17 +332,17 @@ vec3 traceRay(Ray* r, int depth)
     // Specular highlight (Blinn-Phong)
     vec3 viewDir = vec3_normalize(-r.dir);
     vec3 halfDir = vec3_normalize(gLightDir + viewDir);
-    float spec = math.powf(0.0f >? vec3_dot(normal, halfDir), ((Material)mt).specular);
+    float spec = math.powf(0.0f >? vec3_dot(normal, halfDir), mt.specular);
 
-    vec3 color = ((Material)mt).color * (gAmbient + gLightColor * diff) + gLightColor * spec;
+    vec3 color = mt.color * (gAmbient + gLightColor * diff) + gLightColor * spec;
 
     // Reflection
-    if (((Material)mt).reflectivity > 0.0f && depth < MAX_DEPTH)
+    if (mt.reflectivity > 0.0f && depth < MAX_DEPTH)
     {
         vec3 reflDir = vec3_reflect(r.dir, normal);
         Ray reflRay = ray_new(hitPt + normal * 0.001f, reflDir);
         vec3 reflColor = traceRay(&reflRay, depth + 1);
-        color = color * (1.0f - ((Material)mt).reflectivity) + reflColor * ((Material)mt).reflectivity;
+        color = color * (1.0f - mt.reflectivity) + reflColor * mt.reflectivity;
     }
 
     return vec3_clamp01(color);
@@ -425,13 +424,6 @@ void renderScene()
 
     hdc = GetDC(gHwnd);
 
-    // Cache sphere pointers as raw longs so worker threads never
-    // touch class references (avoids non-atomic ref-counting races).
-    gSphereCount = gSpheres.count;
-    gSphereCache = (long*)memory.alloc(gSphereCount * 8);
-    for (int i = 0; i < gSphereCount; ++i)
-        gSphereCache[i] = (long)gSpheres[i];
-
     long handles[NUM_THREADS];
     RenderSlice slices[NUM_THREADS];
 
@@ -451,9 +443,6 @@ void renderScene()
 
     for (int i = 0; i < NUM_THREADS; ++i)
         CloseHandle(handles[i]);
-
-    memory.free(gSphereCache);
-    gSphereCache = null;
 
     // Blit the completed framebuffer in one shot
 

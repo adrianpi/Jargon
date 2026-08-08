@@ -789,7 +789,7 @@ class Template : TypeSymbol
 class ModuleUsing
 {
     string Name;
-    weak Module Module;
+    /*weak*/ Module Module;
 
     ModuleUsing constructor(string name)
     {

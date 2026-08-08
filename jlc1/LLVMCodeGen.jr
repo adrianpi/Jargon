@@ -186,6 +186,15 @@ class CodeGenVisitor : CodeVisitor
 		}
 	}
 
+	void Warning(string s, string file, int line)
+	{
+		if(errorListener != null)
+		{
+			CompilerError err = CompilerError.Warning(s, file, line, 1);
+			errorListener.OnError(err);
+		}
+	}
+
 	// VisitConstantExpression - produce an IR representation for literal
 	// values. For pointers to bytes (strings) produce @name form, for
 	// booleans produce true/false, for floats/doubles produce hex bit
@@ -1005,11 +1014,18 @@ class CodeGenVisitor : CodeVisitor
 				bool _weak = false;
 
 				FieldExpression fe = e.Left as FieldExpression;
+				SymbolExpression se = e.Left as SymbolExpression;
 				if (fe != null && fe.Field is FieldSymbol)
 				{
 					FieldSymbol fs2 = (FieldSymbol)fe.Field; 
 					if((fs2.Flags & SymbolFlags.Weak) != 0)
                         _weak = true;
+				}
+				else if(se != null && se.Symbol is LocalVariable)
+				{
+					LocalVariable lv = (LocalVariable)se.Symbol;
+					if((lv.Flags & SymbolFlags.Weak) != 0)
+						_weak = true;
 				}
 
 				e.Right.Visit(this, VisitMode.Load);
@@ -1040,6 +1056,10 @@ class CodeGenVisitor : CodeVisitor
                     sb.appendLine(string.format("\t%s = load ptr, ptr %s", temp, e.Left.Tag));
 					sb.appendLine(string.format("\tcall void(ptr) @object__addRef(ptr %s)%s", temp, sdbg));
                 }
+				else if(_weak && IsFunctionCall(e.Right))
+				{
+					Warning("Assigning an object returned by a function call to a weak reference will generate a leak", e.file, e.line);
+				}
 			}
 		}
 	}
@@ -1279,7 +1299,7 @@ class CodeGenVisitor : CodeVisitor
         for(int i = 0; i < locals.count; ++i)
         {
 			Symbol l = locals[i];
-            if (l is LocalVariable)
+            if (l is LocalVariable && (l.Flags & SymbolFlags.Weak) == 0)
             { 
 				LocalVariable lv = (LocalVariable)l;
                 if (lv.DataType.IsClassRef() && !(((ClassType)lv.DataType.ElementType).IsComObject()))

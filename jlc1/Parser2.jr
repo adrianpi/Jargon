@@ -765,7 +765,16 @@ class Parser2 : StageParser
                         }
 
                         if (_weak)
+                        {
+                            if(!fs.DataType.IsClassRef())
+                            {
+                                Error("Only class references can be weak");
+                                scope = prevScope;
+                                _class = null;
+                                return false;
+                            }
                             fs.Flags += SymbolFlags.Weak;
+                        }
 
                         fs.Flags += visibility;
 

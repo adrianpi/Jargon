@@ -383,6 +383,7 @@ class StageParser : ExpressionParser
             r = ForceCast(r, left.DataType);
 
             AssignmentExpression ae = new AssignmentExpression(left, r);
+            ae.file = left.file;
             ae.line = line;
             ae.decl = decl;
             ae.isInit = true;

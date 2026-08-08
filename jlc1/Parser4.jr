@@ -441,8 +441,11 @@ class Parser4 : StageParser
         while (scanner.Token != Token.RBrace)
         {
             bool _const = false;
+            bool _weak = false;
             if(IsKeyword("const"))
                 _const = true;
+            else if(IsKeyword("weak"))
+                _weak = true;
 
             if(IsType())
             {
@@ -537,6 +540,16 @@ class Parser4 : StageParser
                             lv.Offset = -(++function.LocalsCount);
                             lv.line = scanner.Line;
 
+                            if(_weak)
+                            {
+                                if(!type.IsClassRef())
+                                {
+                                    Error("Only class references can be weak");
+                                    return null;
+                                }
+                                lv.Flags |= SymbolFlags.Weak;
+                            }
+
                             function.Locals.add(lv);
                             if(init != null)
                             {
@@ -545,6 +558,7 @@ class Parser4 : StageParser
                                 // strategy; it will emit appropriate assignment
                                 // statements into the current block.
                                 SymbolExpression se = new SymbolExpression(lv);
+                                SetContext(se, lv.line);
                                 if(!StaticAssign(block, se, init, scanner.Line, lv))
                                     return null;
                             }
