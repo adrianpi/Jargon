@@ -4853,9 +4853,8 @@ void _freeTypeInfo(byte *address)
 	if(module == null)
 		return; // should not happen, but just in case
 
-	// First collect and then remove, as it can delete objects and break 
-	// the RTTI class hierarchy while iterating over it 
-	// thus "as RTTIType" stops working properly!
+	// First collect and then remove, as removing objects from
+	// RTTIType.allTypes will make "as RTTIType" below fail
 
 	array<RTTIType> typesToRemove = new array<RTTIType>();
 
